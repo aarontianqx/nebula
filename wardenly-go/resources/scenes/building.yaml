@@ -1,0 +1,42 @@
+category: city
+scenes:
+  - name: military_government_new
+    points:
+      - { x: 560, y: 70, color: { r: 20, g: 35, b: 37, a: 255 } }   # 标题
+      - { x: 790, y: 180, color: { r: 34, g: 139, b: 80, a: 255 } }  # 委派
+      - { x: 398, y: 618, color: { r: 150, g: 150, b: 150, a: 255 } }  # 一键领取
+    actions:
+      main_city:
+        type: click
+        point: { x: 78, y: 27 }
+
+  - name: military_government_receive
+    points:
+      - { x: 560, y: 70, color: { r: 20, g: 35, b: 37, a: 255 } }
+      - { x: 790, y: 180, color: { r: 181, g: 136, b: 49, a: 255 } }
+      - { x: 398, y: 618, color: { r: 190, g: 148, b: 51, a: 255 } }
+    actions:
+      main_city:
+        type: click
+        point: { x: 78, y: 27 }
+
+  - name: military_government_done
+    points:
+      - { x: 560, y: 70, color: { r: 20, g: 35, b: 37, a: 255 } }
+      - { x: 798, y: 218, color: { r: 21, g: 53, b: 56, a: 255 } }
+      - { x: 398, y: 618, color: { r: 150, g: 150, b: 150, a: 255 } }
+    actions:
+      main_city:
+        type: click
+        point: { x: 78, y: 27 }
+
+# todo
+#  - name: military_government_empty
+#    points:
+#      - { x: 560, y: 70, color: { r: 20, g: 35, b: 37, a: 255 } }
+#      - { x: 790, y: 180, color: { r: 53, g: 64, b: 65, a: 255 } }
+#      - { x: 398, y: 618, color: { r: 150, g: 150, b: 150, a: 255 } }
+#    actions:
+#      main_city:
+#        type: click
+#        point: { x: 78, y: 27 }
