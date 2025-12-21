@@ -1,6 +1,6 @@
 //! Application state for Tauri backend.
 
-use tap_core::{EngineState, PlayerHandle, Profile, Recorder, RecorderState};
+use tap_core::{EngineState, PlayerHandle, Profile, Recorder, RecorderState, VariableStore};
 use tap_platform::{InputHookHandle, MouseTrackerHandle};
 
 /// Global application state.
@@ -11,13 +11,17 @@ pub struct AppState {
     pub player_handle: Option<PlayerHandle>,
     pub executed_count: u64,
     pub current_action_index: Option<usize>,
-    
+
     // Recording state
     pub recorder: Recorder,
     pub input_hook: Option<InputHookHandle>,
-    
+
     // Global mouse tracking
     pub mouse_tracker: Option<MouseTrackerHandle>,
+
+    // Phase 3: Variables (stored here for potential future direct access from UI)
+    #[allow(dead_code)]
+    pub variables: VariableStore,
 }
 
 /// Recording status for frontend.
