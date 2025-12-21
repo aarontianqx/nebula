@@ -3,11 +3,16 @@ name = "tap-platform"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "tap platform adapters (input hook/injection, permissions, global hotkeys)."
+description = "tap platform adapters (input injection, permissions)."
 
 [dependencies]
 tap-core = { path = "../tap-core" }
 thiserror = "2"
 tracing = "0.1"
+enigo = "0.3"
 
+[target.'cfg(windows)'.dependencies]
+# Windows-specific deps if needed later
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS-specific deps if needed later
