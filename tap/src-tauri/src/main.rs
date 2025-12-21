@@ -6,12 +6,14 @@ use state::{AppState, MousePositionUpdate, PositionPickedEvent, RecordingStatus}
 use std::sync::Mutex;
 use tap_core::{
     delete_profile, list_profiles, load_last_used, load_profile, save_last_used, save_profile,
-    Action, EngineCommand, EngineEvent, EngineState, InjectorExecutor, MouseButtonRaw, Player,
-    Profile, RawEventType, Recorder, RecorderState, Repeat, RunConfig, Timeline, TimedAction,
+    Action, ConditionColor, EngineCommand, EngineEvent, EngineState, InjectorExecutor,
+    MouseButtonRaw, PlatformConditionProvider, Player, Profile, RawEventType, Recorder,
+    RecorderState, Repeat, RunConfig, Timeline, TimedAction, VariableStore,
 };
 use tap_platform::{
-    set_dpi_aware, start_input_hook, start_mouse_tracker, EnigoInjector, InputEventType,
-    MouseButtonType, MouseTrackerConfig, MouseTrackerEvent,
+    get_pixel_color, is_window_focused, list_windows, set_dpi_aware, start_input_hook,
+    start_mouse_tracker, window_exists, Color, EnigoInjector, InputEventType, MouseButtonType,
+    MouseTrackerConfig, MouseTrackerEvent, WindowInfo,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -154,6 +156,7 @@ fn set_simple_repeat(
             speed: 1.0,
             repeat,
         },
+        target_window: None,
     };
 
     info!(?app_state.profile, "Updated profile for simple repeat");
@@ -397,6 +400,100 @@ async fn picker_position_selected(app: AppHandle, x: i32, y: i32) -> Result<(), 
     Ok(())
 }
 
+// === Phase 3: Window and Pixel Commands ===
+
+/// Window info for frontend.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WindowInfoResponse {
+    pub handle: usize,
+    pub title: String,
+    pub process_name: String,
+    pub pid: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl From<WindowInfo> for WindowInfoResponse {
+    fn from(w: WindowInfo) -> Self {
+        Self {
+            handle: w.handle,
+            title: w.title,
+            process_name: w.process_name,
+            pid: w.pid,
+            x: w.rect.x,
+            y: w.rect.y,
+            width: w.rect.width,
+            height: w.rect.height,
+        }
+    }
+}
+
+/// Color info for frontend.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ColorResponse {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub hex: String,
+}
+
+impl From<Color> for ColorResponse {
+    fn from(c: Color) -> Self {
+        Self {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            hex: c.to_hex(),
+        }
+    }
+}
+
+#[tauri::command]
+fn cmd_list_windows() -> Vec<WindowInfoResponse> {
+    list_windows().into_iter().map(|w| w.into()).collect()
+}
+
+#[tauri::command]
+fn cmd_get_foreground_window() -> Option<WindowInfoResponse> {
+    tap_platform::get_foreground_window().map(|w| w.into())
+}
+
+#[tauri::command]
+fn cmd_get_pixel_color(x: i32, y: i32) -> Option<ColorResponse> {
+    get_pixel_color(x, y).map(|c| c.into())
+}
+
+#[tauri::command]
+fn cmd_check_window_focused(title: Option<String>, process: Option<String>) -> bool {
+    is_window_focused(title.as_deref(), process.as_deref())
+}
+
+#[tauri::command]
+fn cmd_check_window_exists(title: Option<String>, process: Option<String>) -> bool {
+    window_exists(title.as_deref(), process.as_deref())
+}
+
+// === Platform Condition Provider ===
+
+/// Platform condition provider for the engine.
+pub struct TauriPlatformProvider;
+
+impl PlatformConditionProvider for TauriPlatformProvider {
+    fn is_window_focused(&self, title: Option<&str>, process: Option<&str>) -> bool {
+        is_window_focused(title, process)
+    }
+
+    fn window_exists(&self, title: Option<&str>, process: Option<&str>) -> bool {
+        window_exists(title, process)
+    }
+
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor> {
+        get_pixel_color(x, y).map(|c| ConditionColor::new(c.r, c.g, c.b))
+    }
+}
+
 // === Initialization ===
 
 fn init_logging() {
@@ -418,9 +515,12 @@ fn setup_app(app: &AppHandle) {
         }
     };
 
-    // Create the player
+    // Create the platform condition provider
+    let platform_provider = TauriPlatformProvider;
+
+    // Create the player with executor and platform provider
     let executor = InjectorExecutor::new(injector);
-    let player_handle = Player::spawn(executor);
+    let player_handle = Player::spawn(executor, platform_provider);
 
     // Create the recorder
     let recorder = Recorder::with_defaults();
@@ -438,6 +538,7 @@ fn setup_app(app: &AppHandle) {
         recorder,
         input_hook: None,
         mouse_tracker: Some(mouse_tracker),
+        variables: VariableStore::new(),
     };
 
     app.manage(Mutex::new(state));
@@ -657,6 +758,12 @@ fn main() {
             // Global mouse tracking commands
             start_mouse_tracking,
             stop_mouse_tracking,
+            // Phase 3: Window and pixel commands
+            cmd_list_windows,
+            cmd_get_foreground_window,
+            cmd_get_pixel_color,
+            cmd_check_window_focused,
+            cmd_check_window_exists,
             // Picker window commands
             open_picker_window,
             close_picker_window,

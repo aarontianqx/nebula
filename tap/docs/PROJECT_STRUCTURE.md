@@ -237,4 +237,48 @@ tap/                              # 项目根（Cargo workspace + Vite/React roo
 4. **为什么插件建议走 Wasm？**
    - ABI 稳定、隔离强，适合承载第三方扩展与用户脚本，降低安全风险
 
+## Phase 3: 条件与识别架构
+
+Phase 3 引入了条件判断和窗口/像素检测能力，架构扩展如下：
+
+### 新增模块
+
+| 模块 | 位置 | 职责 |
+|------|------|------|
+| `condition.rs` | `tap-core` | 条件类型定义 + 评估器 trait |
+| `variables.rs` | `tap-core` | 变量/计数器存储 |
+| `window.rs` | `tap-platform` | 窗口 API（获取前台窗口、列表、查找） |
+| `pixel.rs` | `tap-platform` | 像素颜色读取 |
+
+### 条件评估流程
+
+```
+Timeline 执行
+  └─► 遇到 WaitUntil/Conditional 动作
+        └─► Player 调用 ConditionEvaluator
+              ├─► 窗口检测: PlatformConditionProvider.is_window_focused()
+              ├─► 像素检测: PlatformConditionProvider.get_pixel_color()
+              └─► 计数器: VariableStore.get_counter()
+```
+
+### 目标窗口绑定
+
+Profile 可以绑定到目标窗口（按标题或进程名），执行时：
+
+1. 每个动作前检查目标窗口是否聚焦
+2. 如果不匹配且 `pause_when_unfocused=true`，暂停执行
+3. 发送 `TargetWindowUnfocused` 事件到前端
+4. 窗口重新聚焦后自动恢复
+
+### 新增 Action 类型
+
+| Action | 说明 |
+|--------|------|
+| `WaitUntil` | 等待条件满足（支持超时） |
+| `Conditional` | if/then/else 分支 |
+| `SetCounter` | 设置计数器 |
+| `IncrCounter` | 计数器 +1 |
+| `DecrCounter` | 计数器 -1 |
+| `ResetCounter` | 重置计数器 |
+| `Exit` | 退出宏执行 |
 

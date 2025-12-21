@@ -18,6 +18,12 @@ interface Timeline {
   actions: TimedAction[];
 }
 
+interface TargetWindow {
+  title: string | null;
+  process: string | null;
+  pause_when_unfocused: boolean;
+}
+
 interface Profile {
   name: string;
   timeline: Timeline;
@@ -26,6 +32,26 @@ interface Profile {
     speed: number;
     repeat: { Times: number } | "Forever";
   };
+  target_window: TargetWindow | null;
+}
+
+// Phase 3: Window and Color types
+interface WindowInfoResponse {
+  handle: number;
+  title: string;
+  process_name: string;
+  pid: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface ColorResponse {
+  r: number;
+  g: number;
+  b: number;
+  hex: string;
 }
 
 type ActionInfo =
@@ -49,7 +75,14 @@ type EngineEvent =
   | { ActionCompleted: { index: number } }
   | { IterationCompleted: { iteration: number } }
   | "Completed"
-  | { Error: { message: string } };
+  | { Error: { message: string } }
+  // Phase 3 events
+  | { WaitingForCondition: { condition: string } }
+  | { ConditionSatisfied: { condition: string } }
+  | { ConditionTimeout: { condition: string } }
+  | { CounterChanged: { key: string; value: number } }
+  | { TargetWindowUnfocused: { title: string | null; process: string | null } }
+  | "TargetWindowFocused";
 
 interface RecordingStatus {
   state: RecorderState;
@@ -144,6 +177,14 @@ export default function App() {
   const [mousePos, setMousePos] = React.useState<{ x: number; y: number } | null>(null);
   const logContainerRef = React.useRef<HTMLDivElement>(null);
 
+  // Phase 3: Target window and condition state
+  const [windowList, setWindowList] = React.useState<WindowInfoResponse[]>([]);
+  const [targetWindowTitle, setTargetWindowTitle] = React.useState<string>("");
+  const [targetWindowProcess, setTargetWindowProcess] = React.useState<string>("");
+  const [pauseWhenUnfocused, setPauseWhenUnfocused] = React.useState<boolean>(true);
+  const [targetWindowMatched, setTargetWindowMatched] = React.useState<boolean>(true);
+  const [pickedColor, setPickedColor] = React.useState<ColorResponse | null>(null);
+
   const addLog = React.useCallback((msg: string) => {
     const entry: LogEntry = { time: formatTime(), message: msg };
     logsRef.current = [...logsRef.current, entry].slice(-100);
@@ -154,6 +195,24 @@ export default function App() {
   React.useEffect(() => {
     invoke<string[]>("cmd_list_profiles").then(setProfiles).catch(console.error);
   }, []);
+
+  // Refresh window list periodically when in timeline mode
+  const refreshWindowList = React.useCallback(async () => {
+    try {
+      const windows = await invoke<WindowInfoResponse[]>("cmd_list_windows");
+      setWindowList(windows);
+    } catch (e) {
+      console.error("Failed to list windows:", e);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (mode === "timeline") {
+      refreshWindowList();
+      const interval = setInterval(refreshWindowList, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [mode, refreshWindowList]);
 
   // Auto-scroll logs
   React.useEffect(() => {
@@ -220,6 +279,23 @@ export default function App() {
         } else if ("Error" in e) {
           setEngineStatus(`❌ ${e.Error.message}`);
           addLog(`❌ ${e.Error.message}`);
+        } else if ("WaitingForCondition" in e) {
+          setEngineStatus(`⏳ Waiting: ${e.WaitingForCondition.condition}`);
+          addLog(`⏳ Waiting: ${e.WaitingForCondition.condition}`);
+        } else if ("ConditionSatisfied" in e) {
+          addLog(`✓ Condition met: ${e.ConditionSatisfied.condition}`);
+        } else if ("ConditionTimeout" in e) {
+          addLog(`⏰ Timeout: ${e.ConditionTimeout.condition}`);
+        } else if ("CounterChanged" in e) {
+          addLog(`🔢 ${e.CounterChanged.key} = ${e.CounterChanged.value}`);
+        } else if ("TargetWindowUnfocused" in e) {
+          setTargetWindowMatched(false);
+          setEngineStatus("⚠️ Target window not focused");
+          addLog(`⚠️ Target window lost focus`);
+        } else if (e === "TargetWindowFocused") {
+          setTargetWindowMatched(true);
+          setEngineStatus("Running");
+          addLog(`✓ Target window focused`);
         }
       });
 
@@ -656,6 +732,85 @@ export default function App() {
                     <span>sec</span>
                   </div>
                 </div>
+              </div>
+
+              <h3>Target Window</h3>
+              <div className="card">
+                <div className="field">
+                  <label className="label">Window</label>
+                  <select
+                    value={targetWindowTitle}
+                    onChange={(e) => {
+                      const win = windowList.find(w => w.title === e.target.value);
+                      setTargetWindowTitle(e.target.value);
+                      if (win) setTargetWindowProcess(win.process_name);
+                    }}
+                    disabled={!isIdle}
+                    className="input"
+                  >
+                    <option value="">Any window</option>
+                    {windowList.map((w) => (
+                      <option key={w.handle} value={w.title}>
+                        {w.title.slice(0, 40)} ({w.process_name})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn btn-sm"
+                    onClick={refreshWindowList}
+                    disabled={!isIdle}
+                    style={{ marginTop: 4 }}
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+                <div className="field">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={pauseWhenUnfocused}
+                      onChange={(e) => setPauseWhenUnfocused(e.target.checked)}
+                      disabled={!isIdle}
+                    />
+                    Pause when target window not focused
+                  </label>
+                </div>
+                {!targetWindowMatched && (isRunning || isPaused) && (
+                  <div className="warning-box">
+                    ⚠️ Target window not focused
+                  </div>
+                )}
+              </div>
+
+              <h3>Color Picker</h3>
+              <div className="card">
+                <button
+                  className="btn btn-block"
+                  onClick={async () => {
+                    if (mousePos) {
+                      const color = await invoke<ColorResponse | null>("cmd_get_pixel_color", { x: mousePos.x, y: mousePos.y });
+                      if (color) {
+                        setPickedColor(color);
+                        addLog(`🎨 Color at (${mousePos.x}, ${mousePos.y}): ${color.hex}`);
+                      }
+                    }
+                  }}
+                  disabled={!mousePos}
+                >
+                  🎨 Pick Color at Cursor
+                </button>
+                {pickedColor && (
+                  <div className="color-preview">
+                    <div
+                      className="color-swatch"
+                      style={{ backgroundColor: pickedColor.hex }}
+                    />
+                    <span className="color-value">{pickedColor.hex}</span>
+                    <span className="color-rgb">
+                      ({pickedColor.r}, {pickedColor.g}, {pickedColor.b})
+                    </span>
+                  </div>
+                )}
               </div>
             </>
           )}

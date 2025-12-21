@@ -5,11 +5,15 @@
 //! - Global input hook for recording via `rdev`
 //! - Global mouse position tracking via `rdev`
 //! - DPI scaling utilities for high-resolution displays
+//! - Window detection and management APIs
+//! - Pixel color reading for condition evaluation
 
 mod dpi;
 mod injector;
 mod input_hook;
 mod mouse_tracker;
+mod pixel;
+mod window;
 
 pub use dpi::{get_primary_scale_factor, set_dpi_aware, ScaledCoords};
 pub use injector::{EnigoInjector, InputInjector, NoopInjector};
@@ -19,6 +23,11 @@ pub use input_hook::{
 pub use mouse_tracker::{
     start_mouse_tracker, MousePosition, MouseTrackerCommand, MouseTrackerConfig,
     MouseTrackerEvent, MouseTrackerHandle,
+};
+pub use pixel::{get_pixel_color, pixel_matches, Color};
+pub use window::{
+    find_window_by_process, find_window_by_title, get_foreground_window, get_window_rect,
+    is_window_focused, list_windows, window_exists, WindowInfo, WindowRect,
 };
 
 use thiserror::Error;
