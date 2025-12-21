@@ -1,0 +1,13 @@
+category: system
+scenes:
+  - name: user_agreement
+    points:
+      - {x: 620, y: 480, color: {r: 209, g: 166, b: 66, a: 255}}
+      - {x: 400, y: 480, color: {r: 28, g: 131, b: 86, a: 255}}
+    actions:
+      Agree:
+        type: click
+        point: {x: 620, y: 480}
+      Refuse:
+        type: click
+        point: {x: 400, y: 480}

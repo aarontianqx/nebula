@@ -1,0 +1,26 @@
+category: city
+scenes:
+  - name: main_city
+    points:
+      - {x: 78, y: 670, color: {r: 202, g: 194, b: 194, a: 255}}
+      - {x: 62, y: 642, color: {r: 175, g: 148, b: 79, a: 255}}
+      - {x: 674, y: 15, color: {r: 229, g: 192, b: 103, a: 255}}
+#      - {x: 981, y: 270, color: {r: 191, g: 188, b: 176, a: 255}}
+    actions:
+      ToWorld:
+        type: click
+        point: {x: 78, y: 670}
+      military_government:
+        type: click
+        point: {x: 998, y: 244}
+
+  - name: main_city_shadow
+    points:
+      - {x: 78, y: 670, color: {r: 149, g: 142, b: 141, a: 255}}
+      - {x: 62, y: 642, color: {r: 141, g: 121, b: 71, a: 255}}
+      - {x: 674, y: 15, color: {r: 168, g: 143, b: 82, a: 255}}
+#      - {x: 981, y: 270, color: {r: 140, g: 139, b: 130, a: 255}}
+    actions:
+      ToMainCity:
+        type: click
+        point: {x: 497, y: 604} 

@@ -1,0 +1,39 @@
+{
+  "RT_GROUP_ICON": {
+    "APP": {
+      "0000": [
+        "../../../resources/icons/app_256.png",
+        "../../../resources/icons/app_96.png",
+        "../../../resources/icons/app_64.png",
+        "../../../resources/icons/app_48.png",
+        "../../../resources/icons/app_32.png",
+        "../../../resources/icons/app_16.png"
+      ]
+    }
+  },
+  "RT_MANIFEST": {
+    "#1": {
+      "0409": {
+        "identity": {
+          "name": "Wardenly",
+          "version": "1.0.0.0"
+        },
+        "description": "Wardenly - Game Automation Controller",
+        "minimum-os": "win7",
+        "execution-level": "as invoker",
+        "ui-access": false,
+        "auto-elevate": false,
+        "dpi-awareness": "system",
+        "disable-theming": false,
+        "disable-window-filtering": false,
+        "high-resolution-scrolling-aware": false,
+        "ultra-high-resolution-scrolling-aware": false,
+        "long-path-aware": false,
+        "printer-driver-isolation": false,
+        "gdi-scaling": false,
+        "segment-heap": false,
+        "use-common-controls-v6": true
+      }
+    }
+  }
+}

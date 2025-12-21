@@ -1,0 +1,35 @@
+name: Join Battle
+description: Automatically join group battles
+version: "1.0"
+author: System
+steps:
+  - scene: battle_group_entrance
+    timeout: 5s
+    actions:
+      - type: click
+        points:
+          - {x: 538, y: 544}
+      - type: wait
+        duration: 1s
+
+  - scene: battle_group_prepare
+    timeout: 5s
+    actions:
+      - type: click
+        points:
+          - {x: 700, y: 255}
+      - type: wait
+        duration: 1s
+      - type: click
+        points:
+          - {x: 1005, y: 667}
+      - type: wait
+        duration: 1s
+      - type: click
+        points:
+          - {x: 1005, y: 667}
+    loop:
+      startIndex: 0
+      endIndex: 4
+      count: -1
+      interval: 800ms 
