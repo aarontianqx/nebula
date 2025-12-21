@@ -711,3 +711,61 @@ select.input {
 .timeline-item:hover .timeline-actions {
   opacity: 1;
 }
+
+/* ===== Phase 3: Target Window ===== */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.warning-box {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--warning);
+}
+
+/* ===== Phase 3: Color Picker ===== */
+.color-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.color-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.color-rgb {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
