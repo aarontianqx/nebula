@@ -1,30 +1,22 @@
 //! tap-platform: platform-specific I/O boundary for tap.
 //!
 //! This crate defines traits for hooking global input and injecting actions,
-//! and will provide OS-specific implementations (Win/mac) later.
+//! and provides OS-specific implementations (Win/mac) via `enigo`.
 
-use tap_core::Action;
+mod injector;
 
-#[derive(Debug, thiserror::Error)]
+pub use injector::{EnigoInjector, InputInjector, NoopInjector};
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub enum PlatformError {
     #[error("not implemented")]
     NotImplemented,
+    #[error("injection failed: {0}")]
+    InjectionFailed(String),
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
 }
 
 pub type PlatformResult<T> = Result<T, PlatformError>;
-
-/// Inject mouse/keyboard actions into the OS.
-pub trait InputInjector: Send + Sync {
-    fn inject(&self, action: &Action) -> PlatformResult<()>;
-}
-
-/// Minimal no-op injector for early UI development.
-pub struct NoopInjector;
-
-impl InputInjector for NoopInjector {
-    fn inject(&self, _action: &Action) -> PlatformResult<()> {
-        Err(PlatformError::NotImplemented)
-    }
-}
-
-
