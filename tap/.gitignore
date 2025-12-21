@@ -1,0 +1,29 @@
+# === Rust (Cargo) ===
+target/
+**/*.rs.bk
+Cargo.lock
+
+# === IDE / Editor ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Node / Frontend ===
+node_modules/
+dist/
+*.log
+.env
+.env.*
+
+# === Tauri (auto-generated) ===
+src-tauri/gen/
+src-tauri/icons/icon.ico
+
+
+
