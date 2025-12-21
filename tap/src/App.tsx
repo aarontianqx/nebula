@@ -2,13 +2,45 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import React from "react";
 
+// Types
 type EngineState = "Idle" | "Arming" | "Running" | "Paused" | "Stopped";
+type RecorderState = "Idle" | "Recording" | "Paused";
+type Mode = "simple" | "timeline";
+
+interface TimedAction {
+  at_ms: number;
+  action: ActionInfo;
+  enabled: boolean;
+  note: string | null;
+}
+
+interface Timeline {
+  actions: TimedAction[];
+}
+
+interface Profile {
+  name: string;
+  timeline: Timeline;
+  run: {
+    start_delay_ms: number;
+    speed: number;
+    repeat: { Times: number } | "Forever";
+  };
+}
 
 type ActionInfo =
   | { Click: { x: number; y: number; button: string } }
+  | { DoubleClick: { x: number; y: number; button: string } }
+  | { MouseDown: { x: number; y: number; button: string } }
+  | { MouseUp: { x: number; y: number; button: string } }
+  | { MouseMove: { x: number; y: number } }
+  | { Drag: { from: { x: number; y: number }; to: { x: number; y: number }; duration_ms: number } }
   | { KeyTap: { key: string } }
+  | { KeyDown: { key: string } }
+  | { KeyUp: { key: string } }
+  | { TextInput: { text: string } }
   | { Wait: { ms: number } }
-  | { [key: string]: unknown };
+  | { Scroll: { delta_x: number; delta_y: number } };
 
 type EngineEvent =
   | { StateChanged: { old: EngineState; new: EngineState } }
@@ -19,14 +51,32 @@ type EngineEvent =
   | "Completed"
   | { Error: { message: string } };
 
+interface RecordingStatus {
+  state: RecorderState;
+  event_count: number;
+  duration_ms: number;
+}
+
+interface LogEntry {
+  time: string;
+  message: string;
+}
+
+// Helpers
 function formatAction(action: ActionInfo): string {
-  if ("Click" in action) {
-    return `Click @ (${action.Click.x}, ${action.Click.y})`;
-  } else if ("KeyTap" in action) {
-    return `Key "${action.KeyTap.key}"`;
-  } else if ("Wait" in action) {
-    return `Wait ${action.Wait.ms}ms`;
-  }
+  if ("Click" in action) return `Click @ (${action.Click.x}, ${action.Click.y})`;
+  if ("DoubleClick" in action) return `DblClick @ (${action.DoubleClick.x}, ${action.DoubleClick.y})`;
+  if ("MouseDown" in action) return `MouseDown @ (${action.MouseDown.x}, ${action.MouseDown.y})`;
+  if ("MouseUp" in action) return `MouseUp @ (${action.MouseUp.x}, ${action.MouseUp.y})`;
+  if ("MouseMove" in action) return `Move → (${action.MouseMove.x}, ${action.MouseMove.y})`;
+  if ("Drag" in action) return `Drag (${action.Drag.from.x},${action.Drag.from.y}) → (${action.Drag.to.x},${action.Drag.to.y})`;
+  if ("KeyTap" in action) return `Key "${action.KeyTap.key}"`;
+  if ("KeyDown" in action) return `KeyDown "${action.KeyDown.key}"`;
+  if ("KeyUp" in action) return `KeyUp "${action.KeyUp.key}"`;
+  if ("TextInput" in action) return `Type "${action.TextInput.text}"`;
+  if ("Wait" in action) return `Wait ${action.Wait.ms}ms`;
+  if ("Scroll" in action) return `Scroll (${action.Scroll.delta_x}, ${action.Scroll.delta_y})`;
+  // Exhaustive check - should never reach here if all types are handled
   return JSON.stringify(action);
 }
 
@@ -39,40 +89,59 @@ function formatTime(): string {
   return `${h}:${m}:${s}.${ms}`;
 }
 
-interface LogEntry {
-  time: string;
-  message: string;
+function formatDuration(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  const mins = Math.floor(secs / 60);
+  const remSecs = secs % 60;
+  const remMs = ms % 1000;
+  if (mins > 0) {
+    return `${mins}:${remSecs.toString().padStart(2, "0")}.${Math.floor(remMs / 100)}`;
+  }
+  return `${secs}.${Math.floor(remMs / 100)}s`;
 }
 
 export default function App() {
-  // Engine state (always shown)
+  // Mode
+  const [mode, setMode] = React.useState<Mode>("simple");
+
+  // Engine state
   const [engineState, setEngineState] = React.useState<EngineState>("Idle");
   const [countdown, setCountdown] = React.useState<number | null>(null);
   const [executedCount, setExecutedCount] = React.useState<number>(0);
   const [iteration, setIteration] = React.useState<number>(0);
   const [lastAction, setLastAction] = React.useState<string | null>(null);
 
-  // Separate status messages
-  const [engineStatus, setEngineStatus] = React.useState<string>("Ready");
-  const [uiMessage, setUiMessage] = React.useState<string | null>(null);
+  // Recording state
+  const [recorderState, setRecorderState] = React.useState<RecorderState>("Idle");
+  const [recordingEventCount, setRecordingEventCount] = React.useState<number>(0);
+  const [recordingDuration, setRecordingDuration] = React.useState<number>(0);
 
-  // Use ref for logs to avoid closure issues
-  const [logs, setLogs] = React.useState<LogEntry[]>([]);
-  const logsRef = React.useRef<LogEntry[]>([]);
+  // Timeline state
+  const [timeline, setTimeline] = React.useState<TimedAction[]>([]);
+  const [selectedActionIdx, setSelectedActionIdx] = React.useState<number | null>(null);
 
-  // Config state
+  // Playback config
+  const [speed, setSpeed] = React.useState<number>(1.0);
+  const [repeatCount, setRepeatCount] = React.useState<string>("");
+  const [countdownSecs, setCountdownSecs] = React.useState<number>(3);
+
+  // Simple mode config
   const [actionType, setActionType] = React.useState<"click" | "key">("click");
   const [clickX, setClickX] = React.useState<number>(640);
   const [clickY, setClickY] = React.useState<number>(360);
   const [keyName, setKeyName] = React.useState<string>("Space");
   const [intervalMs, setIntervalMs] = React.useState<number>(1000);
-  const [repeatCount, setRepeatCount] = React.useState<string>("");
-  const [countdownSecs, setCountdownSecs] = React.useState<number>(3);
 
-  // Position picker state
-  const [isPicking, setIsPicking] = React.useState<boolean>(false);
+  // Profile state
+  const [profileName, setProfileName] = React.useState<string>("Untitled");
+  const [profiles, setProfiles] = React.useState<string[]>([]);
+
+  // UI state
+  const [engineStatus, setEngineStatus] = React.useState<string>("Ready");
+  const [uiMessage, setUiMessage] = React.useState<string | null>(null);
+  const [logs, setLogs] = React.useState<LogEntry[]>([]);
+  const logsRef = React.useRef<LogEntry[]>([]);
   const [mousePos, setMousePos] = React.useState<{ x: number; y: number } | null>(null);
-
   const logContainerRef = React.useRef<HTMLDivElement>(null);
 
   const addLog = React.useCallback((msg: string) => {
@@ -81,14 +150,19 @@ export default function App() {
     setLogs([...logsRef.current]);
   }, []);
 
-  // Auto-scroll to bottom when logs change
+  // Load profiles on mount
+  React.useEffect(() => {
+    invoke<string[]>("cmd_list_profiles").then(setProfiles).catch(console.error);
+  }, []);
+
+  // Auto-scroll logs
   React.useEffect(() => {
     if (logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [logs]);
 
-  // Clear UI message after delay
+  // Clear UI message
   React.useEffect(() => {
     if (uiMessage) {
       const timer = setTimeout(() => setUiMessage(null), 3000);
@@ -100,12 +174,22 @@ export default function App() {
   React.useEffect(() => {
     let unlistenEngine: UnlistenFn | null = null;
     let unlistenEmergency: UnlistenFn | null = null;
+    let unlistenRecording: UnlistenFn | null = null;
+    let unlistenMousePos: UnlistenFn | null = null;
+    let unlistenPositionPicked: UnlistenFn | null = null;
 
     const setupListeners = async () => {
       unlistenEngine = await listen<EngineEvent>("engine-event", (event) => {
         const e = event.payload;
-        console.log("Engine event:", e);
 
+        // Handle string literal "Completed" first to narrow the type
+        if (e === "Completed") {
+          setEngineStatus("✅ Completed!");
+          addLog("✓ All done");
+          return;
+        }
+
+        // Now e is narrowed to object types only
         if ("StateChanged" in e) {
           setEngineState(e.StateChanged.new);
           if (e.StateChanged.new === "Idle") {
@@ -116,8 +200,6 @@ export default function App() {
             setEngineStatus("Running");
           } else if (e.StateChanged.new === "Paused") {
             setEngineStatus("Paused");
-          } else if (e.StateChanged.new === "Stopped") {
-            setEngineStatus("Stopped");
           } else if (e.StateChanged.new === "Arming") {
             setEngineStatus("Arming...");
           }
@@ -135,9 +217,6 @@ export default function App() {
         } else if ("IterationCompleted" in e) {
           setIteration(e.IterationCompleted.iteration);
           addLog(`✓ Iter #${e.IterationCompleted.iteration}`);
-        } else if (e === "Completed") {
-          setEngineStatus("✅ Completed!");
-          addLog("✓ All done");
         } else if ("Error" in e) {
           setEngineStatus(`❌ ${e.Error.message}`);
           addLog(`❌ ${e.Error.message}`);
@@ -148,50 +227,41 @@ export default function App() {
         setEngineStatus("⚠️ Emergency stopped!");
         addLog("⚠️ EMERGENCY STOP");
       });
+
+      unlistenRecording = await listen<RecordingStatus>("recording-status", (event) => {
+        const s = event.payload;
+        setRecorderState(s.state);
+        setRecordingEventCount(s.event_count);
+        setRecordingDuration(s.duration_ms);
+      });
+
+      // Listen for global mouse position updates from backend (via rdev)
+      unlistenMousePos = await listen<{ x: number; y: number }>("mouse-position", (event) => {
+        setMousePos(event.payload);
+      });
+
+      // Listen for position picked events (global click while in pick mode)
+      unlistenPositionPicked = await listen<{ x: number; y: number }>("position-picked", (event) => {
+        const { x, y } = event.payload;
+        setClickX(x);
+        setClickY(y);
+        setUiMessage(`Picked: (${x}, ${y})`);
+        addLog(`📍 Picked: (${x}, ${y})`);
+      });
     };
 
     setupListeners();
-
     return () => {
-      if (unlistenEngine) unlistenEngine();
-      if (unlistenEmergency) unlistenEmergency();
+      unlistenEngine?.();
+      unlistenEmergency?.();
+      unlistenRecording?.();
+      unlistenMousePos?.();
+      unlistenPositionPicked?.();
     };
   }, [addLog]);
 
-  // Mouse position tracking
-  React.useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      setMousePos({ x: e.screenX, y: e.screenY });
-    };
-
-    const handleClick = (e: MouseEvent) => {
-      if (isPicking) {
-        setClickX(e.screenX);
-        setClickY(e.screenY);
-        setIsPicking(false);
-        setUiMessage(`Picked: (${e.screenX}, ${e.screenY})`);
-        addLog(`📍 Picked: (${e.screenX}, ${e.screenY})`);
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-
-    if (isPicking) {
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("click", handleClick, true);
-      return () => {
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("click", handleClick, true);
-      };
-    } else {
-      document.addEventListener("mousemove", handleMouseMove);
-      return () => {
-        document.removeEventListener("mousemove", handleMouseMove);
-      };
-    }
-  }, [isPicking, addLog]);
-
-  async function handleStart() {
+  // Handlers
+  async function handleStartSimple() {
     try {
       await invoke("set_simple_repeat", {
         actionType,
@@ -202,15 +272,26 @@ export default function App() {
         repeatCount: repeatCount ? parseInt(repeatCount, 10) : null,
         countdownSecs,
       });
-
       setExecutedCount(0);
       setIteration(0);
       logsRef.current = [];
       setLogs([]);
-
       await invoke("start_execution");
-      setEngineStatus("Starting...");
       addLog("▶ Started");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+      addLog(`❌ ${String(e)}`);
+    }
+  }
+
+  async function handleStartTimeline() {
+    try {
+      setExecutedCount(0);
+      setIteration(0);
+      logsRef.current = [];
+      setLogs([]);
+      await invoke("start_execution");
+      addLog("▶ Playing timeline");
     } catch (e) {
       setEngineStatus(`Failed: ${String(e)}`);
       addLog(`❌ ${String(e)}`);
@@ -253,34 +334,140 @@ export default function App() {
     }
   }
 
-  function handlePickPosition() {
-    setIsPicking(true);
-    setUiMessage("🎯 Click anywhere to pick...");
+  // Recording handlers
+  async function handleStartRecording() {
+    try {
+      await invoke("start_recording");
+      setRecorderState("Recording");
+      setRecordingEventCount(0);
+      setRecordingDuration(0);
+      addLog("🔴 Recording started");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+      addLog(`❌ ${String(e)}`);
+    }
   }
 
-  function handleCancelPick() {
-    setIsPicking(false);
-    setUiMessage(null);
+  async function handlePauseRecording() {
+    try {
+      await invoke("pause_recording");
+      addLog("⏸ Recording paused");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+    }
+  }
+
+  async function handleResumeRecording() {
+    try {
+      await invoke("resume_recording");
+      addLog("🔴 Recording resumed");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+    }
+  }
+
+  async function handleStopRecording() {
+    try {
+      const result = await invoke<Timeline>("stop_recording");
+      setTimeline(result.actions);
+      setRecorderState("Idle");
+      addLog(`⏹ Recording stopped: ${result.actions.length} actions`);
+      setMode("timeline");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+      addLog(`❌ ${String(e)}`);
+    }
+  }
+
+  // Profile handlers
+  async function handleSaveProfile() {
+    try {
+      await invoke("cmd_save_profile", { name: profileName });
+      const list = await invoke<string[]>("cmd_list_profiles");
+      setProfiles(list);
+      addLog(`💾 Saved: ${profileName}`);
+    } catch (e) {
+      addLog(`❌ ${String(e)}`);
+    }
+  }
+
+  async function handleLoadProfile(name: string) {
+    try {
+      const profile = await invoke<Profile>("cmd_load_profile", { name });
+      setProfileName(profile.name);
+      setTimeline(profile.timeline.actions);
+      setSpeed(profile.run.speed);
+      if (profile.run.repeat === "Forever") {
+        setRepeatCount("");
+      } else {
+        setRepeatCount(String(profile.run.repeat.Times));
+      }
+      setCountdownSecs(Math.floor(profile.run.start_delay_ms / 1000));
+      setMode("timeline");
+      addLog(`📂 Loaded: ${name}`);
+    } catch (e) {
+      addLog(`❌ ${String(e)}`);
+    }
+  }
+
+  // Timeline editing
+  function handleToggleAction(idx: number) {
+    setTimeline((prev) =>
+      prev.map((a, i) => (i === idx ? { ...a, enabled: !a.enabled } : a))
+    );
+  }
+
+  function handleDeleteAction(idx: number) {
+    setTimeline((prev) => prev.filter((_, i) => i !== idx));
+    setSelectedActionIdx(null);
+  }
+
+  function handleAdjustDelay(idx: number, delta: number) {
+    setTimeline((prev) =>
+      prev.map((a, i) =>
+        i === idx ? { ...a, at_ms: Math.max(0, a.at_ms + delta) } : a
+      )
+    );
   }
 
   const isIdle = engineState === "Idle";
   const isRunning = engineState === "Running";
   const isPaused = engineState === "Paused";
   const isArming = engineState === "Arming";
-
-  const displayStatus = uiMessage || engineStatus;
+  const isRecording = recorderState === "Recording";
+  const isRecordingPaused = recorderState === "Paused";
+  const canRecord = isIdle && recorderState === "Idle";
 
   return (
-    <div className={`app ${isPicking ? "picking-mode" : ""}`}>
+    <div className="app">
       <header className="topbar">
         <div className="brand">
           <div className="logo">tap</div>
           <div className="subtitle">Timed Action Performer</div>
         </div>
+        <div className="topbar-tabs">
+          <button
+            className={`tab ${mode === "simple" ? "active" : ""}`}
+            onClick={() => setMode("simple")}
+            disabled={!isIdle || isRecording}
+          >
+            Simple
+          </button>
+          <button
+            className={`tab ${mode === "timeline" ? "active" : ""}`}
+            onClick={() => setMode("timeline")}
+            disabled={!isIdle || isRecording}
+          >
+            Timeline
+          </button>
+        </div>
         <div className="topbar-actions">
           {mousePos && (
-            <span className="mouse-pos">
-              🖱️ ({mousePos.x}, {mousePos.y})
+            <span className="mouse-pos">🖱️ ({mousePos.x}, {mousePos.y})</span>
+          )}
+          {isRecording && (
+            <span className="recording-badge">
+              🔴 {formatDuration(recordingDuration)} | {recordingEventCount} events
             </span>
           )}
           <span className={`state-badge state-${engineState.toLowerCase()}`}>
@@ -291,124 +478,187 @@ export default function App() {
 
       <div className="layout">
         <aside className="sidebar">
-          <h3>Configuration</h3>
-          <div className="card">
-            <div className="field">
-              <label className="label">Action</label>
-              <select
-                value={actionType}
-                onChange={(e) => setActionType(e.target.value as "click" | "key")}
-                disabled={!isIdle}
-                className="input"
-              >
-                <option value="click">Click</option>
-                <option value="key">Key Press</option>
-              </select>
-            </div>
-
-            {actionType === "click" && (
-              <>
+          {mode === "simple" ? (
+            <>
+              <h3>Configuration</h3>
+              <div className="card">
                 <div className="field">
-                  <label className="label">X</label>
-                  <div className="input-with-button">
-                    <input
-                      type="number"
-                      value={clickX}
-                      onChange={(e) => setClickX(parseInt(e.target.value, 10) || 0)}
-                      disabled={!isIdle || isPicking}
-                      className="input"
-                    />
-                  </div>
+                  <label className="label">Action</label>
+                  <select
+                    value={actionType}
+                    onChange={(e) => setActionType(e.target.value as "click" | "key")}
+                    disabled={!isIdle}
+                    className="input"
+                  >
+                    <option value="click">Click</option>
+                    <option value="key">Key Press</option>
+                  </select>
                 </div>
-                <div className="field">
-                  <label className="label">Y</label>
-                  <div className="input-with-button">
-                    <input
-                      type="number"
-                      value={clickY}
-                      onChange={(e) => setClickY(parseInt(e.target.value, 10) || 0)}
-                      disabled={!isIdle || isPicking}
-                      className="input"
-                    />
-                    {isPicking ? (
-                      <button
-                        className="btn btn-pick picking"
-                        onClick={handleCancelPick}
-                        title="Cancel picking"
-                      >
-                        ✕ Cancel
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-pick"
-                        onClick={handlePickPosition}
+                {actionType === "click" && (
+                  <>
+                    <div className="field">
+                      <label className="label">X</label>
+                      <input
+                        type="number"
+                        value={clickX}
+                        onChange={(e) => setClickX(parseInt(e.target.value, 10) || 0)}
                         disabled={!isIdle}
-                        title="Click to pick position from screen"
-                      >
-                        🎯 Pick
-                      </button>
-                    )}
+                        className="input"
+                      />
+                    </div>
+                    <div className="field">
+                      <label className="label">Y</label>
+                      <div className="input-with-button">
+                        <input
+                          type="number"
+                          value={clickY}
+                          onChange={(e) => setClickY(parseInt(e.target.value, 10) || 0)}
+                          disabled={!isIdle}
+                          className="input"
+                        />
+                        <button
+                          className="btn btn-pick"
+                          onClick={async () => {
+                            // Open picker window
+                            await invoke("open_picker_window").catch(console.error);
+                          }}
+                          disabled={!isIdle}
+                        >
+                          🎯 Pick
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+                {actionType === "key" && (
+                  <div className="field">
+                    <label className="label">Key</label>
+                    <input
+                      type="text"
+                      value={keyName}
+                      onChange={(e) => setKeyName(e.target.value)}
+                      disabled={!isIdle}
+                      className="input"
+                      placeholder="e.g., Space, Enter"
+                    />
+                  </div>
+                )}
+                <div className="field">
+                  <label className="label">Interval</label>
+                  <div className="input-suffix">
+                    <input
+                      type="number"
+                      value={intervalMs}
+                      onChange={(e) => setIntervalMs(parseInt(e.target.value, 10) || 100)}
+                      disabled={!isIdle}
+                      className="input"
+                      min={50}
+                    />
+                    <span>ms</span>
                   </div>
                 </div>
-              </>
-            )}
-
-            {actionType === "key" && (
-              <div className="field">
-                <label className="label">Key</label>
-                <input
-                  type="text"
-                  value={keyName}
-                  onChange={(e) => setKeyName(e.target.value)}
-                  disabled={!isIdle}
-                  className="input"
-                  placeholder="e.g., Space, Enter, a"
-                />
+                <div className="field">
+                  <label className="label">Repeat</label>
+                  <input
+                    type="text"
+                    value={repeatCount}
+                    onChange={(e) => setRepeatCount(e.target.value)}
+                    disabled={!isIdle}
+                    className="input"
+                    placeholder="∞ (empty = forever)"
+                  />
+                </div>
+                <div className="field">
+                  <label className="label">Countdown</label>
+                  <div className="input-suffix">
+                    <input
+                      type="number"
+                      value={countdownSecs}
+                      onChange={(e) => setCountdownSecs(parseInt(e.target.value, 10) || 0)}
+                      disabled={!isIdle}
+                      className="input"
+                      min={0}
+                    />
+                    <span>sec</span>
+                  </div>
+                </div>
               </div>
-            )}
-
-            <div className="field">
-              <label className="label">Interval</label>
-              <div className="input-suffix">
-                <input
-                  type="number"
-                  value={intervalMs}
-                  onChange={(e) => setIntervalMs(parseInt(e.target.value, 10) || 100)}
-                  disabled={!isIdle}
-                  className="input"
-                  min={50}
-                />
-                <span>ms</span>
+            </>
+          ) : (
+            <>
+              <h3>Profiles</h3>
+              <div className="card">
+                <div className="field">
+                  <label className="label">Name</label>
+                  <input
+                    type="text"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    className="input"
+                  />
+                </div>
+                <button className="btn btn-block" onClick={handleSaveProfile} disabled={!isIdle}>
+                  💾 Save
+                </button>
+                {profiles.length > 0 && (
+                  <div className="profile-list">
+                    {profiles.map((p) => (
+                      <button
+                        key={p}
+                        className={`profile-item ${p === profileName ? "active" : ""}`}
+                        onClick={() => handleLoadProfile(p)}
+                        disabled={!isIdle}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-
-            <div className="field">
-              <label className="label">Repeat</label>
-              <input
-                type="text"
-                value={repeatCount}
-                onChange={(e) => setRepeatCount(e.target.value)}
-                disabled={!isIdle}
-                className="input"
-                placeholder="∞ (empty = forever)"
-              />
-            </div>
-
-            <div className="field">
-              <label className="label">Countdown</label>
-              <div className="input-suffix">
-                <input
-                  type="number"
-                  value={countdownSecs}
-                  onChange={(e) => setCountdownSecs(parseInt(e.target.value, 10) || 0)}
-                  disabled={!isIdle}
-                  className="input"
-                  min={0}
-                />
-                <span>sec</span>
+              <h3>Playback</h3>
+              <div className="card">
+                <div className="field">
+                  <label className="label">Speed</label>
+                  <select
+                    value={speed}
+                    onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                    disabled={!isIdle}
+                    className="input"
+                  >
+                    <option value="0.5">0.5x</option>
+                    <option value="1">1x</option>
+                    <option value="2">2x</option>
+                    <option value="4">4x</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label className="label">Repeat</label>
+                  <input
+                    type="text"
+                    value={repeatCount}
+                    onChange={(e) => setRepeatCount(e.target.value)}
+                    disabled={!isIdle}
+                    className="input"
+                    placeholder="∞ (empty = forever)"
+                  />
+                </div>
+                <div className="field">
+                  <label className="label">Countdown</label>
+                  <div className="input-suffix">
+                    <input
+                      type="number"
+                      value={countdownSecs}
+                      onChange={(e) => setCountdownSecs(parseInt(e.target.value, 10) || 0)}
+                      disabled={!isIdle}
+                      className="input"
+                      min={0}
+                    />
+                    <span>sec</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            </>
+          )}
 
           <h3>Safety</h3>
           <div className="card safety-card">
@@ -426,9 +676,30 @@ export default function App() {
           <h3>Controls</h3>
           <div className="card controls-card">
             <div className="control-buttons">
-              {isIdle && (
-                <button className="btn btn-primary btn-large" onClick={handleStart}>
-                  ▶ Start
+              {mode === "timeline" && canRecord && (
+                <button className="btn btn-record" onClick={handleStartRecording}>
+                  🔴 Record
+                </button>
+              )}
+              {isRecording && (
+                <>
+                  <button className="btn" onClick={handlePauseRecording}>⏸ Pause</button>
+                  <button className="btn btn-danger" onClick={handleStopRecording}>⏹ Stop</button>
+                </>
+              )}
+              {isRecordingPaused && (
+                <>
+                  <button className="btn btn-record" onClick={handleResumeRecording}>🔴 Resume</button>
+                  <button className="btn btn-danger" onClick={handleStopRecording}>⏹ Stop</button>
+                </>
+              )}
+              {recorderState === "Idle" && isIdle && (
+                <button
+                  className="btn btn-primary btn-large"
+                  onClick={mode === "simple" ? handleStartSimple : handleStartTimeline}
+                  disabled={mode === "timeline" && timeline.length === 0}
+                >
+                  ▶ Play
                 </button>
               )}
               {isArming && (
@@ -439,22 +710,14 @@ export default function App() {
               )}
               {isRunning && (
                 <>
-                  <button className="btn" onClick={handlePause}>
-                    ⏸ Pause
-                  </button>
-                  <button className="btn btn-danger" onClick={handleStop}>
-                    ⏹ Stop
-                  </button>
+                  <button className="btn" onClick={handlePause}>⏸ Pause</button>
+                  <button className="btn btn-danger" onClick={handleStop}>⏹ Stop</button>
                 </>
               )}
               {isPaused && (
                 <>
-                  <button className="btn btn-primary" onClick={handleResume}>
-                    ▶ Resume
-                  </button>
-                  <button className="btn btn-danger" onClick={handleStop}>
-                    ⏹ Stop
-                  </button>
+                  <button className="btn btn-primary" onClick={handleResume}>▶ Resume</button>
+                  <button className="btn btn-danger" onClick={handleStop}>⏹ Stop</button>
                 </>
               )}
             </div>
@@ -479,14 +742,58 @@ export default function App() {
               </div>
             )}
 
-            <button
-              className="btn btn-emergency"
-              onClick={handleEmergencyStop}
-              disabled={isIdle}
-            >
+            <button className="btn btn-emergency" onClick={handleEmergencyStop} disabled={isIdle && recorderState === "Idle"}>
               ⚠️ Emergency Stop
             </button>
           </div>
+
+          {mode === "timeline" && (
+            <>
+              <h3>Timeline ({timeline.length} actions)</h3>
+              <div className="card timeline-card">
+                {timeline.length === 0 ? (
+                  <div className="timeline-empty">
+                    No actions yet. Click "Record" to capture actions.
+                  </div>
+                ) : (
+                  <div className="timeline-list">
+                    {timeline.map((action, idx) => (
+                      <div
+                        key={idx}
+                        className={`timeline-item ${!action.enabled ? "disabled" : ""} ${selectedActionIdx === idx ? "selected" : ""}`}
+                        onClick={() => setSelectedActionIdx(idx)}
+                      >
+                        <span className="timeline-time">{action.at_ms}ms</span>
+                        <span className="timeline-action">{formatAction(action.action)}</span>
+                        <div className="timeline-actions">
+                          <button
+                            className="btn btn-sm"
+                            onClick={(e) => { e.stopPropagation(); handleAdjustDelay(idx, -50); }}
+                            title="-50ms"
+                          >-</button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={(e) => { e.stopPropagation(); handleAdjustDelay(idx, 50); }}
+                            title="+50ms"
+                          >+</button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={(e) => { e.stopPropagation(); handleToggleAction(idx); }}
+                            title={action.enabled ? "Disable" : "Enable"}
+                          >{action.enabled ? "☑" : "☐"}</button>
+                          <button
+                            className="btn btn-sm btn-danger"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteAction(idx); }}
+                            title="Delete"
+                          >🗑</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           <h3>Activity Log</h3>
           <div className="card log-card">
@@ -507,22 +814,17 @@ export default function App() {
       </div>
 
       <footer className="statusbar">
-        <span className={`status-state state-${engineState.toLowerCase()}`}>
-          {engineState}
-        </span>
+        <span className={`status-state state-${engineState.toLowerCase()}`}>{engineState}</span>
         <span className="status-divider">|</span>
-        <span className="status-value">{displayStatus}</span>
+        <span className="status-value">{uiMessage || engineStatus}</span>
         {(isRunning || isPaused) && (
           <>
             <span className="status-divider">|</span>
-            <span className="status-stats">
-              {executedCount} actions, {iteration} iters
-            </span>
+            <span className="status-stats">{executedCount} actions, {iteration} iters</span>
           </>
         )}
       </footer>
 
-      {isPicking && <div className="picking-overlay" onClick={handleCancelPick} />}
     </div>
   );
 }

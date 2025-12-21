@@ -432,9 +432,24 @@ select.input {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.3);
     z-index: 1000;
     cursor: crosshair;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.picking-hint {
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 16px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    text-align: center;
+    line-height: 1.6;
+    pointer-events: auto;
+    cursor: pointer;
 }
 
 /* ===== Last Action Display ===== */
@@ -509,4 +524,190 @@ select.input {
   font-style: italic;
   text-align: center;
   padding: 20px;
+}
+
+/* ===== Topbar Tabs ===== */
+.topbar-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tab.active {
+  background: linear-gradient(135deg, rgba(110, 231, 255, 0.2), rgba(168, 85, 247, 0.18));
+  color: var(--text);
+}
+
+.tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ===== Recording Badge ===== */
+.recording-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(239, 68, 68, 0.2);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  animation: pulse 1s infinite;
+}
+
+/* ===== Record Button ===== */
+.btn-record {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.4), rgba(239, 68, 68, 0.25));
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.btn-record:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.6), rgba(239, 68, 68, 0.4));
+}
+
+/* ===== Block Button ===== */
+.btn-block {
+  width: 100%;
+  margin-top: 8px;
+}
+
+/* ===== Small Button ===== */
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+/* ===== Profile List ===== */
+.profile-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.profile-item {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.profile-item:hover:not(:disabled) {
+  background: rgba(110, 231, 255, 0.1);
+  border-color: var(--accent);
+}
+
+.profile-item.active {
+  background: rgba(110, 231, 255, 0.15);
+  border-color: var(--accent);
+}
+
+.profile-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== Timeline Card ===== */
+.timeline-card {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.timeline-empty {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  padding: 32px 16px;
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timeline-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.timeline-item:hover {
+  background: rgba(110, 231, 255, 0.08);
+  border-color: var(--border);
+}
+
+.timeline-item.selected {
+  background: rgba(110, 231, 255, 0.12);
+  border-color: var(--accent);
+}
+
+.timeline-item.disabled {
+  opacity: 0.4;
+}
+
+.timeline-item.disabled .timeline-action {
+  text-decoration: line-through;
+}
+
+.timeline-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 60px;
+}
+
+.timeline-action {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.timeline-item:hover .timeline-actions {
+  opacity: 1;
 }

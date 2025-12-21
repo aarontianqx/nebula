@@ -3,13 +3,16 @@ name = "tap-platform"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "tap platform adapters (input injection, permissions)."
+description = "tap platform adapters (input injection, input hook for recording)."
 
 [dependencies]
 tap-core = { path = "../tap-core" }
 thiserror = "2"
 tracing = "0.1"
 enigo = "0.3"
+rdev = "0.5"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 # Windows-specific deps if needed later

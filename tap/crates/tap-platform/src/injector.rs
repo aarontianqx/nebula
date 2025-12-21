@@ -146,6 +146,35 @@ impl InputInjector for EnigoInjector {
                     .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
             }
 
+            Action::MouseDown { x, y, button } => {
+                debug!(x, y, ?button, "injecting mouse down");
+                enigo
+                    .move_mouse(*x, *y, Coordinate::Abs)
+                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+                let btn = mouse_button_to_enigo(*button);
+                enigo
+                    .button(btn, Direction::Press)
+                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            }
+
+            Action::MouseUp { x, y, button } => {
+                debug!(x, y, ?button, "injecting mouse up");
+                enigo
+                    .move_mouse(*x, *y, Coordinate::Abs)
+                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+                let btn = mouse_button_to_enigo(*button);
+                enigo
+                    .button(btn, Direction::Release)
+                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            }
+
+            Action::MouseMove { x, y } => {
+                debug!(x, y, "injecting mouse move");
+                enigo
+                    .move_mouse(*x, *y, Coordinate::Abs)
+                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            }
+
             Action::Wait { ms } => {
                 debug!(ms, "wait action - handled by executor, not injector");
                 // Wait is handled by the execution engine, not the injector
