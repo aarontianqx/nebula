@@ -3,6 +3,18 @@
 //! Design goal: keep this crate UI-agnostic and platform-agnostic.
 //! Platform specific I/O (hook/inject) lives in `tap-platform`.
 
+mod engine;
+mod storage;
+
+pub use engine::{
+    ActionExecutor, ActionExecutorAdapter, EngineCommand, EngineEvent, EngineState,
+    InjectorExecutor, Player, PlayerHandle,
+};
+pub use storage::{
+    delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
+    load_last_used, load_profile, save_last_used, save_profile, StorageError, StorageResult,
+};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
