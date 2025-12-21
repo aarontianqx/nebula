@@ -1,5 +1,7 @@
 //! Execution engine: state machine + player thread.
 
+use crate::condition::{Condition, ConditionColor, ConditionEvaluator, ConditionResult};
+use crate::variables::VariableStore;
 use crate::{Action, Profile, Repeat, TimedAction};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -63,6 +65,18 @@ pub enum EngineEvent {
     Completed,
     /// Error occurred.
     Error { message: String },
+    /// Waiting for condition to be satisfied.
+    WaitingForCondition { condition: String },
+    /// Condition was satisfied.
+    ConditionSatisfied { condition: String },
+    /// Condition timed out.
+    ConditionTimeout { condition: String },
+    /// Counter value changed.
+    CounterChanged { key: String, value: i32 },
+    /// Target window not focused (pausing).
+    TargetWindowUnfocused { title: Option<String>, process: Option<String> },
+    /// Target window focused again (resuming).
+    TargetWindowFocused,
 }
 
 /// Handle to control the player thread.
@@ -105,27 +119,42 @@ pub trait ActionExecutor: Send + Sync {
     fn execute(&self, action: &Action) -> Result<(), String>;
 }
 
+/// Trait for platform-level condition evaluation (implemented by tap-platform adapter).
+pub trait PlatformConditionProvider: Send + Sync {
+    /// Check if a window is focused.
+    fn is_window_focused(&self, title: Option<&str>, process: Option<&str>) -> bool;
+    /// Check if a window exists.
+    fn window_exists(&self, title: Option<&str>, process: Option<&str>) -> bool;
+    /// Get the pixel color at the given coordinates.
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor>;
+}
+
 /// Player: runs in a separate thread, executes timeline actions.
-pub struct Player<E: ActionExecutor> {
+pub struct Player<E: ActionExecutor, P: PlatformConditionProvider> {
     executor: Arc<E>,
+    platform: Arc<P>,
     profile: Arc<Mutex<Option<Profile>>>,
     state: Arc<Mutex<EngineState>>,
+    variables: Arc<Mutex<VariableStore>>,
     cmd_rx: Receiver<EngineCommand>,
     event_tx: Sender<EngineEvent>,
 }
 
-impl<E: ActionExecutor + 'static> Player<E> {
+impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player<E, P> {
     /// Create a new player and return a handle to control it.
-    pub fn spawn(executor: E) -> PlayerHandle {
+    pub fn spawn(executor: E, platform: P) -> PlayerHandle {
         let (cmd_tx, cmd_rx) = bounded(32);
         let (event_tx, event_rx) = bounded(256);
         let state = Arc::new(Mutex::new(EngineState::Idle));
         let profile = Arc::new(Mutex::new(None));
+        let variables = Arc::new(Mutex::new(VariableStore::new()));
 
         let player = Player {
             executor: Arc::new(executor),
+            platform: Arc::new(platform),
             profile: profile.clone(),
             state: state.clone(),
+            variables,
             cmd_rx,
             event_tx,
         };
@@ -221,6 +250,9 @@ impl<E: ActionExecutor + 'static> Player<E> {
             thread::sleep(Duration::from_secs(1));
         }
 
+        // Reset variables at start
+        self.variables.lock().unwrap().clear();
+
         // Start running
         self.transition_state(EngineState::Running);
 
@@ -232,7 +264,7 @@ impl<E: ActionExecutor + 'static> Player<E> {
             iteration += 1;
 
             // Execute one iteration of the timeline
-            if !self.execute_timeline(&profile.timeline.actions, speed) {
+            if !self.execute_timeline(&profile.timeline.actions, speed, &profile) {
                 // Stopped during execution
                 break;
             }
@@ -255,7 +287,7 @@ impl<E: ActionExecutor + 'static> Player<E> {
     }
 
     /// Execute a timeline. Returns false if stopped.
-    fn execute_timeline(&self, actions: &[TimedAction], speed: f32) -> bool {
+    fn execute_timeline(&self, actions: &[TimedAction], speed: f32, profile: &Profile) -> bool {
         let start = Instant::now();
 
         for (index, timed_action) in actions.iter().enumerate() {
@@ -275,62 +307,40 @@ impl<E: ActionExecutor + 'static> Player<E> {
                 continue;
             }
 
+            // Check target window if configured
+            if !self.wait_for_target_window(profile) {
+                return false;
+            }
+
             // Wait until the scheduled time
             let target_ms = (timed_action.at_ms as f32 / speed) as u64;
             let elapsed = start.elapsed().as_millis() as u64;
             if target_ms > elapsed {
                 let wait_ms = target_ms - elapsed;
-                // Wait in small chunks to allow stop checks
-                let mut waited = 0u64;
-                while waited < wait_ms {
-                    if self.should_stop() {
-                        return false;
-                    }
-                    if self.get_state() == EngineState::Paused {
-                        thread::sleep(Duration::from_millis(50));
-                        continue;
-                    }
-                    let chunk = (wait_ms - waited).min(50);
-                    thread::sleep(Duration::from_millis(chunk));
-                    waited += chunk;
+                self.interruptible_sleep(wait_ms);
+                if self.should_stop() {
+                    return false;
                 }
             }
 
-            // Handle Wait action specially (it's a delay, not an injection)
-            if let Action::Wait { ms } = &timed_action.action {
-                debug!(ms, "executing wait action");
-                let wait_ms = (*ms as f32 / speed) as u64;
-                let mut waited = 0u64;
-                while waited < wait_ms {
-                    if self.should_stop() {
-                        return false;
-                    }
-                    if self.get_state() == EngineState::Paused {
-                        thread::sleep(Duration::from_millis(50));
-                        continue;
-                    }
-                    let chunk = (wait_ms - waited).min(50);
-                    thread::sleep(Duration::from_millis(chunk));
-                    waited += chunk;
+            // Execute the action using the new execute_action method
+            let result = self.execute_action(&timed_action.action, index);
+
+            match result {
+                ActionResult::Completed => {
+                    self.emit(EngineEvent::ActionCompleted { index });
                 }
-                self.emit(EngineEvent::ActionCompleted { index });
-                continue;
+                ActionResult::Stopped => {
+                    return false;
+                }
+                ActionResult::Exit => {
+                    return false; // Exit macro
+                }
+                ActionResult::Timeout => {
+                    // Continue to next action on timeout
+                    self.emit(EngineEvent::ActionCompleted { index });
+                }
             }
-
-            // Execute the action
-            self.emit(EngineEvent::ActionStarting {
-                index,
-                action: timed_action.action.clone(),
-            });
-
-            if let Err(e) = self.executor.execute(&timed_action.action) {
-                error!(index, error = %e, "action execution failed");
-                self.emit(EngineEvent::Error {
-                    message: format!("Action {} failed: {}", index, e),
-                });
-            }
-
-            self.emit(EngineEvent::ActionCompleted { index });
         }
 
         true
@@ -388,6 +398,226 @@ impl<E: ActionExecutor + 'static> Player<E> {
         if let Err(e) = self.event_tx.try_send(event) {
             warn!("Failed to emit event: {}", e);
         }
+    }
+
+    /// Check if target window is focused (if target_window is set).
+    fn check_target_window(&self, profile: &Profile) -> bool {
+        if let Some(ref target) = profile.target_window {
+            if target.pause_when_unfocused {
+                return self.platform.is_window_focused(
+                    target.title.as_deref(),
+                    target.process.as_deref(),
+                );
+            }
+        }
+        true // No target window binding, always OK
+    }
+
+    /// Wait for target window to be focused.
+    fn wait_for_target_window(&self, profile: &Profile) -> bool {
+        if let Some(ref target) = profile.target_window {
+            if !self.check_target_window(profile) {
+                self.emit(EngineEvent::TargetWindowUnfocused {
+                    title: target.title.clone(),
+                    process: target.process.clone(),
+                });
+
+                // Wait until window is focused again or stopped
+                loop {
+                    if self.should_stop() {
+                        return false;
+                    }
+                    if self.check_target_window(profile) {
+                        self.emit(EngineEvent::TargetWindowFocused);
+                        return true;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+        true
+    }
+
+    /// Execute a single action (including new Phase 3 actions).
+    fn execute_action(&self, action: &Action, index: usize) -> ActionResult {
+        match action {
+            // Phase 3: Counter actions
+            Action::SetCounter { key, value } => {
+                self.variables.lock().unwrap().set_counter(key, *value);
+                self.emit(EngineEvent::CounterChanged {
+                    key: key.clone(),
+                    value: *value,
+                });
+                ActionResult::Completed
+            }
+            Action::IncrCounter { key } => {
+                let new_value = self.variables.lock().unwrap().incr_counter(key);
+                self.emit(EngineEvent::CounterChanged {
+                    key: key.clone(),
+                    value: new_value,
+                });
+                ActionResult::Completed
+            }
+            Action::DecrCounter { key } => {
+                let new_value = self.variables.lock().unwrap().decr_counter(key);
+                self.emit(EngineEvent::CounterChanged {
+                    key: key.clone(),
+                    value: new_value,
+                });
+                ActionResult::Completed
+            }
+            Action::ResetCounter { key } => {
+                self.variables.lock().unwrap().reset_counter(key);
+                self.emit(EngineEvent::CounterChanged {
+                    key: key.clone(),
+                    value: 0,
+                });
+                ActionResult::Completed
+            }
+
+            // Phase 3: Exit action
+            Action::Exit => ActionResult::Exit,
+
+            // Phase 3: WaitUntil action
+            Action::WaitUntil {
+                condition,
+                timeout_ms,
+                poll_interval_ms,
+            } => {
+                let cond_str = format!("{:?}", condition);
+                self.emit(EngineEvent::WaitingForCondition {
+                    condition: cond_str.clone(),
+                });
+
+                let start = Instant::now();
+                loop {
+                    if self.should_stop() {
+                        return ActionResult::Stopped;
+                    }
+
+                    // Evaluate condition
+                    let result = self.evaluate_condition(condition);
+                    if result.is_satisfied() {
+                        self.emit(EngineEvent::ConditionSatisfied {
+                            condition: cond_str,
+                        });
+                        return ActionResult::Completed;
+                    }
+
+                    // Check timeout
+                    if let Some(timeout) = timeout_ms {
+                        if start.elapsed().as_millis() as u64 >= *timeout {
+                            self.emit(EngineEvent::ConditionTimeout {
+                                condition: cond_str,
+                            });
+                            return ActionResult::Timeout;
+                        }
+                    }
+
+                    // Wait before next poll
+                    self.interruptible_sleep(*poll_interval_ms);
+                }
+            }
+
+            // Phase 3: Conditional action
+            Action::Conditional {
+                condition,
+                then_action,
+                else_action,
+            } => {
+                let result = self.evaluate_condition(condition);
+                if result.is_satisfied() {
+                    self.execute_action(then_action, index)
+                } else if let Some(else_act) = else_action {
+                    self.execute_action(else_act, index)
+                } else {
+                    ActionResult::Completed
+                }
+            }
+
+            // Wait action (special handling for interruptibility)
+            Action::Wait { ms } => {
+                self.interruptible_sleep(*ms);
+                ActionResult::Completed
+            }
+
+            // All other actions: delegate to executor
+            _ => {
+                self.emit(EngineEvent::ActionStarting {
+                    index,
+                    action: action.clone(),
+                });
+
+                if let Err(e) = self.executor.execute(action) {
+                    error!(index, error = %e, "action execution failed");
+                    self.emit(EngineEvent::Error {
+                        message: format!("Action {} failed: {}", index, e),
+                    });
+                }
+
+                ActionResult::Completed
+            }
+        }
+    }
+
+    /// Evaluate a condition using the platform provider and variables.
+    fn evaluate_condition(&self, condition: &Condition) -> ConditionResult {
+        // Create an evaluator that combines platform and variables
+        let evaluator = RuntimeConditionEvaluator {
+            platform: &*self.platform,
+            variables: &self.variables,
+        };
+        evaluator.evaluate(condition)
+    }
+
+    /// Sleep for the given duration, but can be interrupted by stop commands.
+    fn interruptible_sleep(&self, ms: u64) {
+        let mut waited = 0u64;
+        while waited < ms {
+            if self.should_stop() {
+                return;
+            }
+            if self.get_state() == EngineState::Paused {
+                thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            let chunk = (ms - waited).min(50);
+            thread::sleep(Duration::from_millis(chunk));
+            waited += chunk;
+        }
+    }
+}
+
+/// Result of executing an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionResult {
+    Completed,
+    Stopped,
+    Timeout,
+    Exit,
+}
+
+/// Runtime condition evaluator combining platform APIs and variable store.
+struct RuntimeConditionEvaluator<'a, P: PlatformConditionProvider> {
+    platform: &'a P,
+    variables: &'a Mutex<VariableStore>,
+}
+
+impl<'a, P: PlatformConditionProvider> ConditionEvaluator for RuntimeConditionEvaluator<'a, P> {
+    fn is_window_focused(&self, title: Option<&str>, process: Option<&str>) -> bool {
+        self.platform.is_window_focused(title, process)
+    }
+
+    fn window_exists(&self, title: Option<&str>, process: Option<&str>) -> bool {
+        self.platform.window_exists(title, process)
+    }
+
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor> {
+        self.platform.get_pixel_color(x, y)
+    }
+
+    fn get_counter(&self, key: &str) -> i32 {
+        self.variables.lock().unwrap().get_counter(key)
     }
 }
 

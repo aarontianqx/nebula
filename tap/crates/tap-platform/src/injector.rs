@@ -179,6 +179,18 @@ impl InputInjector for EnigoInjector {
                 debug!(ms, "wait action - handled by executor, not injector");
                 // Wait is handled by the execution engine, not the injector
             }
+
+            // Phase 3: These actions are handled by the execution engine, not the injector
+            Action::WaitUntil { .. }
+            | Action::Conditional { .. }
+            | Action::SetCounter { .. }
+            | Action::IncrCounter { .. }
+            | Action::DecrCounter { .. }
+            | Action::ResetCounter { .. }
+            | Action::Exit => {
+                debug!("control action - handled by executor, not injector");
+                // These are control flow actions handled by the engine
+            }
         }
 
         Ok(())

@@ -3,13 +3,18 @@
 //! Design goal: keep this crate UI-agnostic and platform-agnostic.
 //! Platform specific I/O (hook/inject) lives in `tap-platform`.
 
+mod condition;
 mod engine;
 mod recorder;
 mod storage;
+mod variables;
 
+pub use condition::{
+    CompareOp, Condition, ConditionColor, ConditionEvaluator, ConditionResult, WaitUntilConfig,
+};
 pub use engine::{
     ActionExecutor, ActionExecutorAdapter, EngineCommand, EngineEvent, EngineState,
-    InjectorExecutor, Player, PlayerHandle,
+    InjectorExecutor, PlatformConditionProvider, Player, PlayerHandle,
 };
 pub use recorder::{
     BufferedEvent, MouseButtonRaw, RawEventType, Recorder, RecorderConfig, RecorderEvent,
@@ -19,6 +24,7 @@ pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
     load_last_used, load_profile, save_last_used, save_profile, StorageError, StorageResult,
 };
+pub use variables::VariableStore;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +33,25 @@ pub struct Profile {
     pub name: String,
     pub timeline: Timeline,
     pub run: RunConfig,
+    /// Target window binding (Phase 3).
+    #[serde(default)]
+    pub target_window: Option<TargetWindow>,
+}
+
+/// Target window binding for a profile.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TargetWindow {
+    /// Window title pattern (partial match).
+    pub title: Option<String>,
+    /// Process name pattern (partial match).
+    pub process: Option<String>,
+    /// Whether to pause when target window is not focused.
+    #[serde(default = "default_pause_when_unfocused")]
+    pub pause_when_unfocused: bool,
+}
+
+fn default_pause_when_unfocused() -> bool {
+    true
 }
 
 impl Default for Profile {
@@ -41,6 +66,7 @@ impl Default for Profile {
                 ],
             },
             run: RunConfig { repeat: Repeat::Forever, start_delay_ms: 0, speed: 1.0 },
+            target_window: None,
         }
     }
 }
@@ -108,6 +134,31 @@ pub enum Action {
     TextInput { text: String },
     /// Wait/delay.
     Wait { ms: u64 },
+
+    // === Phase 3: Condition & Variable Actions ===
+
+    /// Wait until a condition is satisfied or timeout.
+    WaitUntil {
+        condition: Condition,
+        timeout_ms: Option<u64>,
+        poll_interval_ms: u64,
+    },
+    /// Conditional execution: if condition then action, else optional action.
+    Conditional {
+        condition: Condition,
+        then_action: Box<Action>,
+        else_action: Option<Box<Action>>,
+    },
+    /// Set a counter to a value.
+    SetCounter { key: String, value: i32 },
+    /// Increment a counter by 1.
+    IncrCounter { key: String },
+    /// Decrement a counter by 1.
+    DecrCounter { key: String },
+    /// Reset a counter to 0.
+    ResetCounter { key: String },
+    /// Exit/stop the macro (used for exit conditions).
+    Exit,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
