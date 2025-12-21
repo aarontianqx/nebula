@@ -1,0 +1,85 @@
+/* Picker overlay styles */
+
+.picker-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  cursor: crosshair;
+  overflow: hidden;
+}
+
+.picker-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+/* Horizontal crosshair line */
+.crosshair-h {
+  position: fixed;
+  left: 0;
+  width: 100vw;
+  height: 1px;
+  background: rgba(255, 100, 100, 0.8);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Vertical crosshair line */
+.crosshair-v {
+  position: fixed;
+  top: 0;
+  width: 1px;
+  height: 100vh;
+  background: rgba(255, 100, 100, 0.8);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Center crosshair marker */
+.crosshair-center {
+  position: fixed;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #ff6464;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 11;
+  box-shadow: 0 0 8px rgba(255, 100, 100, 0.5);
+}
+
+/* Coordinate display box */
+.coord-display {
+  position: fixed;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.coord-value {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ff6464;
+}
+
+.coord-hint {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+

@@ -1,11 +1,25 @@
 //! tap-platform: platform-specific I/O boundary for tap.
 //!
-//! This crate defines traits for hooking global input and injecting actions,
-//! and provides OS-specific implementations (Win/mac) via `enigo`.
+//! This crate provides:
+//! - Input injection (mouse/keyboard simulation) via `enigo`
+//! - Global input hook for recording via `rdev`
+//! - Global mouse position tracking via `rdev`
+//! - DPI scaling utilities for high-resolution displays
 
+mod dpi;
 mod injector;
+mod input_hook;
+mod mouse_tracker;
 
+pub use dpi::{get_primary_scale_factor, set_dpi_aware, ScaledCoords};
 pub use injector::{EnigoInjector, InputInjector, NoopInjector};
+pub use input_hook::{
+    start_input_hook, InputEventType, InputHookHandle, MouseButtonType, RawInputEvent,
+};
+pub use mouse_tracker::{
+    start_mouse_tracker, MousePosition, MouseTrackerCommand, MouseTrackerConfig,
+    MouseTrackerEvent, MouseTrackerHandle,
+};
 
 use thiserror::Error;
 
