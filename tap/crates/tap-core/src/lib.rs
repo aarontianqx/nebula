@@ -4,11 +4,16 @@
 //! Platform specific I/O (hook/inject) lives in `tap-platform`.
 
 mod engine;
+mod recorder;
 mod storage;
 
 pub use engine::{
     ActionExecutor, ActionExecutorAdapter, EngineCommand, EngineEvent, EngineState,
     InjectorExecutor, Player, PlayerHandle,
+};
+pub use recorder::{
+    BufferedEvent, MouseButtonRaw, RawEventType, Recorder, RecorderConfig, RecorderEvent,
+    RecorderState,
 };
 pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
@@ -79,14 +84,29 @@ impl TimedAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Action {
+    /// Single click at position.
     Click { x: i32, y: i32, button: MouseButton },
+    /// Double click at position.
     DoubleClick { x: i32, y: i32, button: MouseButton },
+    /// Mouse button down (for drag operations).
+    MouseDown { x: i32, y: i32, button: MouseButton },
+    /// Mouse button up (for drag operations).
+    MouseUp { x: i32, y: i32, button: MouseButton },
+    /// Move mouse to position.
+    MouseMove { x: i32, y: i32 },
+    /// Drag from one point to another.
     Drag { from: Point, to: Point, duration_ms: u64 },
+    /// Scroll wheel.
     Scroll { delta_x: i32, delta_y: i32 },
+    /// Press and release a key.
     KeyTap { key: String },
+    /// Key down (for key combos).
     KeyDown { key: String },
+    /// Key up (for key combos).
     KeyUp { key: String },
+    /// Type text string.
     TextInput { text: String },
+    /// Wait/delay.
     Wait { ms: u64 },
 }
 
