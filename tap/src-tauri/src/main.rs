@@ -5,10 +5,11 @@ mod state;
 use state::{AppState, MousePositionUpdate, PositionPickedEvent, RecordingStatus};
 use std::sync::Mutex;
 use tap_core::{
-    delete_profile, list_profiles, load_last_used, load_profile, save_last_used, save_profile,
+    delete_profile, export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, list_profiles,
+    load_last_used, load_profile, parse_yaml, save_last_used, save_profile, validate_profile,
     Action, ConditionColor, EngineCommand, EngineEvent, EngineState, InjectorExecutor,
     MouseButtonRaw, PlatformConditionProvider, Player, Profile, RawEventType, Recorder,
-    RecorderState, Repeat, RunConfig, Timeline, TimedAction, VariableStore,
+    RecorderState, Repeat, RunConfig, Timeline, TimedAction, ValidationError, VariableStore,
 };
 use tap_platform::{
     get_pixel_color, is_window_focused, list_windows, set_dpi_aware, start_input_hook,
@@ -475,6 +476,166 @@ fn cmd_check_window_exists(title: Option<String>, process: Option<String>) -> bo
     window_exists(title.as_deref(), process.as_deref())
 }
 
+// === Phase 4: DSL Commands ===
+
+/// Variable definition for frontend.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VariableDefinitionResponse {
+    pub name: String,
+    pub var_type: String,
+    pub default: Option<serde_json::Value>,
+    pub description: Option<String>,
+}
+
+/// Validation error for frontend.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ValidationErrorResponse {
+    pub path: String,
+    pub message: String,
+    pub line: Option<usize>,
+}
+
+impl From<ValidationError> for ValidationErrorResponse {
+    fn from(e: ValidationError) -> Self {
+        Self {
+            path: e.path,
+            message: e.message,
+            line: e.line,
+        }
+    }
+}
+
+#[tauri::command]
+fn cmd_export_yaml(state: State<'_, Mutex<AppState>>) -> Result<String, String> {
+    let app_state = state.lock().unwrap();
+    export_to_yaml(&app_state.profile).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_export_yaml_with_metadata(
+    state: State<'_, Mutex<AppState>>,
+    description: Option<String>,
+    author: Option<String>,
+) -> Result<String, String> {
+    let app_state = state.lock().unwrap();
+    export_to_yaml_with_metadata(&app_state.profile, description, author).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_import_yaml(
+    state: State<'_, Mutex<AppState>>,
+    yaml_content: String,
+) -> Result<Profile, String> {
+    // Parse and validate
+    let dsl_profile = parse_yaml(&yaml_content).map_err(|e| e.to_string())?;
+    
+    // Validate
+    validate_profile(&dsl_profile).map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    
+    // Convert to Profile
+    let profile = import_from_yaml(&yaml_content).map_err(|e| e.to_string())?;
+    
+    // Update app state
+    let mut app_state = state.lock().unwrap();
+    app_state.profile = profile.clone();
+    
+    Ok(profile)
+}
+
+#[tauri::command]
+fn cmd_validate_yaml(yaml_content: String) -> Result<(), Vec<ValidationErrorResponse>> {
+    let dsl_profile = parse_yaml(&yaml_content).map_err(|e| {
+        vec![ValidationErrorResponse {
+            path: "".to_string(),
+            message: e.to_string(),
+            line: None,
+        }]
+    })?;
+    
+    validate_profile(&dsl_profile).map_err(|errors| {
+        errors.into_iter().map(|e| e.into()).collect()
+    })
+}
+
+#[tauri::command]
+fn cmd_get_macro_variables(state: State<'_, Mutex<AppState>>) -> Vec<VariableDefinitionResponse> {
+    let app_state = state.lock().unwrap();
+    
+    // Export to YAML and parse to get variable definitions
+    if let Ok(yaml) = export_to_yaml(&app_state.profile) {
+        if let Ok(dsl_profile) = parse_yaml(&yaml) {
+            return dsl_profile
+                .variables
+                .into_iter()
+                .map(|(name, def)| VariableDefinitionResponse {
+                    name,
+                    var_type: match def.var_type {
+                        tap_core::VariableType::String => "string".to_string(),
+                        tap_core::VariableType::Number => "number".to_string(),
+                        tap_core::VariableType::Boolean => "boolean".to_string(),
+                    },
+                    default: def.default,
+                    description: def.description,
+                })
+                .collect();
+        }
+    }
+    
+    Vec::new()
+}
+
+#[tauri::command]
+fn cmd_set_runtime_variables(
+    state: State<'_, Mutex<AppState>>,
+    vars: std::collections::HashMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    let mut app_state = state.lock().unwrap();
+    
+    for (key, value) in vars {
+        if let Some(s) = value.as_str() {
+            app_state.variables.set_variable(&key, s.to_string());
+        } else if let Some(n) = value.as_f64() {
+            app_state.variables.set_variable(&key, n);
+        } else if let Some(b) = value.as_bool() {
+            app_state.variables.set_variable(&key, b);
+        }
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn cmd_get_runtime_variables(
+    state: State<'_, Mutex<AppState>>,
+) -> std::collections::HashMap<String, serde_json::Value> {
+    let app_state = state.lock().unwrap();
+    let mut result = std::collections::HashMap::new();
+    
+    for (key, value) in app_state.variables.all_variables() {
+        let json_val = match value {
+            tap_core::VariableValue::String(s) => serde_json::Value::String(s.clone()),
+            tap_core::VariableValue::Number(n) => {
+                serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)))
+            }
+            tap_core::VariableValue::Boolean(b) => serde_json::Value::Bool(*b),
+        };
+        result.insert(key.clone(), json_val);
+    }
+    
+    // Also include counters
+    for (key, value) in app_state.variables.all_counters() {
+        result.insert(key.clone(), serde_json::Value::Number(serde_json::Number::from(value)));
+    }
+    
+    result
+}
+
 // === Platform Condition Provider ===
 
 /// Platform condition provider for the engine.
@@ -768,6 +929,14 @@ fn main() {
             open_picker_window,
             close_picker_window,
             picker_position_selected,
+            // Phase 4: DSL commands
+            cmd_export_yaml,
+            cmd_export_yaml_with_metadata,
+            cmd_import_yaml,
+            cmd_validate_yaml,
+            cmd_get_macro_variables,
+            cmd_set_runtime_variables,
+            cmd_get_runtime_variables,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tap");
