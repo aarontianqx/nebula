@@ -62,6 +62,10 @@ type SessionTab struct {
 	// immediate script selection sync to backend before session is ready.
 	suppressScriptSelectSync bool
 	stateMu                  sync.RWMutex
+
+	// Pending color update coordinates (for manual mode screenshot callback)
+	pendingColorX, pendingColorY int
+	hasPendingColor              bool
 }
 
 // SessionTabConfig holds configuration for SessionTab.
@@ -311,11 +315,18 @@ func (t *SessionTab) HandleCanvasClick(canvasWin *CanvasWindow) func(float32, fl
 			t.updateColorFromCanvas(canvasWin, int(x), int(y))
 		} else {
 			// Manual mode: capture and display
+			// Save pending coordinates for color update after screenshot arrives
+			t.stateMu.Lock()
+			t.pendingColorX = int(x)
+			t.pendingColorY = int(y)
+			t.hasPendingColor = true
+			t.stateMu.Unlock()
+
 			if err := t.bridge.CaptureScreen(t.sessionID, t.saveScreenshotCb.Checked); err != nil {
 				t.logger.Error("Failed to capture screen", "error", err)
 				return
 			}
-			// Color update will happen via event callback
+			// Color update will happen via OnScreenCaptured callback
 		}
 	}
 }
@@ -365,6 +376,20 @@ func (t *SessionTab) updateColorFromCanvas(canvasWin *CanvasWindow, x, y int) {
 		}
 	}
 	t.pointsArea.SetText(nearbyPoints.String())
+}
+
+// OnScreenCaptured is called when a screenshot is captured.
+// It updates the color display if there's a pending color update from manual mode click.
+func (t *SessionTab) OnScreenCaptured(canvasWin *CanvasWindow) {
+	t.stateMu.Lock()
+	hasPending := t.hasPendingColor
+	x, y := t.pendingColorX, t.pendingColorY
+	t.hasPendingColor = false
+	t.stateMu.Unlock()
+
+	if hasPending {
+		t.updateColorFromCanvas(canvasWin, x, y)
+	}
 }
 
 func colorToString(c color.Color) string {
