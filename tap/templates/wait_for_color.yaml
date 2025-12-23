@@ -1,0 +1,55 @@
+# Wait for Color Macro
+# Waits for a specific pixel color before clicking
+
+name: Wait for Color
+description: Wait for a pixel to change color, then click
+version: "1.0"
+
+variables:
+  watch_x:
+    type: number
+    default: 500
+    description: "X coordinate to watch"
+  watch_y:
+    type: number
+    default: 300
+    description: "Y coordinate to watch"
+  target_color:
+    type: string
+    default: "#00FF00"
+    description: "Color to wait for (hex)"
+  click_x:
+    type: number
+    default: 600
+    description: "X coordinate to click"
+  click_y:
+    type: number
+    default: 400
+    description: "Y coordinate to click"
+
+timeline:
+  - at_ms: 0
+    action:
+      wait_until:
+        condition:
+          pixel_color:
+            x: "{{ watch_x }}"
+            y: "{{ watch_y }}"
+            color: "{{ target_color }}"
+            tolerance: 20
+        timeout_ms: 30000
+        poll_interval_ms: 100
+    note: "Wait for the color to appear"
+  
+  - at_ms: 0
+    action:
+      click:
+        x: "{{ click_x }}"
+        y: "{{ click_y }}"
+    note: "Click when color detected"
+
+run:
+  repeat: 1
+  start_delay_ms: 1000
+  speed: 1.0
+

@@ -1,0 +1,40 @@
+# Auto Type Macro
+# Types text at a position
+
+name: Auto Type
+description: Click a field and type text
+version: "1.0"
+
+variables:
+  field_x:
+    type: number
+    default: 400
+    description: "X coordinate of text field"
+  field_y:
+    type: number
+    default: 300
+    description: "Y coordinate of text field"
+  text:
+    type: string
+    default: "Hello, World!"
+    description: "Text to type"
+
+timeline:
+  - at_ms: 0
+    action:
+      click:
+        x: "{{ field_x }}"
+        y: "{{ field_y }}"
+    note: "Click the text field"
+  
+  - at_ms: 200
+    action:
+      text_input:
+        text: "{{ text }}"
+    note: "Type the text"
+
+run:
+  repeat: 1
+  start_delay_ms: 3000
+  speed: 1.0
+

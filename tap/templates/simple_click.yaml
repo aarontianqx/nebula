@@ -1,0 +1,37 @@
+# Simple Click Macro
+# Clicks at a specified position repeatedly
+
+name: Simple Click
+description: Click at a position with configurable interval
+version: "1.0"
+
+variables:
+  click_x:
+    type: number
+    default: 640
+    description: "X coordinate"
+  click_y:
+    type: number
+    default: 360
+    description: "Y coordinate"
+  interval:
+    type: number
+    default: 1000
+    description: "Interval between clicks (ms)"
+
+timeline:
+  - at_ms: 0
+    action:
+      click:
+        x: "{{ click_x }}"
+        y: "{{ click_y }}"
+  - at_ms: 0
+    action:
+      wait:
+        ms: "{{ interval }}"
+
+run:
+  repeat: 0  # Forever
+  start_delay_ms: 3000
+  speed: 1.0
+
