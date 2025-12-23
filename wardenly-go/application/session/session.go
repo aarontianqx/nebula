@@ -617,6 +617,10 @@ func (s *Session) performLogin() {
 	if loginErr != nil {
 		s.logger.Error("Login failed", "error", loginErr)
 		s.publishEvent(event.NewLoginFailed(s.id, loginErr))
+		// Even on login failure, transition to Ready state so user can manually operate
+		if err := s.transitionTo(state.StateReady); err != nil {
+			s.logger.Error("Failed to transition to ready after login failure", "error", err)
+		}
 		return
 	}
 
@@ -624,6 +628,10 @@ func (s *Session) performLogin() {
 	if err := s.waitLoadingGame(); err != nil {
 		s.logger.Error("Wait loading game failed", "error", err)
 		s.publishEvent(event.NewLoginFailed(s.id, err))
+		// Even on wait failure, transition to Ready state so user can manually operate
+		if err := s.transitionTo(state.StateReady); err != nil {
+			s.logger.Error("Failed to transition to ready after wait failure", "error", err)
+		}
 		return
 	}
 
