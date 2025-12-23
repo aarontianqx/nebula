@@ -4,13 +4,31 @@
 //! Platform specific I/O (hook/inject) lives in `tap-platform`.
 
 mod condition;
+mod dsl;
 mod engine;
+mod expression;
 mod recorder;
+mod schema;
 mod storage;
+mod submacro;
 mod variables;
 
 pub use condition::{
     CompareOp, Condition, ConditionColor, ConditionEvaluator, ConditionResult, WaitUntilConfig,
+};
+pub use dsl::{
+    export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, parse_yaml, DslAction,
+    DslCondition, DslError, DslMouseButton, DslProfile, DslRunConfig, DslTargetWindow,
+    DslTimedAction, DslValue, VariableDefinition, VariableType, DSL_VERSION,
+};
+pub use expression::{
+    create_expression_engine, resolve_expressions, ExpressionEngine, ExpressionEngineHandle,
+    ExpressionError, ExpressionResult,
+};
+pub use schema::{validate_profile, ValidationError, ValidationResult};
+pub use submacro::{
+    create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,
+    SubMacroContextHandle, SubMacroError, MAX_CALL_DEPTH,
 };
 pub use engine::{
     ActionExecutor, ActionExecutorAdapter, EngineCommand, EngineEvent, EngineState,
@@ -24,7 +42,7 @@ pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
     load_last_used, load_profile, save_last_used, save_profile, StorageError, StorageResult,
 };
-pub use variables::VariableStore;
+pub use variables::{VariableError, VariableResolver, VariableStore, VariableValue};
 
 use serde::{Deserialize, Serialize};
 

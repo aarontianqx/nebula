@@ -282,3 +282,68 @@ Profile 可以绑定到目标窗口（按标题或进程名），执行时：
 | `ResetCounter` | 重置计数器 |
 | `Exit` | 退出宏执行 |
 
+## Phase 4: 可扩展性架构
+
+Phase 4 引入了 DSL（YAML）支持、参数化变量、子宏调用和表达式引擎。
+
+### 新增模块
+
+| 模块 | 位置 | 职责 |
+|------|------|------|
+| `dsl.rs` | `tap-core` | YAML DSL 序列化/反序列化 |
+| `schema.rs` | `tap-core` | DSL 格式校验 |
+| `expression.rs` | `tap-core` | Rhai 表达式引擎（沙箱执行） |
+| `submacro.rs` | `tap-core` | 子宏调用管理（防循环、调用栈） |
+
+### DSL 数据流
+
+```
+YAML 文件
+  └─► parse_yaml() → DslProfile
+        └─► validate_profile() → ValidationResult
+              └─► import_from_yaml() → Profile
+                    └─► Engine 执行
+```
+
+### 变量解析流程
+
+```
+DslValue (可能含 {{ var }})
+  └─► VariableResolver.resolve_dsl_value()
+        ├─► 简单引用: 从 VariableStore 获取
+        └─► 复杂表达式: ExpressionEngine.evaluate()
+              └─► Rhai 沙箱执行
+```
+
+### 子宏调用
+
+```
+CallMacro { name, args }
+  └─► SubMacroContext.push(name) // 检查循环调用
+        └─► load_profile(name)
+              └─► create_child_variable_store(parent, profile, args)
+                    └─► 递归执行子宏
+                          └─► SubMacroContext.pop()
+```
+
+### 安全性
+
+- **表达式沙箱**：Rhai 引擎禁用文件/网络访问，限制执行深度和操作数
+- **循环调用检测**：子宏调用栈跟踪，最大深度 10 层
+- **校验**：导入前验证所有必填字段、类型、范围
+
+### 前端 UI
+
+| 功能 | 说明 |
+|------|------|
+| Code View | YAML 代码编辑器，支持语法高亮提示 |
+| Export | 导出当前宏为 YAML 文件 |
+| Import | 从 YAML 文件导入宏 |
+| Variable Dialog | 执行前填入参数化变量 |
+| Validation | 实时校验并显示错误 |
+
+### 文档与模板
+
+- `docs/DSL_REFERENCE.md` - DSL 语法完整参考
+- `templates/` - 预置 YAML 模板示例
+

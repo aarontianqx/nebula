@@ -6,6 +6,21 @@ import React from "react";
 type EngineState = "Idle" | "Arming" | "Running" | "Paused" | "Stopped";
 type RecorderState = "Idle" | "Recording" | "Paused";
 type Mode = "simple" | "timeline";
+type TimelineView = "visual" | "code";
+
+// Phase 4: DSL types
+interface ValidationErrorResponse {
+  path: string;
+  message: string;
+  line: number | null;
+}
+
+interface VariableDefinitionResponse {
+  name: string;
+  var_type: string;
+  default: unknown;
+  description: string | null;
+}
 
 interface TimedAction {
   at_ms: number;
@@ -184,6 +199,14 @@ export default function App() {
   const [pauseWhenUnfocused, setPauseWhenUnfocused] = React.useState<boolean>(true);
   const [targetWindowMatched, setTargetWindowMatched] = React.useState<boolean>(true);
   const [pickedColor, setPickedColor] = React.useState<ColorResponse | null>(null);
+
+  // Phase 4: DSL state
+  const [timelineView, setTimelineView] = React.useState<TimelineView>("visual");
+  const [yamlContent, setYamlContent] = React.useState<string>("");
+  const [yamlErrors, setYamlErrors] = React.useState<ValidationErrorResponse[]>([]);
+  const [showVariableDialog, setShowVariableDialog] = React.useState<boolean>(false);
+  const [macroVariables, setMacroVariables] = React.useState<VariableDefinitionResponse[]>([]);
+  const [runtimeVariables, setRuntimeVariables] = React.useState<Record<string, unknown>>({});
 
   const addLog = React.useCallback((msg: string) => {
     const entry: LogEntry = { time: formatTime(), message: msg };
@@ -504,6 +527,107 @@ export default function App() {
         i === idx ? { ...a, at_ms: Math.max(0, a.at_ms + delta) } : a
       )
     );
+  }
+
+  // Phase 4: DSL handlers
+  async function handleExportYaml() {
+    try {
+      const yaml = await invoke<string>("cmd_export_yaml");
+      setYamlContent(yaml);
+      setTimelineView("code");
+      addLog("📤 Exported to YAML");
+    } catch (e) {
+      addLog(`❌ Export failed: ${String(e)}`);
+    }
+  }
+
+  async function handleImportYaml() {
+    try {
+      // First validate
+      const errors = await invoke<ValidationErrorResponse[] | null>("cmd_validate_yaml", { yamlContent });
+      if (errors && errors.length > 0) {
+        setYamlErrors(errors);
+        addLog(`❌ Validation errors: ${errors.length}`);
+        return;
+      }
+      setYamlErrors([]);
+
+      // Import
+      const profile = await invoke<Profile>("cmd_import_yaml", { yamlContent });
+      setProfileName(profile.name);
+      setTimeline(profile.timeline.actions);
+      setSpeed(profile.run.speed);
+      if (profile.run.repeat === "Forever") {
+        setRepeatCount("");
+      } else {
+        setRepeatCount(String(profile.run.repeat.Times));
+      }
+      setCountdownSecs(Math.floor(profile.run.start_delay_ms / 1000));
+      setTimelineView("visual");
+      addLog(`📥 Imported: ${profile.name}`);
+    } catch (e) {
+      addLog(`❌ Import failed: ${String(e)}`);
+    }
+  }
+
+  async function handleLoadVariables() {
+    try {
+      const vars = await invoke<VariableDefinitionResponse[]>("cmd_get_macro_variables");
+      setMacroVariables(vars);
+      if (vars.length > 0) {
+        // Initialize runtime variables with defaults
+        const defaults: Record<string, unknown> = {};
+        for (const v of vars) {
+          defaults[v.name] = v.default ?? (v.var_type === "number" ? 0 : v.var_type === "boolean" ? false : "");
+        }
+        setRuntimeVariables(defaults);
+        setShowVariableDialog(true);
+      }
+    } catch (e) {
+      addLog(`❌ Failed to load variables: ${String(e)}`);
+    }
+  }
+
+  async function handleApplyVariables() {
+    try {
+      await invoke("cmd_set_runtime_variables", { vars: runtimeVariables });
+      setShowVariableDialog(false);
+      addLog("✓ Variables applied");
+    } catch (e) {
+      addLog(`❌ Failed to apply variables: ${String(e)}`);
+    }
+  }
+
+  async function handleDownloadYaml() {
+    try {
+      const yaml = await invoke<string>("cmd_export_yaml");
+      const blob = new Blob([yaml], { type: "text/yaml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${profileName || "macro"}.yaml`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addLog(`💾 Downloaded ${profileName}.yaml`);
+    } catch (e) {
+      addLog(`❌ Download failed: ${String(e)}`);
+    }
+  }
+
+  function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      setYamlContent(content);
+      setTimelineView("code");
+      addLog(`📂 Loaded file: ${file.name}`);
+    };
+    reader.readAsText(file);
+    // Reset input
+    event.target.value = "";
   }
 
   const isIdle = engineState === "Idle";
@@ -904,50 +1028,186 @@ export default function App() {
 
           {mode === "timeline" && (
             <>
-              <h3>Timeline ({timeline.length} actions)</h3>
-              <div className="card timeline-card">
-                {timeline.length === 0 ? (
-                  <div className="timeline-empty">
-                    No actions yet. Click "Record" to capture actions.
-                  </div>
-                ) : (
-                  <div className="timeline-list">
-                    {timeline.map((action, idx) => (
-                      <div
-                        key={idx}
-                        className={`timeline-item ${!action.enabled ? "disabled" : ""} ${selectedActionIdx === idx ? "selected" : ""}`}
-                        onClick={() => setSelectedActionIdx(idx)}
-                      >
-                        <span className="timeline-time">{action.at_ms}ms</span>
-                        <span className="timeline-action">{formatAction(action.action)}</span>
-                        <div className="timeline-actions">
-                          <button
-                            className="btn btn-sm"
-                            onClick={(e) => { e.stopPropagation(); handleAdjustDelay(idx, -50); }}
-                            title="-50ms"
-                          >-</button>
-                          <button
-                            className="btn btn-sm"
-                            onClick={(e) => { e.stopPropagation(); handleAdjustDelay(idx, 50); }}
-                            title="+50ms"
-                          >+</button>
-                          <button
-                            className="btn btn-sm"
-                            onClick={(e) => { e.stopPropagation(); handleToggleAction(idx); }}
-                            title={action.enabled ? "Disable" : "Enable"}
-                          >{action.enabled ? "☑" : "☐"}</button>
-                          <button
-                            className="btn btn-sm btn-danger"
-                            onClick={(e) => { e.stopPropagation(); handleDeleteAction(idx); }}
-                            title="Delete"
-                          >🗑</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+              <div className="timeline-header">
+                <h3>Timeline ({timeline.length} actions)</h3>
+                <div className="timeline-view-tabs">
+                  <button
+                    className={`tab-btn ${timelineView === "visual" ? "active" : ""}`}
+                    onClick={() => setTimelineView("visual")}
+                    disabled={!isIdle}
+                  >
+                    Visual
+                  </button>
+                  <button
+                    className={`tab-btn ${timelineView === "code" ? "active" : ""}`}
+                    onClick={() => { setTimelineView("code"); handleExportYaml(); }}
+                    disabled={!isIdle}
+                  >
+                    Code (YAML)
+                  </button>
+                </div>
+                <div className="timeline-toolbar">
+                  <button
+                    className="btn btn-sm"
+                    onClick={handleDownloadYaml}
+                    disabled={!isIdle || timeline.length === 0}
+                    title="Export to YAML file"
+                  >
+                    📤 Export
+                  </button>
+                  <label className="btn btn-sm" style={{ cursor: isIdle ? "pointer" : "not-allowed" }}>
+                    📥 Import
+                    <input
+                      type="file"
+                      accept=".yaml,.yml"
+                      onChange={handleFileUpload}
+                      disabled={!isIdle}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                  {macroVariables.length > 0 && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => setShowVariableDialog(true)}
+                      disabled={!isIdle}
+                      title="Set variables"
+                    >
+                      🔧 Variables
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {timelineView === "visual" ? (
+                <div className="card timeline-card">
+                  {timeline.length === 0 ? (
+                    <div className="timeline-empty">
+                      No actions yet. Click "Record" to capture actions, or import a YAML file.
+                    </div>
+                  ) : (
+                    <div className="timeline-list">
+                      {timeline.map((action, idx) => (
+                        <div
+                          key={idx}
+                          className={`timeline-item ${!action.enabled ? "disabled" : ""} ${selectedActionIdx === idx ? "selected" : ""}`}
+                          onClick={() => setSelectedActionIdx(idx)}
+                        >
+                          <span className="timeline-time">{action.at_ms}ms</span>
+                          <span className="timeline-action">{formatAction(action.action)}</span>
+                          <div className="timeline-actions">
+                            <button
+                              className="btn btn-sm"
+                              onClick={(e) => { e.stopPropagation(); handleAdjustDelay(idx, -50); }}
+                              title="-50ms"
+                            >-</button>
+                            <button
+                              className="btn btn-sm"
+                              onClick={(e) => { e.stopPropagation(); handleAdjustDelay(idx, 50); }}
+                              title="+50ms"
+                            >+</button>
+                            <button
+                              className="btn btn-sm"
+                              onClick={(e) => { e.stopPropagation(); handleToggleAction(idx); }}
+                              title={action.enabled ? "Disable" : "Enable"}
+                            >{action.enabled ? "☑" : "☐"}</button>
+                            <button
+                              className="btn btn-sm btn-danger"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteAction(idx); }}
+                              title="Delete"
+                            >🗑</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="card code-card">
+                  <textarea
+                    className="code-editor"
+                    value={yamlContent}
+                    onChange={(e) => setYamlContent(e.target.value)}
+                    disabled={!isIdle}
+                    placeholder="# YAML macro definition..."
+                    spellCheck={false}
+                  />
+                  {yamlErrors.length > 0 && (
+                    <div className="yaml-errors">
+                      {yamlErrors.map((err, idx) => (
+                        <div key={idx} className="yaml-error">
+                          {err.line && <span className="error-line">Line {err.line}:</span>}
+                          <span className="error-path">{err.path}</span>
+                          <span className="error-msg">{err.message}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="code-actions">
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleImportYaml}
+                      disabled={!isIdle || !yamlContent.trim()}
+                    >
+                      ✓ Apply Changes
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={handleExportYaml}
+                      disabled={!isIdle}
+                    >
+                      ↻ Refresh from Timeline
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
+          )}
+
+          {/* Variable Dialog */}
+          {showVariableDialog && (
+            <div className="modal-overlay" onClick={() => setShowVariableDialog(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Set Variables</h3>
+                <div className="variable-form">
+                  {macroVariables.map((v) => (
+                    <div key={v.name} className="field">
+                      <label className="label">
+                        {v.name}
+                        {v.description && <span className="var-desc"> - {v.description}</span>}
+                      </label>
+                      {v.var_type === "boolean" ? (
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={!!runtimeVariables[v.name]}
+                            onChange={(e) => setRuntimeVariables(prev => ({ ...prev, [v.name]: e.target.checked }))}
+                          />
+                          Enabled
+                        </label>
+                      ) : v.var_type === "number" ? (
+                        <input
+                          type="number"
+                          value={runtimeVariables[v.name] as number || 0}
+                          onChange={(e) => setRuntimeVariables(prev => ({ ...prev, [v.name]: parseFloat(e.target.value) || 0 }))}
+                          className="input"
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={runtimeVariables[v.name] as string || ""}
+                          onChange={(e) => setRuntimeVariables(prev => ({ ...prev, [v.name]: e.target.value }))}
+                          className="input"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setShowVariableDialog(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleApplyVariables}>Apply</button>
+                </div>
+              </div>
+            </div>
           )}
 
           <h3>Activity Log</h3>

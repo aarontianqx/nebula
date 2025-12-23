@@ -1,0 +1,64 @@
+# Loop with Counter Macro
+# Demonstrates counter-based loop control
+
+name: Loop with Counter
+description: Click N times using counter control
+version: "1.0"
+
+variables:
+  max_iterations:
+    type: number
+    default: 10
+    description: "Number of iterations"
+  click_x:
+    type: number
+    default: 500
+    description: "X coordinate"
+  click_y:
+    type: number
+    default: 300
+    description: "Y coordinate"
+
+timeline:
+  - at_ms: 0
+    action:
+      reset_counter:
+        key: "iteration"
+    note: "Reset counter"
+  
+  - at_ms: 100
+    action:
+      conditional:
+        condition:
+          counter:
+            key: "iteration"
+            op: ">="
+            value: "{{ max_iterations }}"
+        then_action:
+          exit: {}
+    note: "Check if done"
+  
+  - at_ms: 200
+    action:
+      click:
+        x: "{{ click_x }}"
+        y: "{{ click_y }}"
+    note: "Perform click"
+  
+  - at_ms: 400
+    action:
+      incr_counter:
+        key: "iteration"
+    note: "Increment counter"
+  
+  - at_ms: 500
+    action:
+      wait:
+        ms: 500
+    note: "Wait before next iteration"
+
+run:
+  repeat: 0  # Forever (controlled by counter)
+  start_delay_ms: 3000
+  speed: 1.0
+
