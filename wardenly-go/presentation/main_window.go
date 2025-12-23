@@ -182,6 +182,7 @@ func (w *MainWindow) setupEventCallbacks() {
 			// UI update must run on main thread
 			fyne.Do(func() {
 				dialog.ShowError(err, w.window)
+				w.enableSessionControls(sessionID) // Enable controls even on failure
 			})
 		},
 		OnScriptStarted: func(sessionID, scriptName string) {
