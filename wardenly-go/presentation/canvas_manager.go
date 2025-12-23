@@ -240,9 +240,17 @@ func (m *CanvasManager) handleUpdateImage(cmd canvasCmd) {
 	}
 	m.frameUpdatePending.Store(true)
 
+	// Get the session's callbacks to notify after image update
+	callbacks := m.sessionCallbacks[cmd.sessionID]
+
 	fyne.Do(func() {
 		m.canvasWindow.SetImage(cmd.image)
 		m.frameUpdatePending.Store(false)
+
+		// Notify SessionTab to update color if there's a pending color update
+		if callbacks != nil && callbacks.sessionTab != nil {
+			callbacks.sessionTab.OnScreenCaptured(m.canvasWindow)
+		}
 	})
 }
 
