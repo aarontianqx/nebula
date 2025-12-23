@@ -2,12 +2,12 @@ category: system
 scenes:
   - name: user_agreement
     points:
-      - {x: 620, y: 480, color: {r: 209, g: 166, b: 66, a: 255}}
-      - {x: 400, y: 480, color: {r: 28, g: 131, b: 86, a: 255}}
+      - {x: 650, y: 590, color: {r: 227, g: 199, b: 90, a: 255}}
+      - {x: 428, y: 590, color: {r: 64, g: 148, b: 115, a: 255}}
     actions:
       Agree:
         type: click
-        point: {x: 620, y: 480}
+        point: {x: 650, y: 590}
       Refuse:
         type: click
-        point: {x: 400, y: 480}
+        point: {x: 428, y: 590}
