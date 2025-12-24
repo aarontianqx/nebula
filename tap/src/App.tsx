@@ -264,14 +264,25 @@ export default function App() {
       unlistenEngine = await listen<EngineEvent>("engine-event", (event) => {
         const e = event.payload;
 
-        // Handle string literal "Completed" first to narrow the type
-        if (e === "Completed") {
-          setEngineStatus("✅ Completed!");
-          addLog("✓ All done");
+        // Handle string literal events first (avoid `in` checks on non-objects)
+        if (typeof e === "string") {
+          if (e === "Completed") {
+            setEngineStatus("✅ Completed!");
+            addLog("✓ All done");
+            return;
+          }
+          if (e === "TargetWindowFocused") {
+            setTargetWindowMatched(true);
+            setEngineStatus("Running");
+            addLog(`✓ Target window focused`);
+            return;
+          }
+          // Unknown string payload
+          addLog(`(unknown engine event) ${e}`);
           return;
         }
 
-        // Now e is narrowed to object types only
+        // From here, e is an object payload
         if ("StateChanged" in e) {
           setEngineState(e.StateChanged.new);
           if (e.StateChanged.new === "Idle") {
@@ -315,10 +326,9 @@ export default function App() {
           setTargetWindowMatched(false);
           setEngineStatus("⚠️ Target window not focused");
           addLog(`⚠️ Target window lost focus`);
-        } else if (e === "TargetWindowFocused") {
-          setTargetWindowMatched(true);
-          setEngineStatus("Running");
-          addLog(`✓ Target window focused`);
+        } else {
+          // Unknown object payload
+          addLog(`(unknown engine event) ${JSON.stringify(e)}`);
         }
       });
 

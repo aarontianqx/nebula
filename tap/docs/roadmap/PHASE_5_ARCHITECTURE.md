@@ -1,68 +1,66 @@
 # Phase 5: 架构优化与跨平台成熟度
 
-## 状态：提案（低优先级）
+## 状态：✅ 已完成
 
-当前架构已经满足 Windows + macOS 双平台需求，本提案记录未来可考虑的优化方向。
+子模块分离重构已完成，`tap-platform` 现在采用清晰的子目录结构。
 
 ## 背景
 
-在 Phase 4 完成后，我们解决了 macOS 上 `rdev` 库的线程安全问题，实现了原生 Core Graphics 事件监听。当前架构评估：
+在 Phase 4 完成后，我们解决了 macOS 上 `rdev` 库的线程安全问题，实现了原生 Core Graphics 事件监听。随后进行了架构优化，将平台代码分离为独立子模块。
 
-### ✅ 已良好实现
+## 已完成的优化
+
+### 子模块分离
+
+`tap-platform` 现在采用以下目录结构：
+
+```
+tap-platform/src/
+├── lib.rs                 # 根模块：re-export 所有公共 API
+├── error.rs               # PlatformError 定义
+├── injector.rs            # 输入注入（全平台共用 enigo）
+├── events/                # 事件监听子模块
+│   ├── mod.rs             # 公共类型 + 入口函数
+│   └── macos.rs           # macOS 原生实现（CGEventTap 单例）
+├── input_hook/            # 全局输入钩子子模块
+│   ├── mod.rs             # RawInputEvent, InputHookHandle 等公共类型
+│   ├── rdev_impl.rs       # Windows/Linux 实现
+│   └── macos.rs           # macOS 实现
+├── mouse_tracker/         # 鼠标追踪子模块
+│   ├── mod.rs             # MousePosition, MouseTrackerHandle 等公共类型
+│   ├── rdev_impl.rs       # Windows/Linux 实现
+│   └── macos.rs           # macOS 实现
+├── window/                # 窗口 API 子模块
+│   ├── mod.rs             # WindowInfo, WindowRect 等公共类型
+│   ├── windows.rs         # Windows 实现
+│   └── macos.rs           # macOS 实现（待完善）
+├── pixel/                 # 像素检测子模块
+│   ├── mod.rs             # Color 类型 + 公共接口
+│   ├── windows.rs         # Windows GDI 实现
+│   └── macos.rs           # macOS 实现（待完善）
+└── dpi/                   # DPI 处理子模块
+    ├── mod.rs             # ScaledCoords 类型
+    ├── windows.rs         # Windows DPI API
+    └── macos.rs           # macOS 实现
+```
+
+### 架构优点
 
 1. **清晰的分层**：`tap-core`（业务逻辑）与 `tap-platform`（平台 I/O）完全分离
 2. **平台无关的核心**：`tap-core` 不依赖任何平台特定代码
 3. **Trait 抽象**：`InputInjector`、`ConditionEvaluator` 定义了清晰的接口边界
 4. **单例事件监听**：macOS 使用 `GlobalEventListener` 单例，避免多 CGEventTap 冲突
+5. **子模块分离**：每个功能领域有独立目录，平台实现分离为独立文件
+6. **易于扩展**：添加新平台只需在对应子目录下添加实现文件
 
-### ⚠️ 可改进但非阻塞
+### 未保留的模块
 
-1. **平台代码组织**：条件编译分散在多个文件中
-2. **部分功能缺失**：macOS 窗口 API 未完全实现
+- **`injector.rs`**：全平台共用 enigo + 后台线程模式，无需分离，保持为单文件
 
-## 可选优化方案
+## 待完成
 
-### 方案 A：子模块分离（推荐，如需进行）
-
-将 `tap-platform` 内部按平台分离为子模块：
-
-```
-tap-platform/src/
-├── lib.rs              # 公共接口 + 类型定义
-├── injector/
-│   ├── mod.rs          # InputInjector trait
-│   ├── enigo.rs        # 跨平台 enigo 实现
-│   └── windows.rs      # Windows 特定优化（可选）
-├── events/
-│   ├── mod.rs          # 事件监听公共接口
-│   ├── rdev.rs         # Windows/Linux 使用 rdev
-│   └── macos.rs        # macOS 原生 CGEventTap
-├── window/
-│   ├── mod.rs
-│   ├── windows.rs
-│   └── macos.rs
-└── pixel/
-    ├── mod.rs
-    ├── windows.rs
-    └── macos.rs
-```
-
-**优点**：
-- 每个平台实现隔离在独立文件
-- 更容易添加 Linux 支持
-- 代码审查时清晰看到平台差异
-
-**缺点**：
-- 需要较大重构
-- 当前架构已经工作良好
-
-### 方案 B：保持现状 + 渐进改进（当前选择）
-
-保持现有文件结构，仅做以下改进：
-
-1. ✅ 已完成：macOS 原生事件监听（`macos_events.rs`）
-2. 待完成：补充 macOS 窗口 API（`window.rs`）
-3. 文档：保持 `PROJECT_STRUCTURE.md` 更新
+1. **macOS 窗口 API**：`window/macos.rs` 目前返回空值，需使用 Accessibility API 实现
+2. **macOS 像素读取**：`pixel/macos.rs` 目前返回空值，需使用 CGDisplayCreateImageForRect 实现
 
 ## 未来考虑
 
@@ -71,8 +69,8 @@ tap-platform/src/
 如果未来需要支持 Linux：
 
 1. `rdev` 在 Linux 上工作良好（X11/Wayland）
-2. 窗口 API 需要新实现（X11 或 Wayland 协议）
-3. 像素读取需要新实现
+2. 在 `input_hook/`、`mouse_tracker/` 中添加 `linux.rs`（或复用 `rdev_impl.rs`）
+3. 在 `window/`、`pixel/`、`dpi/` 中添加 `linux.rs`
 
 ### 插件系统
 
@@ -88,11 +86,13 @@ Phase 4 提到的 Wasm 插件系统：
 |------|------|------|
 | 2024-12 | 实现 macOS 原生事件监听 | rdev 线程安全问题导致崩溃 |
 | 2024-12 | 采用单例模式 | 避免多个 CGEventTap 冲突 |
-| 2024-12 | 保持现有架构 | 当前架构满足需求，无需大规模重构 |
+| 2024-12 | 子模块分离重构 | 提高代码组织清晰度，便于未来扩展 |
 
 ## 结论
 
-**当前架构评级：✅ 良好**
+**当前架构评级：✅ 优秀**
 
-不建议进行大规模重构。如果未来需要添加 Linux 支持或插件系统，再考虑方案 A 的重组。
-
+子模块分离重构已完成，架构清晰、易于维护和扩展。下一步可以：
+1. 补充 macOS 窗口和像素 API 实现
+2. 考虑添加 Linux 支持
+3. 评估插件系统需求
