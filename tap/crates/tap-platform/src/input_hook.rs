@@ -1,12 +1,24 @@
-//! Global input event hook using rdev.
+//! Global input event hook for recording.
 //!
 //! This module captures all keyboard and mouse events for recording.
+//!
+//! On macOS, we use a custom implementation to avoid rdev's thread-safety issues
+//! with keyboard character resolution.
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use rdev::{listen, Event, EventType};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
+use tracing::{info, warn};
+
+#[cfg(not(target_os = "macos"))]
 use std::time::Instant;
-use tracing::{error, info, warn};
+
+#[cfg(not(target_os = "macos"))]
+use tracing::error;
+
+// Platform-specific imports
+#[cfg(not(target_os = "macos"))]
+use rdev::{listen, Event, EventType};
 
 /// A raw input event captured by the hook.
 #[derive(Debug, Clone)]
@@ -43,6 +55,7 @@ pub enum MouseButtonType {
     Unknown,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl From<rdev::Button> for MouseButtonType {
     fn from(button: rdev::Button) -> Self {
         match button {
@@ -90,77 +103,30 @@ impl InputHookHandle {
 impl Drop for InputHookHandle {
     fn drop(&mut self) {
         self.stop();
-        // Note: rdev::listen blocks, so we can't reliably join the thread
-        // The thread will exit when the process exits
+        // Take the thread handle but don't join it - the listener blocks
+        // and will exit when the subscription is dropped
+        let _ = self.thread.take();
     }
 }
 
 /// Start capturing global input events.
 ///
 /// Returns a handle that can be used to receive events and stop the hook.
+///
+/// On Windows/Linux: Uses rdev.
+/// On macOS: Uses native Core Graphics API to avoid thread-safety issues.
 pub fn start_input_hook() -> InputHookHandle {
     let (event_tx, event_rx) = bounded(1024);
     let (stop_tx, stop_rx) = bounded(1);
 
+    #[cfg(not(target_os = "macos"))]
     let thread = thread::spawn(move || {
-        info!("Input hook thread started");
-        let start_time = Instant::now();
+        start_hook_rdev(event_tx, stop_rx);
+    });
 
-        let callback = move |event: Event| {
-            // Check for stop signal
-            if stop_rx.try_recv().is_ok() {
-                return;
-            }
-
-            let timestamp_ms = start_time.elapsed().as_millis() as u64;
-
-            let input_event = match event.event_type {
-                EventType::MouseMove { x, y } => Some(InputEventType::MouseMove {
-                    x: x as i32,
-                    y: y as i32,
-                }),
-                EventType::ButtonPress(button) => {
-                    // Get mouse position from the event name field (workaround)
-                    // rdev doesn't provide position on button events on some platforms
-                    Some(InputEventType::MouseDown {
-                        x: 0, // Will be filled by recorder using last known position
-                        y: 0,
-                        button: button.into(),
-                    })
-                }
-                EventType::ButtonRelease(button) => Some(InputEventType::MouseUp {
-                    x: 0,
-                    y: 0,
-                    button: button.into(),
-                }),
-                EventType::Wheel { delta_x, delta_y } => Some(InputEventType::Scroll {
-                    delta_x: delta_x as i32,
-                    delta_y: delta_y as i32,
-                }),
-                EventType::KeyPress(key) => Some(InputEventType::KeyDown {
-                    key: format_key(key),
-                }),
-                EventType::KeyRelease(key) => Some(InputEventType::KeyUp {
-                    key: format_key(key),
-                }),
-            };
-
-            if let Some(event_type) = input_event {
-                let raw_event = RawInputEvent {
-                    timestamp_ms,
-                    event: event_type,
-                };
-                if let Err(e) = event_tx.try_send(raw_event) {
-                    warn!("Failed to send input event: {}", e);
-                }
-            }
-        };
-
-        if let Err(error) = listen(callback) {
-            error!(?error, "Input hook error");
-        }
-
-        info!("Input hook thread exiting");
+    #[cfg(target_os = "macos")]
+    let thread = thread::spawn(move || {
+        start_hook_macos(event_tx, stop_rx);
     });
 
     InputHookHandle {
@@ -170,8 +136,180 @@ pub fn start_input_hook() -> InputHookHandle {
     }
 }
 
+/// rdev-based implementation for Windows/Linux.
+#[cfg(not(target_os = "macos"))]
+fn start_hook_rdev(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
+    info!("Input hook thread started (rdev)");
+    let start_time = Instant::now();
+
+    let callback = move |event: Event| {
+        // Check for stop signal
+        if stop_rx.try_recv().is_ok() {
+            return;
+        }
+
+        let timestamp_ms = start_time.elapsed().as_millis() as u64;
+
+        let input_event = match event.event_type {
+            EventType::MouseMove { x, y } => Some(InputEventType::MouseMove {
+                x: x as i32,
+                y: y as i32,
+            }),
+            EventType::ButtonPress(button) => {
+                Some(InputEventType::MouseDown {
+                    x: 0, // Will be filled by recorder using last known position
+                    y: 0,
+                    button: button.into(),
+                })
+            }
+            EventType::ButtonRelease(button) => Some(InputEventType::MouseUp {
+                x: 0,
+                y: 0,
+                button: button.into(),
+            }),
+            EventType::Wheel { delta_x, delta_y } => Some(InputEventType::Scroll {
+                delta_x: delta_x as i32,
+                delta_y: delta_y as i32,
+            }),
+            EventType::KeyPress(key) => Some(InputEventType::KeyDown {
+                key: format_key_rdev(key),
+            }),
+            EventType::KeyRelease(key) => Some(InputEventType::KeyUp {
+                key: format_key_rdev(key),
+            }),
+        };
+
+        if let Some(event_type) = input_event {
+            let raw_event = RawInputEvent {
+                timestamp_ms,
+                event: event_type,
+            };
+            if let Err(e) = event_tx.try_send(raw_event) {
+                warn!("Failed to send input event: {}", e);
+            }
+        }
+    };
+
+    if let Err(error) = listen(callback) {
+        error!(?error, "Input hook error");
+    }
+
+    info!("Input hook thread exiting");
+}
+
+/// Native Core Graphics implementation for macOS.
+/// Uses the singleton global event listener pattern - subscription is automatically
+/// cleaned up when this function returns (subscription dropped).
+#[cfg(target_os = "macos")]
+fn start_hook_macos(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
+    use crate::macos_events::{keycode_to_name, subscribe_events, MacOSEventType};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    info!("Input hook thread started (macOS native, using global listener)");
+    
+    // Record start time for relative timestamps (using same time source as MacOSEvent)
+    let start_timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Track last flags for detecting key up/down on FlagsChanged
+    static LAST_FLAGS: AtomicU64 = AtomicU64::new(0);
+    
+    // Subscribe to the global event listener
+    let subscription = subscribe_events();
+
+    loop {
+        // Check for stop signal
+        if stop_rx.try_recv().is_ok() {
+            info!("Input hook received stop signal");
+            break;
+        }
+        
+        // Try to receive an event with timeout
+        match subscription.recv_timeout(Duration::from_millis(50)) {
+            Ok(event) => {
+                // Use the original event timestamp for accurate timing
+                // Convert from absolute timestamp to relative (since recording started)
+                let timestamp_ms = event.timestamp_ms.saturating_sub(start_timestamp_ms);
+
+                let input_event = match event.event_type {
+                    MacOSEventType::MouseMove { x, y } => Some(InputEventType::MouseMove {
+                        x: x as i32,
+                        y: y as i32,
+                    }),
+                    MacOSEventType::MouseDown { x, y, button } => {
+                        let btn = match button {
+                            0 => MouseButtonType::Left,
+                            1 => MouseButtonType::Right,
+                            _ => MouseButtonType::Middle,
+                        };
+                        Some(InputEventType::MouseDown {
+                            x: x as i32,
+                            y: y as i32,
+                            button: btn,
+                        })
+                    }
+                    MacOSEventType::MouseUp { x, y, button } => {
+                        let btn = match button {
+                            0 => MouseButtonType::Left,
+                            1 => MouseButtonType::Right,
+                            _ => MouseButtonType::Middle,
+                        };
+                        Some(InputEventType::MouseUp {
+                            x: x as i32,
+                            y: y as i32,
+                            button: btn,
+                        })
+                    }
+                    MacOSEventType::Scroll { delta_x, delta_y } => Some(InputEventType::Scroll {
+                        delta_x: delta_x as i32,
+                        delta_y: delta_y as i32,
+                    }),
+                    MacOSEventType::KeyDown { keycode } => Some(InputEventType::KeyDown {
+                        key: keycode_to_name(keycode),
+                    }),
+                    MacOSEventType::KeyUp { keycode } => Some(InputEventType::KeyUp {
+                        key: keycode_to_name(keycode),
+                    }),
+                    MacOSEventType::FlagsChanged { keycode, flags } => {
+                        let old_flags = LAST_FLAGS.swap(flags, Ordering::SeqCst);
+                        let key = keycode_to_name(keycode);
+                        if flags > old_flags {
+                            Some(InputEventType::KeyDown { key })
+                        } else {
+                            Some(InputEventType::KeyUp { key })
+                        }
+                    }
+                };
+
+                if let Some(event_type) = input_event {
+                    let raw_event = RawInputEvent {
+                        timestamp_ms,
+                        event: event_type,
+                    };
+                    if let Err(e) = event_tx.try_send(raw_event) {
+                        warn!("Failed to send input event: {}", e);
+                    }
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // Continue loop, will check stop signal
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                warn!("Event subscription disconnected");
+                break;
+            }
+        }
+    }
+    
+    // Subscription is dropped here, automatically unsubscribing from global listener
+    info!("Input hook thread exiting");
+}
+
 /// Format an rdev key to a string.
-fn format_key(key: rdev::Key) -> String {
+#[cfg(not(target_os = "macos"))]
+fn format_key_rdev(key: rdev::Key) -> String {
     match key {
         rdev::Key::Alt => "Alt".into(),
         rdev::Key::AltGr => "AltGr".into(),
@@ -281,4 +419,3 @@ fn format_key(key: rdev::Key) -> String {
         rdev::Key::Unknown(code) => format!("Unknown({})", code),
     }
 }
-

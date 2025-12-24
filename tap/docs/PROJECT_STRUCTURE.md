@@ -61,10 +61,20 @@ tap（Timed Action Performer）是一个用 Rust 构建的跨平台桌面 GUI �
 
 #### 2) 全局输入监听（Input: record/hook）
 
-- **候选**: `rdev`（全局键鼠事件监听/Hook）
-- **规划**: **优先评估 `rdev`**，不足时分别做平台适配层
+- **Windows/Linux**: `rdev`（全局键鼠事件监听/Hook）
+- **macOS**: 原生 Core Graphics API（自定义实现）
 
-理由：录制需要全局事件；rdev 是常见选择。注意 macOS 需要辅助功能权限。
+**macOS 原生实现原因**：
+
+`rdev` 在 macOS 上存在线程安全问题。当处理键盘事件时，`rdev` 会调用 `TSMGetInputSourceProperty` API 来获取键盘字符，但此 API 必须在主线程调用，而 `rdev::listen` 在后台线程的 CFRunLoop 中运行，导致崩溃。
+
+我们的解决方案：
+1. 使用 Core Graphics `CGEventTap` API 直接监听全局事件
+2. 跳过键盘字符解析，只获取 keycode 并通过静态映射表转换
+3. **单例模式**：整个应用共享一个全局事件监听器，避免多个 CGEventTap 冲突
+4. **订阅机制**：`mouse_tracker` 和 `input_hook` 都订阅同一个事件流
+
+相关文件：`tap-platform/src/macos_events.rs`
 
 #### 3) 全局热键
 
@@ -178,7 +188,7 @@ UI 点击 Record
 tap/                              # 项目根（Cargo workspace + Vite/React root）
 │
 ├── Cargo.toml                    # Cargo workspace 配置
-├── package.json                  # npm/Vite 前端配置
+├── package.json                  # yarn/Vite 前端配置
 ├── vite.config.ts / tsconfig.json
 ├── index.html                    # Vite 入口 HTML
 │
@@ -215,7 +225,7 @@ tap/                              # 项目根（Cargo workspace + Vite/React roo
 | `tap/src/` | React + TypeScript | 前端 UI（Vite 构建） |
 | `tap/src-tauri/src/` | Rust | Tauri 后端（暴露命令给前端 `invoke` 调用） |
 | `tap/crates/tap-core/src/` | Rust | 核心领域模型（`Profile`, `Timeline`, `Action` 等） |
-| `tap/crates/tap-platform/src/` | Rust | 平台抽象层（输入注入、全局监听、DPI 处理） |
+| `tap/crates/tap-platform/src/` | Rust | 平台抽象层（输入注入、全局监听、DPI 处理、macOS 原生事件） |
 
 > **这是 Tauri + Rust workspace 的最佳实践**：前端放 `src/`，Tauri 后端放 `src-tauri/`，可复用的纯 Rust 库放 `crates/`。
 
@@ -241,7 +251,27 @@ tap/                              # 项目根（Cargo workspace + Vite/React roo
 
 Phase 3 引入了条件判断和窗口/像素检测能力，架构扩展如下：
 
-### 新增模块
+### tap-platform 模块详解
+
+`tap-platform` 是平台抽象层，负责隔离操作系统差异：
+
+| 模块 | 职责 | Windows | macOS |
+|------|------|---------|-------|
+| `injector.rs` | 输入注入（鼠标/键盘） | enigo + 后台线程 | enigo + 后台线程 |
+| `input_hook.rs` | 全局事件监听（录制用） | rdev | 原生 CGEventTap（单例） |
+| `mouse_tracker.rs` | 全局鼠标位置追踪 | rdev | 原生 CGEventTap（单例） |
+| `macos_events.rs` | macOS 原生事件监听（内部模块） | N/A | CGEventTap + 订阅模式 |
+| `window.rs` | 窗口 API | Windows API | N/A（待实现） |
+| `pixel.rs` | 像素颜色读取 | GDI | CoreGraphics |
+| `dpi.rs` | 高 DPI 处理 | SetProcessDpiAwareness | NSScreen scale |
+
+**平台差异处理策略**：
+
+1. **条件编译**：在函数内部使用 `#[cfg(target_os = "...")]` 切换实现
+2. **公共接口**：对外暴露统一的 API（如 `start_input_hook()`），内部根据平台选择实现
+3. **Trait 抽象**：`InputInjector` trait 允许替换实现（用于测试或未来扩展）
+
+### Phase 3 新增模块
 
 | 模块 | 位置 | 职责 |
 |------|------|------|

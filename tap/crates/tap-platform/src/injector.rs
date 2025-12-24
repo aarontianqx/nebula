@@ -1,12 +1,15 @@
 //! Input injection implementations.
+//!
+//! On macOS, Enigo contains CGEventSource which is not Send, so we use a
+//! dedicated injection thread and communicate via channels.
 
 use crate::{PlatformError, PlatformResult};
-use enigo::{
-    Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings,
-};
-use std::sync::Mutex;
+use crossbeam_channel::{bounded, Sender};
+use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 use tap_core::{Action, ActionExecutorAdapter, MouseButton};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Trait for injecting mouse/keyboard actions into the OS.
 pub trait InputInjector: Send + Sync {
@@ -23,20 +26,55 @@ impl InputInjector for NoopInjector {
     }
 }
 
+/// Internal command for the injection thread.
+struct InjectionCommand {
+    action: Action,
+    response_tx: Sender<PlatformResult<()>>,
+}
+
 /// Real input injector using `enigo` crate.
+///
+/// On macOS, Enigo uses CGEventSource which cannot be sent between threads.
+/// We work around this by running Enigo in a dedicated thread and sending
+/// commands via a channel.
 pub struct EnigoInjector {
-    enigo: Mutex<Enigo>,
+    cmd_tx: Sender<InjectionCommand>,
+    // Keep thread handle alive; thread exits when sender is dropped
+    _thread: Arc<JoinHandle<()>>,
 }
 
 impl EnigoInjector {
     /// Create a new EnigoInjector.
     pub fn new() -> PlatformResult<Self> {
-        let settings = Settings::default();
-        let enigo = Enigo::new(&settings).map_err(|e| {
-            PlatformError::InjectionFailed(format!("failed to create Enigo: {e}"))
-        })?;
+        let (cmd_tx, cmd_rx) = bounded::<InjectionCommand>(64);
+
+        // Spawn the injection thread
+        let thread = thread::spawn(move || {
+            // Create Enigo in this thread
+            let settings = Settings::default();
+            let mut enigo = match Enigo::new(&settings) {
+                Ok(e) => e,
+                Err(e) => {
+                    error!("Failed to create Enigo in injection thread: {}", e);
+                    return;
+                }
+            };
+
+            debug!("Enigo injection thread started");
+
+            // Process commands until the sender is dropped
+            while let Ok(cmd) = cmd_rx.recv() {
+                let result = execute_action(&mut enigo, &cmd.action);
+                // Send response, ignore if receiver is gone
+                let _ = cmd.response_tx.send(result);
+            }
+
+            debug!("Enigo injection thread exiting");
+        });
+
         Ok(Self {
-            enigo: Mutex::new(enigo),
+            cmd_tx,
+            _thread: Arc::new(thread),
         })
     }
 }
@@ -47,154 +85,176 @@ impl Default for EnigoInjector {
     }
 }
 
+// EnigoInjector is Send + Sync because it only contains channel senders
+// and an Arc<JoinHandle>, both of which are Send + Sync.
+unsafe impl Send for EnigoInjector {}
+unsafe impl Sync for EnigoInjector {}
+
 impl InputInjector for EnigoInjector {
     fn inject(&self, action: &Action) -> PlatformResult<()> {
-        let mut enigo = self.enigo.lock().unwrap();
+        // Create a response channel
+        let (response_tx, response_rx) = bounded(1);
 
-        match action {
-            Action::Click { x, y, button } => {
-                debug!(x, y, ?button, "injecting click");
+        // Send the command
+        self.cmd_tx
+            .send(InjectionCommand {
+                action: action.clone(),
+                response_tx,
+            })
+            .map_err(|e| PlatformError::InjectionFailed(format!("channel send failed: {}", e)))?;
+
+        // Wait for response
+        response_rx
+            .recv()
+            .map_err(|e| PlatformError::InjectionFailed(format!("channel recv failed: {}", e)))?
+    }
+}
+
+/// Execute an action using the given Enigo instance.
+fn execute_action(enigo: &mut Enigo, action: &Action) -> PlatformResult<()> {
+    match action {
+        Action::Click { x, y, button } => {
+            debug!(x, y, ?button, "injecting click");
+            enigo
+                .move_mouse(*x, *y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            let btn = mouse_button_to_enigo(*button);
+            enigo
+                .button(btn, Direction::Click)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::DoubleClick { x, y, button } => {
+            debug!(x, y, ?button, "injecting double click");
+            enigo
+                .move_mouse(*x, *y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            let btn = mouse_button_to_enigo(*button);
+            enigo
+                .button(btn, Direction::Click)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            enigo
+                .button(btn, Direction::Click)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::Drag {
+            from,
+            to,
+            duration_ms: _,
+        } => {
+            debug!(?from, ?to, "injecting drag");
+            // Move to start
+            enigo
+                .move_mouse(from.x, from.y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            // Press
+            enigo
+                .button(Button::Left, Direction::Press)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            // Move to end
+            enigo
+                .move_mouse(to.x, to.y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            // Release
+            enigo
+                .button(Button::Left, Direction::Release)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::Scroll { delta_x, delta_y } => {
+            debug!(delta_x, delta_y, "injecting scroll");
+            if *delta_y != 0 {
                 enigo
-                    .move_mouse(*x, *y, Coordinate::Abs)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                let btn = mouse_button_to_enigo(*button);
-                enigo
-                    .button(btn, Direction::Click)
+                    .scroll(*delta_y, Axis::Vertical)
                     .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
             }
-
-            Action::DoubleClick { x, y, button } => {
-                debug!(x, y, ?button, "injecting double click");
+            if *delta_x != 0 {
                 enigo
-                    .move_mouse(*x, *y, Coordinate::Abs)
+                    .scroll(*delta_x, Axis::Horizontal)
                     .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                let btn = mouse_button_to_enigo(*button);
-                enigo
-                    .button(btn, Direction::Click)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                enigo
-                    .button(btn, Direction::Click)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::Drag {
-                from,
-                to,
-                duration_ms: _,
-            } => {
-                debug!(?from, ?to, "injecting drag");
-                // Move to start
-                enigo
-                    .move_mouse(from.x, from.y, Coordinate::Abs)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                // Press
-                enigo
-                    .button(Button::Left, Direction::Press)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                // Move to end
-                enigo
-                    .move_mouse(to.x, to.y, Coordinate::Abs)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                // Release
-                enigo
-                    .button(Button::Left, Direction::Release)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::Scroll { delta_x, delta_y } => {
-                debug!(delta_x, delta_y, "injecting scroll");
-                if *delta_y != 0 {
-                    enigo
-                        .scroll(*delta_y, Axis::Vertical)
-                        .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                }
-                if *delta_x != 0 {
-                    enigo
-                        .scroll(*delta_x, Axis::Horizontal)
-                        .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                }
-            }
-
-            Action::KeyTap { key } => {
-                debug!(key, "injecting key tap");
-                let k = parse_key(key)?;
-                enigo
-                    .key(k, Direction::Click)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::KeyDown { key } => {
-                debug!(key, "injecting key down");
-                let k = parse_key(key)?;
-                enigo
-                    .key(k, Direction::Press)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::KeyUp { key } => {
-                debug!(key, "injecting key up");
-                let k = parse_key(key)?;
-                enigo
-                    .key(k, Direction::Release)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::TextInput { text } => {
-                debug!(text, "injecting text input");
-                enigo
-                    .text(text)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::MouseDown { x, y, button } => {
-                debug!(x, y, ?button, "injecting mouse down");
-                enigo
-                    .move_mouse(*x, *y, Coordinate::Abs)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                let btn = mouse_button_to_enigo(*button);
-                enigo
-                    .button(btn, Direction::Press)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::MouseUp { x, y, button } => {
-                debug!(x, y, ?button, "injecting mouse up");
-                enigo
-                    .move_mouse(*x, *y, Coordinate::Abs)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-                let btn = mouse_button_to_enigo(*button);
-                enigo
-                    .button(btn, Direction::Release)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::MouseMove { x, y } => {
-                debug!(x, y, "injecting mouse move");
-                enigo
-                    .move_mouse(*x, *y, Coordinate::Abs)
-                    .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
-            }
-
-            Action::Wait { ms } => {
-                debug!(ms, "wait action - handled by executor, not injector");
-                // Wait is handled by the execution engine, not the injector
-            }
-
-            // Phase 3: These actions are handled by the execution engine, not the injector
-            Action::WaitUntil { .. }
-            | Action::Conditional { .. }
-            | Action::SetCounter { .. }
-            | Action::IncrCounter { .. }
-            | Action::DecrCounter { .. }
-            | Action::ResetCounter { .. }
-            | Action::Exit => {
-                debug!("control action - handled by executor, not injector");
-                // These are control flow actions handled by the engine
             }
         }
 
-        Ok(())
+        Action::KeyTap { key } => {
+            debug!(key, "injecting key tap");
+            let k = parse_key(key)?;
+            enigo
+                .key(k, Direction::Click)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::KeyDown { key } => {
+            debug!(key, "injecting key down");
+            let k = parse_key(key)?;
+            enigo
+                .key(k, Direction::Press)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::KeyUp { key } => {
+            debug!(key, "injecting key up");
+            let k = parse_key(key)?;
+            enigo
+                .key(k, Direction::Release)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::TextInput { text } => {
+            debug!(text, "injecting text input");
+            enigo
+                .text(text)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::MouseDown { x, y, button } => {
+            debug!(x, y, ?button, "injecting mouse down");
+            enigo
+                .move_mouse(*x, *y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            let btn = mouse_button_to_enigo(*button);
+            enigo
+                .button(btn, Direction::Press)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::MouseUp { x, y, button } => {
+            debug!(x, y, ?button, "injecting mouse up");
+            enigo
+                .move_mouse(*x, *y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+            let btn = mouse_button_to_enigo(*button);
+            enigo
+                .button(btn, Direction::Release)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::MouseMove { x, y } => {
+            debug!(x, y, "injecting mouse move");
+            enigo
+                .move_mouse(*x, *y, Coordinate::Abs)
+                .map_err(|e| PlatformError::InjectionFailed(e.to_string()))?;
+        }
+
+        Action::Wait { ms } => {
+            debug!(ms, "wait action - handled by executor, not injector");
+            // Wait is handled by the execution engine, not the injector
+        }
+
+        // Phase 3: These actions are handled by the execution engine, not the injector
+        Action::WaitUntil { .. }
+        | Action::Conditional { .. }
+        | Action::SetCounter { .. }
+        | Action::IncrCounter { .. }
+        | Action::DecrCounter { .. }
+        | Action::ResetCounter { .. }
+        | Action::Exit => {
+            debug!("control action - handled by executor, not injector");
+            // These are control flow actions handled by the engine
+        }
     }
+
+    Ok(())
 }
 
 fn mouse_button_to_enigo(button: MouseButton) -> Button {
@@ -255,18 +315,52 @@ fn parse_key(key: &str) -> PlatformResult<enigo::Key> {
         // Editing
         "backspace" | "back" => Key::Backspace,
         "delete" | "del" => Key::Delete,
-        "insert" | "ins" => Key::Insert,
         "enter" | "return" => Key::Return,
         "tab" => Key::Tab,
         "escape" | "esc" => Key::Escape,
         "space" | " " => Key::Space,
 
+        // Platform-specific keys (Windows only, use Help as fallback on macOS)
+        #[cfg(target_os = "windows")]
+        "insert" | "ins" => Key::Insert,
+        #[cfg(not(target_os = "windows"))]
+        "insert" | "ins" => {
+            warn!("Insert key not available on this platform, using Help as fallback");
+            Key::Help
+        }
+
         // Misc
         "capslock" | "caps" => Key::CapsLock,
+
+        #[cfg(target_os = "windows")]
         "printscreen" | "prtsc" => Key::PrintScr,
-        // "scrolllock" not available in enigo 0.3
+        #[cfg(not(target_os = "windows"))]
+        "printscreen" | "prtsc" => {
+            warn!("PrintScreen key not available on this platform");
+            return Err(PlatformError::InvalidKey(
+                "PrintScreen not supported on this platform".to_string(),
+            ));
+        }
+
+        #[cfg(target_os = "windows")]
         "pause" => Key::Pause,
+        #[cfg(not(target_os = "windows"))]
+        "pause" => {
+            warn!("Pause key not available on this platform");
+            return Err(PlatformError::InvalidKey(
+                "Pause not supported on this platform".to_string(),
+            ));
+        }
+
+        #[cfg(target_os = "windows")]
         "numlock" => Key::Numlock,
+        #[cfg(not(target_os = "windows"))]
+        "numlock" => {
+            warn!("NumLock key not available on this platform");
+            return Err(PlatformError::InvalidKey(
+                "NumLock not supported on this platform".to_string(),
+            ));
+        }
 
         _ => {
             warn!(key, "unknown key, treating as unicode sequence");
@@ -323,4 +417,3 @@ mod tests {
         assert!(matches!(k, enigo::Key::F1));
     }
 }
-
