@@ -3,7 +3,7 @@
 //! On macOS, Enigo contains CGEventSource which is not Send, so we use a
 //! dedicated injection thread and communicate via channels.
 
-use crate::{PlatformError, PlatformResult};
+use crate::error::{PlatformError, PlatformResult};
 use crossbeam_channel::{bounded, Sender};
 use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
 use std::sync::Arc;

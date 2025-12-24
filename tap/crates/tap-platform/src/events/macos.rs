@@ -19,7 +19,7 @@ use core_graphics::event::{CGEventTapLocation, CGEventTapOptions, CGEventTapPlac
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use tracing::{debug, error, info};
 
@@ -102,7 +102,6 @@ pub struct MacOSEvent {
 // ============================================================================
 
 /// Global singleton for the event listener (using OnceLock for safe initialization)
-use std::sync::OnceLock;
 static GLOBAL_LISTENER: OnceLock<Arc<GlobalEventListener>> = OnceLock::new();
 
 /// Thread-safe list of event subscribers
@@ -171,7 +170,7 @@ fn get_global_listener() -> Arc<GlobalEventListener> {
 
 // Thread-local storage for the event tap callback
 thread_local! {
-    static EVENT_SENDER: std::cell::RefCell<Option<Sender<MacOSEvent>>> = std::cell::RefCell::new(None);
+    static EVENT_SENDER: std::cell::RefCell<Option<Sender<MacOSEvent>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Callback function for CGEventTap.
@@ -480,3 +479,4 @@ pub fn keycode_to_name(keycode: u16) -> String {
         _ => format!("Unknown(0x{:02X})", keycode),
     }
 }
+

@@ -74,7 +74,7 @@ tap（Timed Action Performer）是一个用 Rust 构建的跨平台桌面 GUI �
 3. **单例模式**：整个应用共享一个全局事件监听器，避免多个 CGEventTap 冲突
 4. **订阅机制**：`mouse_tracker` 和 `input_hook` 都订阅同一个事件流
 
-相关文件：`tap-platform/src/macos_events.rs`
+相关文件：`tap-platform/src/events/macos.rs`
 
 #### 3) 全局热键
 
@@ -200,9 +200,11 @@ tap/                              # 项目根（Cargo workspace + Vite/React roo
 ├── src-tauri/                    # Tauri Rust 后端（桌面壳 + IPC）
 │   ├── Cargo.toml
 │   ├── src/main.rs               # Rust 入口，暴露 Tauri 命令
-│   ├── build.rs                  # 构建脚本（生成 icon.ico 等）
-│   ├── tauri.conf.json           # Tauri 应用配置
-│   └── icons/                    # 生成的图标
+│   ├── build.rs                  # Tauri 构建脚本（最小化，仅调用 tauri_build）
+│   ├── tauri.conf.json           # Tauri 应用配置（统一管理双平台构建配置）
+│   └── icons/                    # 应用图标（预生成，提交到仓库）
+│       ├── icon.png              # 512x512 PNG（macOS/Linux）
+│       └── icon.ico              # Windows ICO（含多尺寸）
 │
 ├── crates/                       # Rust 核心库（与 UI 解耦）
 │   ├── tap-core/                 # 领域模型 + 调度逻辑（无平台依赖）
@@ -253,23 +255,54 @@ Phase 3 引入了条件判断和窗口/像素检测能力，架构扩展如下�
 
 ### tap-platform 模块详解
 
-`tap-platform` 是平台抽象层，负责隔离操作系统差异：
+`tap-platform` 是平台抽象层，负责隔离操作系统差异。采用**子模块分离**架构，每个功能领域有独立目录：
 
-| 模块 | 职责 | Windows | macOS |
-|------|------|---------|-------|
+```
+tap-platform/src/
+├── lib.rs                 # 根模块：re-export 所有公共 API
+├── error.rs               # PlatformError 定义
+├── injector.rs            # 输入注入（全平台共用 enigo）
+├── events/                # 事件监听子模块
+│   ├── mod.rs             # 公共类型 + 入口函数
+│   └── macos.rs           # macOS 原生实现（CGEventTap 单例）
+├── input_hook/            # 全局输入钩子子模块
+│   ├── mod.rs             # RawInputEvent, InputHookHandle 等公共类型
+│   ├── rdev_impl.rs       # Windows/Linux 实现（rdev）
+│   └── macos.rs           # macOS 实现（订阅 events 单例）
+├── mouse_tracker/         # 鼠标追踪子模块
+│   ├── mod.rs             # MousePosition, MouseTrackerHandle 等公共类型
+│   ├── rdev_impl.rs       # Windows/Linux 实现（rdev）
+│   └── macos.rs           # macOS 实现（订阅 events 单例）
+├── window/                # 窗口 API 子模块
+│   ├── mod.rs             # WindowInfo, WindowRect 等公共类型
+│   ├── windows.rs         # Windows 实现（Win32 API）
+│   └── macos.rs           # macOS 实现（待完善）
+├── pixel/                 # 像素检测子模块
+│   ├── mod.rs             # Color 类型 + 公共接口
+│   ├── windows.rs         # Windows GDI 实现
+│   └── macos.rs           # macOS 实现（待完善）
+└── dpi/                   # DPI 处理子模块
+    ├── mod.rs             # ScaledCoords 类型
+    ├── windows.rs         # Windows DPI API
+    └── macos.rs           # macOS 实现
+```
+
+| 子模块 | 职责 | Windows | macOS |
+|--------|------|---------|-------|
 | `injector.rs` | 输入注入（鼠标/键盘） | enigo + 后台线程 | enigo + 后台线程 |
-| `input_hook.rs` | 全局事件监听（录制用） | rdev | 原生 CGEventTap（单例） |
-| `mouse_tracker.rs` | 全局鼠标位置追踪 | rdev | 原生 CGEventTap（单例） |
-| `macos_events.rs` | macOS 原生事件监听（内部模块） | N/A | CGEventTap + 订阅模式 |
-| `window.rs` | 窗口 API | Windows API | N/A（待实现） |
-| `pixel.rs` | 像素颜色读取 | GDI | CoreGraphics |
-| `dpi.rs` | 高 DPI 处理 | SetProcessDpiAwareness | NSScreen scale |
+| `events/` | 全局事件监听（单例） | N/A | CGEventTap + 订阅模式 |
+| `input_hook/` | 全局事件监听（录制用） | rdev | 订阅 events 单例 |
+| `mouse_tracker/` | 全局鼠标位置追踪 | rdev | 订阅 events 单例 |
+| `window/` | 窗口 API | Win32 API | 待实现 |
+| `pixel/` | 像素颜色读取 | GDI | 待实现 |
+| `dpi/` | 高 DPI 处理 | SetProcessDpiAwareness | NSScreen scale |
 
 **平台差异处理策略**：
 
-1. **条件编译**：在函数内部使用 `#[cfg(target_os = "...")]` 切换实现
-2. **公共接口**：对外暴露统一的 API（如 `start_input_hook()`），内部根据平台选择实现
+1. **子模块分离**：每个功能领域有独立目录，平台实现分离为 `windows.rs`、`macos.rs`、`rdev_impl.rs` 等
+2. **公共接口**：`mod.rs` 定义公共类型和入口函数，根据平台选择实现
 3. **Trait 抽象**：`InputInjector` trait 允许替换实现（用于测试或未来扩展）
+4. **单例模式**：macOS 使用全局事件监听器单例，避免多个 CGEventTap 冲突
 
 ### Phase 3 新增模块
 
@@ -376,4 +409,54 @@ CallMacro { name, args }
 
 - `docs/DSL_REFERENCE.md` - DSL 语法完整参考
 - `templates/` - 预置 YAML 模板示例
+
+## 跨平台构建配置
+
+### 统一管理原则
+
+所有平台的构建配置统一在 `tauri.conf.json` 中管理，遵循 Tauri 最佳实践：
+
+| 配置项 | 位置 | 说明 |
+|--------|------|------|
+| 应用元信息 | `tauri.conf.json` | productName, version, identifier |
+| 图标 | `src-tauri/icons/` | 预生成并提交，不在构建时动态生成 |
+| 平台特定 bundle | `tauri.conf.json` → `bundle.macOS/windows` | 最小系统版本、安装器配置等 |
+| 前端构建 | `tauri.conf.json` → `build` | beforeDevCommand, beforeBuildCommand |
+
+### 图标管理
+
+图标文件预生成并提交到仓库，确保构建过程的可重复性：
+
+```
+src-tauri/icons/
+├── icon.png    # 512x512 RGBA PNG（macOS/Linux 使用，Tauri 自动转换为 icns）
+└── icon.ico    # Windows ICO（包含 256/128/64/48/32/16 多尺寸）
+```
+
+**生成图标的方法**：
+- 使用在线工具（如 favicon.io）从 PNG 生成 ICO
+- 使用 ImageMagick：`convert icon.png -define icon:auto-resize=256,128,64,48,32,16 icon.ico`
+- 使用项目脚本（macOS Swift）
+
+### 构建命令
+
+| 命令 | 说明 |
+|------|------|
+| `yarn tauri:dev` | 开发模式（热更新） |
+| `yarn tauri:build` | 生产构建 |
+
+**构建产物**（文件名由 `productName` 决定，当前为 `Tap`）：
+- macOS：`target/release/bundle/macos/Tap.app`、`Tap.dmg`
+- Windows：`target/release/bundle/msi/Tap.msi`、`nsis/Tap-setup.exe`（具体名称可能随安装器配置略有差异）
+
+### macOS 安装到 Applications
+
+macOS 的安装机制由 Tauri 自动处理：
+1. `yarn tauri build` 生成 `.app` bundle 和 `.dmg` 安装包
+2. 用户打开 `.dmg` 后拖拽到 Applications 文件夹
+3. 无需在 `build.rs` 中编写任何安装逻辑
+
+### Windows 安装器
+
+Tauri 支持 WiX（`.msi`）和 NSIS（`.exe`）两种安装器，配置在 `tauri.conf.json` 的 `bundle.windows` 中。当前配置为 `null` 表示使用默认设置。
 
