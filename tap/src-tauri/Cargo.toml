@@ -2,7 +2,7 @@
 name = "tap-tauri"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "AGPL-3.0-only"
 description = "tap desktop app (Tauri backend)."
 
 [package.metadata.tauri]
@@ -10,8 +10,6 @@ config = "tauri.conf.json"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-ico = "0.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
