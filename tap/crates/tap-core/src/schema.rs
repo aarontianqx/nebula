@@ -425,7 +425,7 @@ fn is_valid_compare_op(op: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{DslProfile, DslRunConfig, DslTimedAction, DslValue};
+    use crate::dsl::{DslMouseButton, DslProfile, DslRunConfig, DslTimedAction, DslValue};
 
     fn minimal_profile() -> DslProfile {
         DslProfile {

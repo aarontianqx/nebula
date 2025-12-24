@@ -24,10 +24,10 @@ function Picker() {
   const handleClick = useCallback(async (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     const x = e.screenX;
     const y = e.screenY;
-    
+
     try {
       await invoke("picker_position_selected", { x, y });
     } catch (err) {
@@ -62,37 +62,37 @@ function Picker() {
     <div className="picker-overlay">
       {/* Semi-transparent overlay */}
       <div className="picker-background" />
-      
+
       {/* Crosshair */}
-      <div 
-        className="crosshair-h" 
+      <div
+        className="crosshair-h"
         style={{ top: mousePos.y }}
       />
-      <div 
-        className="crosshair-v" 
+      <div
+        className="crosshair-v"
         style={{ left: mousePos.x }}
       />
-      
+
       {/* Coordinate display - show physical pixels for accuracy */}
-      <div 
+      <div
         className="coord-display"
-        style={{ 
-          left: mousePos.x + 20, 
-          top: mousePos.y + 20 
+        style={{
+          left: mousePos.x + 20,
+          top: mousePos.y + 20
         }}
       >
         <span className="coord-value">
           ({Math.round(mousePos.x * dpiScale)}, {Math.round(mousePos.y * dpiScale)})
         </span>
-        <span className="coord-hint">Click to select â€?ESC to cancel</span>
+        <span className="coord-hint">Click to select ï¿½?ESC to cancel</span>
       </div>
-      
+
       {/* Center crosshair marker */}
-      <div 
+      <div
         className="crosshair-center"
-        style={{ 
-          left: mousePos.x - 10, 
-          top: mousePos.y - 10 
+        style={{
+          left: mousePos.x - 10,
+          top: mousePos.y - 10
         }}
       />
     </div>

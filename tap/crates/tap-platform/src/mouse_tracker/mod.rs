@@ -3,18 +3,20 @@
 //! This module provides a lightweight service for tracking global mouse position
 //! across the entire screen (not just within the WebView window).
 //!
-//! On macOS, we use a custom implementation to avoid rdev's thread-safety issues.
+//! Platform implementations:
+//! - Windows/Linux: Uses rdev crate (`rdev_impl.rs`)
+//! - macOS: Uses native Core Graphics API (`macos.rs`)
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
-use tracing::info;
 
-// Platform-specific imports
 #[cfg(not(target_os = "macos"))]
-use rdev::{listen, Event, EventType};
+mod rdev_impl;
+
+#[cfg(target_os = "macos")]
+mod macos;
 
 /// Current mouse position.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
@@ -117,12 +119,12 @@ pub fn start_mouse_tracker(config: MouseTrackerConfig) -> MouseTrackerHandle {
 
     #[cfg(not(target_os = "macos"))]
     let thread = thread::spawn(move || {
-        start_tracker_rdev(config, event_tx, cmd_rx, running_clone);
+        rdev_impl::start_tracker(config, event_tx, cmd_rx, running_clone);
     });
 
     #[cfg(target_os = "macos")]
     let thread = thread::spawn(move || {
-        start_tracker_macos(config, event_tx, cmd_rx, running_clone);
+        macos::start_tracker(config, event_tx, cmd_rx, running_clone);
     });
 
     MouseTrackerHandle {
@@ -131,95 +133,6 @@ pub fn start_mouse_tracker(config: MouseTrackerConfig) -> MouseTrackerHandle {
         running,
         thread: Some(thread),
     }
-}
-
-/// rdev-based implementation for Windows/Linux.
-#[cfg(not(target_os = "macos"))]
-fn start_tracker_rdev(
-    config: MouseTrackerConfig,
-    event_tx: Sender<MouseTrackerEvent>,
-    cmd_rx: Receiver<MouseTrackerCommand>,
-    running: Arc<AtomicBool>,
-) {
-    info!("Mouse tracker thread started (rdev)");
-
-    let mut last_emit_time = Instant::now();
-    let throttle_duration = Duration::from_millis(config.throttle_ms);
-
-    let callback = move |event: Event| {
-        // Check for stop command
-        if let Ok(MouseTrackerCommand::Stop) = cmd_rx.try_recv() {
-            info!("Tracker stop requested");
-            return;
-        }
-
-        if let EventType::MouseMove { x, y } = event.event_type {
-            // Throttle position updates
-            let now = Instant::now();
-            if now.duration_since(last_emit_time) >= throttle_duration {
-                last_emit_time = now;
-                let _ = event_tx.try_send(MouseTrackerEvent::PositionUpdate {
-                    x: x as i32,
-                    y: y as i32,
-                });
-            }
-        }
-    };
-
-    if let Err(error) = listen(callback) {
-        error!(?error, "Mouse tracker error");
-    }
-
-    running.store(false, Ordering::SeqCst);
-    info!("Mouse tracker thread exiting");
-}
-
-/// Native Core Graphics implementation for macOS.
-/// This avoids the thread-safety issues in rdev's keyboard character resolution.
-/// Uses the singleton global event listener pattern.
-#[cfg(target_os = "macos")]
-fn start_tracker_macos(
-    config: MouseTrackerConfig,
-    event_tx: Sender<MouseTrackerEvent>,
-    _cmd_rx: Receiver<MouseTrackerCommand>,
-    running: Arc<AtomicBool>,
-) {
-    use crate::macos_events::{subscribe_events, MacOSEventType};
-
-    info!("Mouse tracker thread started (macOS native, using global listener)");
-
-    let throttle_duration = Duration::from_millis(config.throttle_ms);
-    
-    // Subscribe to the global event listener
-    let subscription = subscribe_events();
-    
-    let mut last_emit_time = Instant::now();
-    
-    while running.load(Ordering::SeqCst) {
-        match subscription.recv_timeout(Duration::from_millis(100)) {
-            Ok(event) => {
-                if let MacOSEventType::MouseMove { x, y } = event.event_type {
-                    let now = Instant::now();
-                    if now.duration_since(last_emit_time) >= throttle_duration {
-                        last_emit_time = now;
-                        let _ = event_tx.try_send(MouseTrackerEvent::PositionUpdate {
-                            x: x as i32,
-                            y: y as i32,
-                        });
-                    }
-                }
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                // Just check running flag
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                break;
-            }
-        }
-    }
-
-    running.store(false, Ordering::SeqCst);
-    info!("Mouse tracker thread exiting");
 }
 
 #[cfg(test)]
@@ -232,3 +145,4 @@ mod tests {
         assert_eq!(config.throttle_ms, 50);
     }
 }
+
