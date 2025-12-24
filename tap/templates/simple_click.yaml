@@ -25,10 +25,12 @@ timeline:
       click:
         x: "{{ click_x }}"
         y: "{{ click_y }}"
-  - at_ms: 0
+    note: "Click at the target position"
+  - at_ms: 100
     action:
       wait:
         ms: "{{ interval }}"
+    note: "Wait before next iteration"
 
 run:
   repeat: 0  # Forever

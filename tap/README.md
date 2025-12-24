@@ -31,4 +31,6 @@ npm run tauri:build
 - `docs/FUNCTIONAL_GUIDE.md` — 产品功能
 - `docs/PROJECT_STRUCTURE.md` — 技术架构
 - `docs/UI_DESIGN.md` — UI/UX 设计
+- `docs/DSL_REFERENCE.md` — YAML DSL 语法参考
 - `docs/roadmap/` — 开发路线图
+- `templates/` — YAML 宏模板示例
