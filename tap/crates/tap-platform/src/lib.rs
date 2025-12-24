@@ -2,8 +2,8 @@
 //!
 //! This crate provides:
 //! - Input injection (mouse/keyboard simulation) via `enigo`
-//! - Global input hook for recording via `rdev`
-//! - Global mouse position tracking via `rdev`
+//! - Global input hook for recording via `rdev` (or native macOS API on macOS)
+//! - Global mouse position tracking via `rdev` (or native macOS API on macOS)
 //! - DPI scaling utilities for high-resolution displays
 //! - Window detection and management APIs
 //! - Pixel color reading for condition evaluation
@@ -14,6 +14,9 @@ mod input_hook;
 mod mouse_tracker;
 mod pixel;
 mod window;
+
+#[cfg(target_os = "macos")]
+mod macos_events;
 
 pub use dpi::{get_primary_scale_factor, set_dpi_aware, ScaledCoords};
 pub use injector::{EnigoInjector, InputInjector, NoopInjector};

@@ -10,16 +10,16 @@
 
 ```bash
 cd tap
-npm install
-npm run tauri:dev
+yarn install
+yarn tauri:dev
 ```
 
 ### 构建（发布 / 打包）
 
 ```bash
 cd tap
-npm install
-npm run tauri:build
+yarn install
+yarn tauri:build
 ```
 
 ## 安全停止
