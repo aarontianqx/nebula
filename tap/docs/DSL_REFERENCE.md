@@ -303,8 +303,11 @@ action:
   exit: {}
 ```
 
-#### call_macro
-Call another saved macro:
+#### call_macro (待实现)
+
+> **注意**：`call_macro` DSL 语法已定义，但执行逻辑尚未完全集成到引擎。当前导入包含 `call_macro` 的 YAML 会返回错误。
+
+调用另一个已保存的宏（计划功能）：
 
 ```yaml
 action:
