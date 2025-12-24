@@ -24,4 +24,5 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# macOS-specific deps if needed later
+core-graphics = "0.24"
+core-foundation = "0.10"

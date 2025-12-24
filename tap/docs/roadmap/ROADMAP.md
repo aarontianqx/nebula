@@ -12,7 +12,8 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 | Phase 2 | **Record & Replay** | 录制与回放 | 全局 Hook + 时间线生成 + 回放引擎 | ✅ 完成 |
 | Phase 3 | **Conditions** | 条件与识别 | 窗口绑定 + 像素检测 + 简单分支 | ✅ 完成 |
 | Phase 4 | **Extensibility** | 可编程与插件 | DSL + 参数化变量 + 表达式引擎 | ✅ 核心完成 |
-| Phase 5 | **Plugins** | 插件系统 | Wasm 插件 + 自定义动作 | 📋 计划中 |
+| Phase 5 | **Architecture** | 架构优化 | 跨平台成熟度 + 代码组织 | ✅ 评估完成（无需重构） |
+| Phase 6 | **Plugins** | 插件系统 | Wasm 插件 + 自定义动作 | 📋 计划中 |
 
 ## 优先级框架（MoSCoW）
 
@@ -49,6 +50,7 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 | 相对坐标 | API 就绪，Action 集成待做 | Phase 3 |
 | 子宏调用 | 框架就绪，Engine 集成待做 | Phase 4 |
 | 变量运行时替换 | DSL 解析完成，执行时替换待完善 | Phase 4 |
+| macOS 窗口 API | 需实现 `get_foreground_window` 等 | Phase 5 |
 
 ## 文档索引
 
@@ -56,3 +58,4 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 - [Phase 2 - Record & Replay](./PHASE_2_RECORD_REPLAY.md)
 - [Phase 3 - Conditions](./PHASE_3_CONDITIONS.md)
 - [Phase 4 - Extensibility](./PHASE_4_EXTENSIBILITY.md)
+- [Phase 5 - Architecture](./PHASE_5_ARCHITECTURE.md)
