@@ -7,6 +7,13 @@ type EngineState = "Idle" | "Arming" | "Running" | "Paused" | "Stopped";
 type RecorderState = "Idle" | "Recording" | "Paused";
 type Mode = "simple" | "timeline";
 type TimelineView = "visual" | "code";
+type SimpleActionType = "click" | "key" | "key-to-click";
+
+// Key-click event types
+type KeyClickEvent =
+  | "Started"
+  | { Click: { count: number; x: number; y: number } }
+  | { Stopped: { total_clicks: number } };
 
 // Phase 4: DSL types
 interface ValidationErrorResponse {
@@ -174,11 +181,16 @@ export default function App() {
   const [countdownSecs, setCountdownSecs] = React.useState<number>(3);
 
   // Simple mode config
-  const [actionType, setActionType] = React.useState<"click" | "key">("click");
+  const [actionType, setActionType] = React.useState<SimpleActionType>("click");
   const [clickX, setClickX] = React.useState<number>(640);
   const [clickY, setClickY] = React.useState<number>(360);
   const [keyName, setKeyName] = React.useState<string>("Space");
   const [intervalMs, setIntervalMs] = React.useState<number>(1000);
+
+  // Key-to-Click mode state
+  const [keyClickRunning, setKeyClickRunning] = React.useState<boolean>(false);
+  const [keyClickCount, setKeyClickCount] = React.useState<number>(0);
+  const [keyClickInterval, setKeyClickInterval] = React.useState<number>(50);
 
   // Profile state
   const [profileName, setProfileName] = React.useState<string>("Untitled");
@@ -357,7 +369,24 @@ export default function App() {
         setUiMessage(`Picked: (${x}, ${y})`);
         addLog(`📍 Picked: (${x}, ${y})`);
       });
+
+      // Listen for key-click events
+      unlistenKeyClick = await listen<KeyClickEvent>("key-click-event", (event) => {
+        const e = event.payload;
+        if (e === "Started") {
+          setKeyClickRunning(true);
+          setKeyClickCount(0);
+          addLog("🖱️ Key→Click mode started");
+        } else if (typeof e === "object" && "Click" in e) {
+          setKeyClickCount(e.Click.count);
+        } else if (typeof e === "object" && "Stopped" in e) {
+          setKeyClickRunning(false);
+          addLog(`🖱️ Key→Click stopped (${e.Stopped.total_clicks} clicks)`);
+        }
+      });
     };
+
+    let unlistenKeyClick: UnlistenFn | null = null;
 
     setupListeners();
     return () => {
@@ -366,6 +395,7 @@ export default function App() {
       unlistenRecording?.();
       unlistenMousePos?.();
       unlistenPositionPicked?.();
+      unlistenKeyClick?.();
     };
   }, [addLog]);
 
@@ -438,6 +468,26 @@ export default function App() {
     try {
       await invoke("emergency_stop");
       addLog("⚠️ EMERGENCY STOP");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+    }
+  }
+
+  // Key-to-Click handlers
+  async function handleStartKeyClick() {
+    try {
+      setKeyClickCount(0);
+      await invoke("start_key_click", { intervalMs: keyClickInterval });
+      addLog("🖱️ Key→Click mode starting...");
+    } catch (e) {
+      setEngineStatus(`Failed: ${String(e)}`);
+      addLog(`❌ ${String(e)}`);
+    }
+  }
+
+  async function handleStopKeyClick() {
+    try {
+      await invoke("stop_key_click");
     } catch (e) {
       setEngineStatus(`Failed: ${String(e)}`);
     }
@@ -696,12 +746,13 @@ export default function App() {
                   <label className="label">Action</label>
                   <select
                     value={actionType}
-                    onChange={(e) => setActionType(e.target.value as "click" | "key")}
-                    disabled={!isIdle}
+                    onChange={(e) => setActionType(e.target.value as SimpleActionType)}
+                    disabled={!isIdle || keyClickRunning}
                     className="input"
                   >
                     <option value="click">Click</option>
                     <option value="key">Key Press</option>
+                    <option value="key-to-click">Key → Click</option>
                   </select>
                 </div>
                 {actionType === "click" && (
@@ -753,45 +804,81 @@ export default function App() {
                     />
                   </div>
                 )}
-                <div className="field">
-                  <label className="label">Interval</label>
-                  <div className="input-suffix">
-                    <input
-                      type="number"
-                      value={intervalMs}
-                      onChange={(e) => setIntervalMs(parseInt(e.target.value, 10) || 100)}
-                      disabled={!isIdle}
-                      className="input"
-                      min={50}
-                    />
-                    <span>ms</span>
-                  </div>
-                </div>
-                <div className="field">
-                  <label className="label">Repeat</label>
-                  <input
-                    type="text"
-                    value={repeatCount}
-                    onChange={(e) => setRepeatCount(e.target.value)}
-                    disabled={!isIdle}
-                    className="input"
-                    placeholder="∞ (empty = forever)"
-                  />
-                </div>
-                <div className="field">
-                  <label className="label">Countdown</label>
-                  <div className="input-suffix">
-                    <input
-                      type="number"
-                      value={countdownSecs}
-                      onChange={(e) => setCountdownSecs(parseInt(e.target.value, 10) || 0)}
-                      disabled={!isIdle}
-                      className="input"
-                      min={0}
-                    />
-                    <span>sec</span>
-                  </div>
-                </div>
+                {actionType === "key-to-click" && (
+                  <>
+                    <div className="field">
+                      <label className="label">Click Interval</label>
+                      <div className="input-suffix">
+                        <input
+                          type="number"
+                          value={keyClickInterval}
+                          onChange={(e) => setKeyClickInterval(parseInt(e.target.value, 10) || 50)}
+                          disabled={keyClickRunning}
+                          className="input"
+                          min={20}
+                        />
+                        <span>ms</span>
+                      </div>
+                    </div>
+                    <div className="info-box">
+                      <strong>How it works:</strong>
+                      <ul>
+                        <li>Press any A–Z key to click at cursor</li>
+                        <li>Hold to repeat clicks</li>
+                        <li>Press <kbd>Space</kbd> to stop</li>
+                      </ul>
+                    </div>
+                    {keyClickRunning && (
+                      <div className="key-click-status">
+                        <span className="key-click-count">🖱️ {keyClickCount} clicks</span>
+                        <span className="key-click-hint">Press Space to stop</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {actionType !== "key-to-click" && (
+                  <>
+                    <div className="field">
+                      <label className="label">Interval</label>
+                      <div className="input-suffix">
+                        <input
+                          type="number"
+                          value={intervalMs}
+                          onChange={(e) => setIntervalMs(parseInt(e.target.value, 10) || 100)}
+                          disabled={!isIdle}
+                          className="input"
+                          min={50}
+                        />
+                        <span>ms</span>
+                      </div>
+                    </div>
+                    <div className="field">
+                      <label className="label">Repeat</label>
+                      <input
+                        type="text"
+                        value={repeatCount}
+                        onChange={(e) => setRepeatCount(e.target.value)}
+                        disabled={!isIdle}
+                        className="input"
+                        placeholder="∞ (empty = forever)"
+                      />
+                    </div>
+                    <div className="field">
+                      <label className="label">Countdown</label>
+                      <div className="input-suffix">
+                        <input
+                          type="number"
+                          value={countdownSecs}
+                          onChange={(e) => setCountdownSecs(parseInt(e.target.value, 10) || 0)}
+                          disabled={!isIdle}
+                          className="input"
+                          min={0}
+                        />
+                        <span>sec</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </>
           ) : (
@@ -982,13 +1069,29 @@ export default function App() {
                   <button className="btn btn-danger" onClick={handleStopRecording}>⏹ Stop</button>
                 </>
               )}
-              {recorderState === "Idle" && isIdle && (
+              {recorderState === "Idle" && isIdle && !keyClickRunning && actionType !== "key-to-click" && (
                 <button
                   className="btn btn-primary btn-large"
                   onClick={mode === "simple" ? handleStartSimple : handleStartTimeline}
                   disabled={mode === "timeline" && timeline.length === 0}
                 >
                   ▶ Play
+                </button>
+              )}
+              {recorderState === "Idle" && isIdle && !keyClickRunning && actionType === "key-to-click" && mode === "simple" && (
+                <button
+                  className="btn btn-primary btn-large"
+                  onClick={handleStartKeyClick}
+                >
+                  🖱️ Start Key→Click
+                </button>
+              )}
+              {keyClickRunning && (
+                <button
+                  className="btn btn-danger btn-large"
+                  onClick={handleStopKeyClick}
+                >
+                  ⏹ Stop Key→Click
                 </button>
               )}
               {isArming && (
@@ -1024,6 +1127,15 @@ export default function App() {
               </div>
             )}
 
+            {keyClickRunning && (
+              <div className="stats">
+                <div className="stat">
+                  <span className="stat-value">{keyClickCount}</span>
+                  <span className="stat-label">Clicks</span>
+                </div>
+              </div>
+            )}
+
             {lastAction && (isRunning || isPaused) && (
               <div className="last-action">
                 <span className="last-action-label">Last:</span>
@@ -1031,7 +1143,7 @@ export default function App() {
               </div>
             )}
 
-            <button className="btn btn-emergency" onClick={handleEmergencyStop} disabled={isIdle && recorderState === "Idle"}>
+            <button className="btn btn-emergency" onClick={handleEmergencyStop} disabled={isIdle && recorderState === "Idle" && !keyClickRunning}>
               ⚠️ Emergency Stop
             </button>
           </div>
