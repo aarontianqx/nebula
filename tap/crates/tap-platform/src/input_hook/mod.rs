@@ -3,17 +3,21 @@
 //! This module captures all keyboard and mouse events for recording.
 //!
 //! Platform implementations:
-//! - Windows/Linux: Uses rdev crate (`rdev_impl.rs`)
+//! - Windows: Uses native SetWindowsHookEx API (`windows_native.rs`)
 //! - macOS: Uses native Core Graphics API (`macos.rs`)
+//! - Linux: Uses rdev crate (`rdev_impl.rs`)
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-#[cfg(not(target_os = "macos"))]
-mod rdev_impl;
+#[cfg(target_os = "windows")]
+mod windows_native;
 
 #[cfg(target_os = "macos")]
 mod macos;
+
+#[cfg(target_os = "linux")]
+mod rdev_impl;
 
 /// A raw input event captured by the hook.
 #[derive(Debug, Clone)]
@@ -96,20 +100,27 @@ impl Drop for InputHookHandle {
 ///
 /// Returns a handle that can be used to receive events and stop the hook.
 ///
-/// On Windows/Linux: Uses rdev.
-/// On macOS: Uses native Core Graphics API to avoid thread-safety issues.
+/// Platform implementations:
+/// - Windows: Uses native SetWindowsHookEx API
+/// - macOS: Uses native Core Graphics API
+/// - Linux: Uses rdev crate
 pub fn start_input_hook() -> InputHookHandle {
     let (event_tx, event_rx) = bounded(1024);
     let (stop_tx, stop_rx) = bounded(1);
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     let thread = thread::spawn(move || {
-        rdev_impl::start_hook(event_tx, stop_rx);
+        windows_native::start_hook(event_tx, stop_rx);
     });
 
     #[cfg(target_os = "macos")]
     let thread = thread::spawn(move || {
         macos::start_hook(event_tx, stop_rx);
+    });
+
+    #[cfg(target_os = "linux")]
+    let thread = thread::spawn(move || {
+        rdev_impl::start_hook(event_tx, stop_rx);
     });
 
     InputHookHandle {
