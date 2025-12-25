@@ -2,17 +2,20 @@
 //!
 //! This module provides platform-specific implementations for global input event listening.
 //!
-//! - On macOS: Uses native Core Graphics CGEventTap API (singleton pattern)
-//! - On Windows/Linux: Uses rdev crate with singleton pattern to avoid multiple listener issues
+//! ## Platform Implementations
+//!
+//! - **macOS**: Uses native Core Graphics CGEventTap API (singleton pattern)
+//!   - Required because rdev has thread-safety issues with TSMGetInputSourceProperty
+//!   - Provides `subscribe_events()` for a unified event stream
+//!
+//! - **Windows/Linux**: Does NOT use this module
+//!   - The `input_hook` module uses platform-native APIs directly:
+//!     - Windows: Raw Input API (`windows_native.rs`)
+//!     - Linux: rdev (`rdev_impl.rs`)
+//!   - The `mouse_tracker` module uses rdev directly
 
 #[cfg(target_os = "macos")]
 mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::*;
-
-#[cfg(not(target_os = "macos"))]
-mod rdev;
-
-#[cfg(not(target_os = "macos"))]
-pub use rdev::*;
