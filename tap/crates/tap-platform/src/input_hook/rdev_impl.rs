@@ -1,10 +1,107 @@
 //! rdev-based implementation for Windows/Linux input hooking.
+//!
+//! Uses rdev::listen() directly. Note: rdev::listen() blocks forever,
+//! so we spawn it in its own thread and communicate via channels.
 
 use super::{InputEventType, MouseButtonType, RawInputEvent};
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use rdev::{listen, Event, EventType};
+use std::thread;
 use std::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
+
+/// Start the input hook using rdev.
+pub fn start_hook(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
+    info!("Input hook thread started (rdev direct)");
+    let start_time = Instant::now();
+
+    // We need to spawn rdev::listen in a separate thread because it blocks.
+    // We'll use a channel to forward events.
+    let (rdev_tx, rdev_rx) = bounded::<RawInputEvent>(2048);
+
+    // Clone for the rdev thread
+    let rdev_tx_clone = rdev_tx.clone();
+
+    // Spawn the rdev listener thread
+    let rdev_thread = thread::spawn(move || {
+        debug!("rdev::listen thread starting");
+        let callback = move |event: Event| {
+            let timestamp_ms = start_time.elapsed().as_millis() as u64;
+
+            let input_event = match event.event_type {
+                EventType::MouseMove { x, y } => Some(InputEventType::MouseMove {
+                    x: x as i32,
+                    y: y as i32,
+                }),
+                EventType::ButtonPress(button) => Some(InputEventType::MouseDown {
+                    x: 0,
+                    y: 0,
+                    button: button.into(),
+                }),
+                EventType::ButtonRelease(button) => Some(InputEventType::MouseUp {
+                    x: 0,
+                    y: 0,
+                    button: button.into(),
+                }),
+                EventType::Wheel { delta_x, delta_y } => Some(InputEventType::Scroll {
+                    delta_x: delta_x as i32,
+                    delta_y: delta_y as i32,
+                }),
+                EventType::KeyPress(key) => {
+                    let key_str = format_key(key);
+                    debug!(key = %key_str, "KeyPress detected");
+                    Some(InputEventType::KeyDown { key: key_str })
+                }
+                EventType::KeyRelease(key) => {
+                    let key_str = format_key(key);
+                    debug!(key = %key_str, "KeyRelease detected");
+                    Some(InputEventType::KeyUp { key: key_str })
+                }
+            };
+
+            if let Some(event_type) = input_event {
+                let raw_event = RawInputEvent {
+                    timestamp_ms,
+                    event: event_type,
+                };
+                // Use try_send to avoid blocking
+                if let Err(e) = rdev_tx_clone.try_send(raw_event) {
+                    warn!("Failed to send input event: {}", e);
+                }
+            }
+        };
+
+        if let Err(error) = listen(callback) {
+            error!(?error, "rdev listen error");
+        }
+        debug!("rdev::listen thread exiting");
+    });
+
+    // Main loop: forward events and check for stop signal
+    loop {
+        // Check for stop signal
+        if stop_rx.try_recv().is_ok() {
+            info!("Input hook received stop signal");
+            break;
+        }
+
+        // Forward any events from rdev
+        while let Ok(event) = rdev_rx.try_recv() {
+            if let Err(e) = event_tx.try_send(event) {
+                warn!("Failed to forward input event: {}", e);
+            }
+        }
+
+        // Small sleep to avoid busy loop
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // Note: We can't cleanly stop rdev::listen(), it will keep running.
+    // The thread will be orphaned but this is acceptable for our use case.
+    drop(rdev_thread);
+
+    info!("Input hook thread exiting");
+}
 
 impl From<rdev::Button> for MouseButtonType {
     fn from(button: rdev::Button) -> Self {
@@ -15,66 +112,6 @@ impl From<rdev::Button> for MouseButtonType {
             _ => MouseButtonType::Unknown,
         }
     }
-}
-
-/// Start the input hook using rdev.
-pub fn start_hook(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
-    info!("Input hook thread started (rdev)");
-    let start_time = Instant::now();
-
-    let callback = move |event: Event| {
-        // Check for stop signal
-        if stop_rx.try_recv().is_ok() {
-            return;
-        }
-
-        let timestamp_ms = start_time.elapsed().as_millis() as u64;
-
-        let input_event = match event.event_type {
-            EventType::MouseMove { x, y } => Some(InputEventType::MouseMove {
-                x: x as i32,
-                y: y as i32,
-            }),
-            EventType::ButtonPress(button) => {
-                Some(InputEventType::MouseDown {
-                    x: 0, // Will be filled by recorder using last known position
-                    y: 0,
-                    button: button.into(),
-                })
-            }
-            EventType::ButtonRelease(button) => Some(InputEventType::MouseUp {
-                x: 0,
-                y: 0,
-                button: button.into(),
-            }),
-            EventType::Wheel { delta_x, delta_y } => Some(InputEventType::Scroll {
-                delta_x: delta_x as i32,
-                delta_y: delta_y as i32,
-            }),
-            EventType::KeyPress(key) => Some(InputEventType::KeyDown {
-                key: format_key(key),
-            }),
-            EventType::KeyRelease(key) => Some(InputEventType::KeyUp {
-                key: format_key(key),
-            }),
-        };
-
-        if let Some(event_type) = input_event {
-            let raw_event = RawInputEvent {
-                timestamp_ms,
-                event: event_type,
-            };
-            if let Err(e) = event_tx.try_send(raw_event) {
-                warn!("Failed to send input event: {}", e);
-            }
-        }
-    };
-
-    if let Err(error) = listen(callback) {
-        error!(?error, "Input hook error");
-    }
-
-    info!("Input hook thread exiting");
 }
 
 /// Format an rdev key to a string.
@@ -188,4 +225,3 @@ fn format_key(key: rdev::Key) -> String {
         rdev::Key::Unknown(code) => format!("Unknown({})", code),
     }
 }
-

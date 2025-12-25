@@ -1,63 +1,50 @@
 //! Key-to-Click tool mode.
 //!
-//! This module implements an event-driven tool mode where pressing A-Z keys
-//! triggers mouse clicks at the current cursor position. Holding a key repeats
-//! clicks at a configurable interval. Pressing Space stops the mode.
+//! Behavior:
+//! - On KeyDown (A-Z): Immediately click once
+//! - If key is held longer than `hold_delay_ms`: Start repeating clicks at `interval_ms`
+//! - On KeyUp: Stop repeating (return to armed state)
+//! - On Space KeyDown: Stop the entire mode immediately
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tap_core::{Action, MouseButton};
 use tap_platform::{EnigoInjector, InputEventType, InputHookHandle, InputInjector};
 use tracing::{debug, info, warn};
 
-/// Event emitted by the KeyClickRunner.
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum KeyClickEvent {
-    /// Mode started.
     Started,
-    /// A click was performed.
     Click { count: u64, x: i32, y: i32 },
-    /// Mode stopped (by Space or external stop).
     Stopped { total_clicks: u64 },
 }
 
-/// Status of the key-click mode.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct KeyClickStatus {
     pub running: bool,
     pub click_count: u64,
 }
 
-/// Handle to control and observe the KeyClickRunner.
 pub struct KeyClickHandle {
-    /// Signal to stop the runner.
-    stop_tx: Sender<()>,
-    /// Receive events from the runner.
+    stop_requested: Arc<AtomicBool>,
     event_rx: Receiver<KeyClickEvent>,
-    /// Shared running state.
     running: Arc<AtomicBool>,
-    /// Shared click count.
     click_count: Arc<AtomicU64>,
-    /// Thread handle.
     thread: Option<JoinHandle<()>>,
 }
 
 impl KeyClickHandle {
-    /// Check if the runner is still active.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Get the current click count.
     pub fn click_count(&self) -> u64 {
         self.click_count.load(Ordering::SeqCst)
     }
 
-    /// Drain all pending events.
     pub fn drain(&self) -> Vec<KeyClickEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.event_rx.try_recv() {
@@ -66,12 +53,10 @@ impl KeyClickHandle {
         events
     }
 
-    /// Signal the runner to stop.
     pub fn stop(&self) {
-        let _ = self.stop_tx.send(());
+        self.stop_requested.store(true, Ordering::SeqCst);
     }
 
-    /// Get current status.
     pub fn status(&self) -> KeyClickStatus {
         KeyClickStatus {
             running: self.is_running(),
@@ -83,71 +68,53 @@ impl KeyClickHandle {
 impl Drop for KeyClickHandle {
     fn drop(&mut self) {
         self.stop();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        // Don't join the thread - let it exit on its own.
+        // Joining here can cause issues if the thread is still processing.
+        let _ = self.thread.take();
     }
 }
 
-/// Configuration for the KeyClickRunner.
 #[derive(Debug, Clone)]
 pub struct KeyClickConfig {
-    /// Interval between repeated clicks when holding a key (ms).
     pub interval_ms: u64,
+    pub hold_delay_ms: u64,
 }
 
 impl Default for KeyClickConfig {
     fn default() -> Self {
-        Self { interval_ms: 50 }
+        Self {
+            interval_ms: 50,
+            hold_delay_ms: 150,
+        }
     }
 }
 
-/// Check if a key string represents an A-Z key.
 fn is_az_key(key: &str) -> bool {
-    if key.len() == 1 {
-        let c = key.chars().next().unwrap();
-        c.is_ascii_alphabetic()
-    } else {
-        false
-    }
+    key.len() == 1 && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
 }
 
-/// Start the key-click runner.
-///
-/// Returns a handle to control and observe the runner.
 pub fn start_key_click_runner(
     config: KeyClickConfig,
     input_hook: InputHookHandle,
     injector: Arc<EnigoInjector>,
     get_mouse_position: impl Fn() -> (i32, i32) + Send + 'static,
 ) -> KeyClickHandle {
-    let (stop_tx, stop_rx) = bounded::<()>(1);
     let (event_tx, event_rx) = bounded::<KeyClickEvent>(256);
 
+    let stop_requested = Arc::new(AtomicBool::new(false));
     let running = Arc::new(AtomicBool::new(true));
     let click_count = Arc::new(AtomicU64::new(0));
 
+    let stop_clone = stop_requested.clone();
     let running_clone = running.clone();
-    let click_count_clone = click_count.clone();
+    let count_clone = click_count.clone();
 
     let thread = thread::spawn(move || {
-        run_key_click_loop(
-            config,
-            input_hook,
-            injector,
-            get_mouse_position,
-            stop_rx,
-            event_tx,
-            running_clone,
-            click_count_clone,
-        );
+        run_loop(config, input_hook, injector, get_mouse_position, stop_clone, event_tx, running_clone, count_clone);
     });
 
-    // Send started event
-    // Note: The actual Started event is sent from within the loop
-
     KeyClickHandle {
-        stop_tx,
+        stop_requested,
         event_rx,
         running,
         click_count,
@@ -155,110 +122,128 @@ pub fn start_key_click_runner(
     }
 }
 
-/// Main loop for key-click mode.
-fn run_key_click_loop(
+struct ActiveKey {
+    key: String,
+    repeating: bool,
+    next_repeat_at: Instant,
+}
+
+fn run_loop(
     config: KeyClickConfig,
     input_hook: InputHookHandle,
     injector: Arc<EnigoInjector>,
     get_mouse_position: impl Fn() -> (i32, i32),
-    stop_rx: Receiver<()>,
+    stop_requested: Arc<AtomicBool>,
     event_tx: Sender<KeyClickEvent>,
     running: Arc<AtomicBool>,
     click_count: Arc<AtomicU64>,
 ) {
-    info!("Key-click runner started");
-
-    // Send started event
+    info!("Key-click started (interval={}ms, hold_delay={}ms)", config.interval_ms, config.hold_delay_ms);
     let _ = event_tx.send(KeyClickEvent::Started);
 
-    // Track which keys are currently held
-    let mut keys_held: HashSet<String> = HashSet::new();
-
-    // Track last click time for rate limiting
-    let mut last_click_time = std::time::Instant::now();
-    let click_interval = Duration::from_millis(config.interval_ms);
+    let hold_delay = Duration::from_millis(config.hold_delay_ms);
+    let repeat_interval = Duration::from_millis(config.interval_ms);
+    let mut active: Option<ActiveKey> = None;
 
     loop {
-        // Check for stop signal
-        if stop_rx.try_recv().is_ok() {
-            info!("Key-click runner received stop signal");
+        // Check stop flag
+        if stop_requested.load(Ordering::SeqCst) {
+            info!("Key-click received stop signal");
             break;
         }
 
-        // Drain input events
-        let events = input_hook.drain();
-
-        for raw_event in events {
+        // Process input events
+        for raw_event in input_hook.drain() {
             match &raw_event.event {
                 InputEventType::KeyDown { key } => {
-                    // Check for Space to stop
+                    debug!(key, "KeyDown received");
+                    
+                    // Space stops immediately
                     if key == "Space" {
-                        info!("Key-click runner stopped by Space key");
-                        running.store(false, Ordering::SeqCst);
-                        let total = click_count.load(Ordering::SeqCst);
-                        let _ = event_tx.send(KeyClickEvent::Stopped { total_clicks: total });
+                        info!("Key-click stopped by Space");
+                        cleanup(&running, &click_count, &event_tx, &input_hook);
                         return;
                     }
 
-                    // Check if it's an A-Z key
-                    if is_az_key(key) && !keys_held.contains(key) {
-                        debug!(key, "Key pressed, adding to held set");
-                        keys_held.insert(key.clone());
+                    // A-Z triggers click (only if no active key)
+                    if is_az_key(key) && active.is_none() {
+                        let (x, y) = get_mouse_position();
+                        if do_click(&injector, x, y, &click_count, &event_tx) {
+                            debug!(key, "Initial click");
+                        }
+                        active = Some(ActiveKey {
+                            key: key.clone(),
+                            repeating: false,
+                            next_repeat_at: Instant::now() + hold_delay,
+                        });
                     }
                 }
                 InputEventType::KeyUp { key } => {
-                    if is_az_key(key) {
-                        debug!(key, "Key released, removing from held set");
-                        keys_held.remove(key);
+                    debug!(key, "KeyUp received");
+                    
+                    // Clear active key if it matches
+                    if let Some(ref state) = active {
+                        if state.key.eq_ignore_ascii_case(key) {
+                            debug!(key, "Key released");
+                            active = None;
+                        }
                     }
                 }
-                _ => {
-                    // Ignore mouse events
-                }
+                _ => {}
             }
         }
 
-        // If any A-Z keys are held, perform clicks at interval
-        if !keys_held.is_empty() {
-            let now = std::time::Instant::now();
-            if now.duration_since(last_click_time) >= click_interval {
-                // Get current mouse position
+        // Handle repeat clicks
+        if let Some(ref mut state) = active {
+            let now = Instant::now();
+            if now >= state.next_repeat_at {
+                if !state.repeating {
+                    state.repeating = true;
+                    debug!("Entering repeat mode");
+                }
                 let (x, y) = get_mouse_position();
-
-                // Inject click
-                let action = Action::Click {
-                    x,
-                    y,
-                    button: MouseButton::Left,
-                };
-
-                match injector.inject(&action) {
-                    Ok(()) => {
-                        let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
-                        debug!(x, y, count, "Click injected");
-                        let _ = event_tx.send(KeyClickEvent::Click { count, x, y });
-                    }
-                    Err(e) => {
-                        warn!(?e, "Failed to inject click");
-                    }
-                }
-
-                last_click_time = now;
+                do_click(&injector, x, y, &click_count, &event_tx);
+                state.next_repeat_at = now + repeat_interval;
             }
         }
 
-        // Small sleep to avoid busy loop
         thread::sleep(Duration::from_millis(5));
     }
 
-    // Cleanup
+    cleanup(&running, &click_count, &event_tx, &input_hook);
+}
+
+fn do_click(
+    injector: &EnigoInjector,
+    x: i32,
+    y: i32,
+    click_count: &AtomicU64,
+    event_tx: &Sender<KeyClickEvent>,
+) -> bool {
+    let action = Action::Click { x, y, button: MouseButton::Left };
+    match injector.inject(&action) {
+        Ok(()) => {
+            let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
+            let _ = event_tx.send(KeyClickEvent::Click { count, x, y });
+            true
+        }
+        Err(e) => {
+            warn!(?e, "Click failed");
+            false
+        }
+    }
+}
+
+fn cleanup(
+    running: &AtomicBool,
+    click_count: &AtomicU64,
+    event_tx: &Sender<KeyClickEvent>,
+    input_hook: &InputHookHandle,
+) {
     running.store(false, Ordering::SeqCst);
     let total = click_count.load(Ordering::SeqCst);
     let _ = event_tx.send(KeyClickEvent::Stopped { total_clicks: total });
-
-    // Stop the input hook
     input_hook.stop();
-
-    info!("Key-click runner exited, total clicks: {}", total);
+    info!("Key-click exited, total clicks: {}", total);
 }
 
