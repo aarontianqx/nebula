@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod key_click;
 mod state;
 
+use key_click::{start_key_click_runner, KeyClickConfig, KeyClickEvent, KeyClickStatus};
 use state::{AppState, MousePositionUpdate, PositionPickedEvent, RecordingStatus};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tap_core::{
     delete_profile, export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, list_profiles,
     load_last_used, load_profile, parse_yaml, save_last_used, save_profile, validate_profile,
@@ -163,6 +165,117 @@ fn set_simple_repeat(
     info!(?app_state.profile, "Updated profile for simple repeat");
 
     Ok(())
+}
+
+// === Key-to-Click Tool Mode Commands ===
+
+/// Shared injector for key-click mode.
+/// We store it separately because AppState already has player which owns the injector.
+static KEY_CLICK_INJECTOR: std::sync::OnceLock<Arc<EnigoInjector>> = std::sync::OnceLock::new();
+
+fn get_or_create_injector() -> Arc<EnigoInjector> {
+    KEY_CLICK_INJECTOR
+        .get_or_init(|| Arc::new(EnigoInjector::new().expect("Failed to create EnigoInjector")))
+        .clone()
+}
+
+#[tauri::command]
+fn start_key_click(
+    state: State<'_, Mutex<AppState>>,
+    interval_ms: u64,
+) -> Result<(), String> {
+    let mut app_state = state.lock().unwrap();
+
+    // Check mutual exclusion: must be idle
+    if app_state.engine_state != EngineState::Idle {
+        return Err("Cannot start key-click: engine is not idle".into());
+    }
+
+    if app_state.recorder.state() != RecorderState::Idle {
+        return Err("Cannot start key-click: recording in progress".into());
+    }
+
+    if app_state.key_click_handle.is_some() {
+        return Err("Key-click mode is already running".into());
+    }
+
+    // Get or create the shared injector
+    let injector = get_or_create_injector();
+
+    // Start the input hook for capturing key events
+    let input_hook = start_input_hook();
+
+    // We need a way to get the current mouse position in the runner.
+    // Since we can't easily share the tracker, we'll use rdev to get position.
+    // Actually, we can use enigo to get mouse position, but it's simpler to
+    // just use the platform API.
+    let get_position = move || {
+        // Use platform-specific mouse position query
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            use windows::Win32::Foundation::POINT;
+            let mut point = POINT::default();
+            unsafe {
+                let _ = GetCursorPos(&mut point);
+            }
+            (point.x, point.y)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, use Core Graphics
+            use core_graphics::event::CGEvent;
+            use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+            if let Ok(source) = CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
+                if let Ok(event) = CGEvent::new(source) {
+                    let loc = event.location();
+                    return (loc.x as i32, loc.y as i32);
+                }
+            }
+            (0, 0)
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            (0, 0)
+        }
+    };
+
+    let config = KeyClickConfig {
+        interval_ms: interval_ms.max(20), // Minimum 20ms interval
+    };
+
+    let handle = start_key_click_runner(config, input_hook, injector, get_position);
+    app_state.key_click_handle = Some(handle);
+
+    info!(interval_ms, "Key-click mode started");
+
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_key_click(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
+    let mut app_state = state.lock().unwrap();
+
+    if let Some(handle) = app_state.key_click_handle.take() {
+        handle.stop();
+        info!("Key-click mode stopped");
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_key_click_status(state: State<'_, Mutex<AppState>>) -> KeyClickStatus {
+    let app_state = state.lock().unwrap();
+
+    if let Some(ref handle) = app_state.key_click_handle {
+        handle.status()
+    } else {
+        KeyClickStatus {
+            running: false,
+            click_count: 0,
+        }
+    }
 }
 
 // === Profile Persistence Commands ===
@@ -700,6 +813,7 @@ fn setup_app(app: &AppHandle) {
         input_hook: None,
         mouse_tracker: Some(mouse_tracker),
         variables: VariableStore::new(),
+        key_click_handle: None,
     };
 
     app.manage(Mutex::new(state));
@@ -808,6 +922,38 @@ fn poll_events(app: AppHandle) {
             let MouseTrackerEvent::PositionUpdate { x, y } = mouse_event;
             let _ = app.emit("mouse-position", MousePositionUpdate { x, y });
         }
+
+        // Process key-click events
+        let key_click_events: Vec<_> = {
+            let app_state = state.lock().unwrap();
+            app_state
+                .key_click_handle
+                .as_ref()
+                .map(|h| h.drain())
+                .unwrap_or_default()
+        };
+
+        for event in key_click_events {
+            match &event {
+                KeyClickEvent::Started => {
+                    debug!("Key-click mode started event");
+                }
+                KeyClickEvent::Click { count, x, y } => {
+                    debug!(count, x, y, "Key-click: click performed");
+                }
+                KeyClickEvent::Stopped { total_clicks } => {
+                    debug!(total_clicks, "Key-click mode stopped");
+                    // Clean up the handle when stopped
+                    let mut app_state = state.lock().unwrap();
+                    app_state.key_click_handle = None;
+                }
+            }
+
+            // Emit to frontend
+            if let Err(e) = app.emit("key-click-event", &event) {
+                warn!("Failed to emit key-click event: {}", e);
+            }
+        }
     }
 }
 
@@ -853,10 +999,19 @@ fn convert_button(button: MouseButtonType) -> MouseButtonRaw {
 fn handle_emergency_stop(app: &AppHandle) {
     warn!("Emergency stop shortcut triggered!");
     let state: State<'_, Mutex<AppState>> = app.state();
-    let app_state = state.lock().unwrap();
+    let mut app_state = state.lock().unwrap();
+
+    // Stop player if running
     if let Some(ref player) = app_state.player_handle {
         player.send(EngineCommand::EmergencyStop);
     }
+
+    // Stop key-click mode if running
+    if let Some(handle) = app_state.key_click_handle.take() {
+        handle.stop();
+        info!("Key-click mode stopped by emergency stop");
+    }
+
     drop(app_state);
     if let Err(e) = app.emit("emergency-stop", ()) {
         warn!("Failed to emit emergency-stop: {}", e);
@@ -937,6 +1092,10 @@ fn main() {
             cmd_get_macro_variables,
             cmd_set_runtime_variables,
             cmd_get_runtime_variables,
+            // Key-to-Click tool mode commands
+            start_key_click,
+            stop_key_click,
+            get_key_click_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tap");

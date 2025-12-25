@@ -39,6 +39,7 @@ tap 是一个“会执行你的手”的工具：它的 UX 目标不是花哨，
   - **Running** 状态
   - 下一步动作倒计时
   - 已执行次数
+  - （可选工具）**Key→Click**：提示“按住 A–Z 连点、Space 停止”，作为鼠标连点替代方案
 
 ### 2) 录制（Record）
 
@@ -115,7 +116,7 @@ Windows 侧重点：
 
 为了长期维护和自用效率：
 
-- 内置模板：Repeat Click、Spam Key、Record & Replay、Drag Loop
+- 内置模板/工具：Repeat Click、Spam Key、**Key→Click（按住 A–Z 连点，Space 停）**、Record & Replay、Drag Loop
 - 支持“参数化宏”（后期）：把坐标/文本作为变量，运行前填入
 - 支持导入/导出（JSON/YAML）
 
