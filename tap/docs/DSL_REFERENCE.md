@@ -25,6 +25,16 @@ run:
   # Execution configuration
 ```
 
+## Scope: DSL vs Tool Modes
+
+This DSL describes **timed macros** (a `timeline` of actions executed by the engine).
+
+Some features in the app are **event-driven tool modes** (driven by live global input, not by a pre-defined timeline). Tool modes are intentionally **out of scope** for the DSL and cannot be expressed/imported as YAML actions.
+
+Examples of tool modes:
+
+- **Key→Click**: while enabled, holding any `A`-`Z` key triggers repeated mouse clicks; pressing `Space` stops immediately (see `docs/FEATURE_KEY_TO_CLICK_MODE.md`).
+
 ## Metadata Fields
 
 | Field | Type | Required | Description |
