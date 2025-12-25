@@ -97,9 +97,16 @@ fn stop_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
 fn emergency_stop(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
     let app_state = state.lock().unwrap();
 
+    // Stop player if running
     if let Some(ref handle) = app_state.player_handle {
         handle.send(EngineCommand::EmergencyStop);
         warn!("Emergency stop triggered!");
+    }
+
+    // Also stop key-click mode if running (just signal, don't take)
+    if let Some(ref handle) = app_state.key_click_handle {
+        handle.stop();
+        info!("Key-click mode stop requested by emergency stop");
     }
 
     Ok(())
@@ -183,6 +190,7 @@ fn get_or_create_injector() -> Arc<EnigoInjector> {
 fn start_key_click(
     state: State<'_, Mutex<AppState>>,
     interval_ms: u64,
+    hold_delay_ms: Option<u64>,
 ) -> Result<(), String> {
     let mut app_state = state.lock().unwrap();
 
@@ -240,25 +248,35 @@ fn start_key_click(
         }
     };
 
+    let actual_interval_ms = interval_ms.max(20); // Minimum 20ms interval
+    let actual_hold_delay_ms = hold_delay_ms.unwrap_or(150); // Default 150ms hold delay
+    
     let config = KeyClickConfig {
-        interval_ms: interval_ms.max(20), // Minimum 20ms interval
+        interval_ms: actual_interval_ms,
+        hold_delay_ms: actual_hold_delay_ms,
     };
 
     let handle = start_key_click_runner(config, input_hook, injector, get_position);
     app_state.key_click_handle = Some(handle);
 
-    info!(interval_ms, "Key-click mode started");
+    info!(
+        interval_ms = actual_interval_ms,
+        hold_delay_ms = actual_hold_delay_ms,
+        "Key-click mode started"
+    );
 
     Ok(())
 }
 
 #[tauri::command]
 fn stop_key_click(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let mut app_state = state.lock().unwrap();
+    let app_state = state.lock().unwrap();
 
-    if let Some(handle) = app_state.key_click_handle.take() {
+    // Just signal stop, don't take the handle.
+    // The poll_events loop will clean up when it sees !is_running().
+    if let Some(ref handle) = app_state.key_click_handle {
         handle.stop();
-        info!("Key-click mode stopped");
+        info!("Key-click mode stop requested");
     }
 
     Ok(())
@@ -924,17 +942,25 @@ fn poll_events(app: AppHandle) {
         }
 
         // Process key-click events
-        let key_click_events: Vec<_> = {
+        let (key_click_events, should_cleanup) = {
             let app_state = state.lock().unwrap();
-            app_state
+            let events = app_state
                 .key_click_handle
                 .as_ref()
                 .map(|h| h.drain())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            // Check if handle exists but is no longer running
+            let cleanup = app_state
+                .key_click_handle
+                .as_ref()
+                .map(|h| !h.is_running())
+                .unwrap_or(false);
+            (events, cleanup)
         };
 
-        for event in key_click_events {
-            match &event {
+        // Emit events to frontend
+        for event in &key_click_events {
+            match event {
                 KeyClickEvent::Started => {
                     debug!("Key-click mode started event");
                 }
@@ -942,16 +968,21 @@ fn poll_events(app: AppHandle) {
                     debug!(count, x, y, "Key-click: click performed");
                 }
                 KeyClickEvent::Stopped { total_clicks } => {
-                    debug!(total_clicks, "Key-click mode stopped");
-                    // Clean up the handle when stopped
-                    let mut app_state = state.lock().unwrap();
-                    app_state.key_click_handle = None;
+                    debug!(total_clicks, "Key-click mode stopped event");
                 }
             }
 
-            // Emit to frontend
-            if let Err(e) = app.emit("key-click-event", &event) {
+            if let Err(e) = app.emit("key-click-event", event) {
                 warn!("Failed to emit key-click event: {}", e);
+            }
+        }
+
+        // Clean up handle if stopped (separate lock acquisition)
+        if should_cleanup {
+            let mut app_state = state.lock().unwrap();
+            if app_state.key_click_handle.as_ref().map(|h| !h.is_running()).unwrap_or(false) {
+                app_state.key_click_handle = None;
+                debug!("Key-click handle cleaned up");
             }
         }
     }
@@ -999,17 +1030,17 @@ fn convert_button(button: MouseButtonType) -> MouseButtonRaw {
 fn handle_emergency_stop(app: &AppHandle) {
     warn!("Emergency stop shortcut triggered!");
     let state: State<'_, Mutex<AppState>> = app.state();
-    let mut app_state = state.lock().unwrap();
+    let app_state = state.lock().unwrap();
 
     // Stop player if running
     if let Some(ref player) = app_state.player_handle {
         player.send(EngineCommand::EmergencyStop);
     }
 
-    // Stop key-click mode if running
-    if let Some(handle) = app_state.key_click_handle.take() {
+    // Stop key-click mode if running (just signal, don't take)
+    if let Some(ref handle) = app_state.key_click_handle {
         handle.stop();
-        info!("Key-click mode stopped by emergency stop");
+        info!("Key-click mode stop requested by emergency stop shortcut");
     }
 
     drop(app_state);

@@ -24,13 +24,11 @@
 mod error;
 mod injector;
 mod dpi;
+mod events;
 mod input_hook;
 mod mouse_tracker;
 mod pixel;
 mod window;
-
-#[cfg(target_os = "macos")]
-mod events;
 
 // Re-export error types
 pub use error::{PlatformError, PlatformResult};
