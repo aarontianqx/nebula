@@ -156,6 +156,13 @@ body {
   margin-bottom: 12px;
 }
 
+.field-hint {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: -6px;
+}
+
 .label {
   color: var(--muted);
   font-size: 12px;

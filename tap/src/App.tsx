@@ -191,6 +191,7 @@ export default function App() {
   const [keyClickRunning, setKeyClickRunning] = React.useState<boolean>(false);
   const [keyClickCount, setKeyClickCount] = React.useState<number>(0);
   const [keyClickInterval, setKeyClickInterval] = React.useState<number>(50);
+  const [keyClickHoldDelay, setKeyClickHoldDelay] = React.useState<number>(150);
 
   // Profile state
   const [profileName, setProfileName] = React.useState<string>("Untitled");
@@ -477,7 +478,10 @@ export default function App() {
   async function handleStartKeyClick() {
     try {
       setKeyClickCount(0);
-      await invoke("start_key_click", { intervalMs: keyClickInterval });
+      await invoke("start_key_click", {
+        intervalMs: keyClickInterval,
+        holdDelayMs: keyClickHoldDelay,
+      });
       addLog("🖱️ Key→Click mode starting...");
     } catch (e) {
       setEngineStatus(`Failed: ${String(e)}`);
@@ -807,7 +811,22 @@ export default function App() {
                 {actionType === "key-to-click" && (
                   <>
                     <div className="field">
-                      <label className="label">Click Interval</label>
+                      <label className="label">Hold Delay</label>
+                      <div className="input-suffix">
+                        <input
+                          type="number"
+                          value={keyClickHoldDelay}
+                          onChange={(e) => setKeyClickHoldDelay(parseInt(e.target.value, 10) || 150)}
+                          disabled={keyClickRunning}
+                          className="input"
+                          min={50}
+                        />
+                        <span>ms</span>
+                      </div>
+                      <span className="field-hint">Time before repeat starts</span>
+                    </div>
+                    <div className="field">
+                      <label className="label">Repeat Interval</label>
                       <div className="input-suffix">
                         <input
                           type="number"
@@ -823,8 +842,8 @@ export default function App() {
                     <div className="info-box">
                       <strong>How it works:</strong>
                       <ul>
-                        <li>Press any A–Z key to click at cursor</li>
-                        <li>Hold to repeat clicks</li>
+                        <li>Tap A–Z: one click</li>
+                        <li>Hold A–Z: repeat after {keyClickHoldDelay}ms</li>
                         <li>Press <kbd>Space</kbd> to stop</li>
                       </ul>
                     </div>
