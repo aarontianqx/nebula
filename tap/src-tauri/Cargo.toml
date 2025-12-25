@@ -5,6 +5,10 @@ edition = "2021"
 license = "AGPL-3.0-only"
 description = "tap desktop app (Tauri backend)."
 
+[[bin]]
+name = "Tap"
+path = "src/main.rs"
+
 [package.metadata.tauri]
 config = "tauri.conf.json"
 
