@@ -1,5 +1,6 @@
 //! Application state for Tauri backend.
 
+use crate::key_click::KeyClickHandle;
 use tap_core::{EngineState, PlayerHandle, Profile, Recorder, RecorderState, VariableStore};
 use tap_platform::{InputHookHandle, MouseTrackerHandle};
 
@@ -22,6 +23,9 @@ pub struct AppState {
     // Phase 3: Variables (stored here for potential future direct access from UI)
     #[allow(dead_code)]
     pub variables: VariableStore,
+
+    // Key-to-Click tool mode
+    pub key_click_handle: Option<KeyClickHandle>,
 }
 
 /// Recording status for frontend.

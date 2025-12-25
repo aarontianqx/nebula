@@ -52,6 +52,14 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 | 变量运行时替换 | DSL 解析完成，执行时替换待完善 | Phase 4 |
 | macOS 窗口 API | 需实现 `get_foreground_window` 等 | Phase 5 |
 
+### Quick Tools（跨阶段体验增强）
+
+这些功能不一定进入 DSL/Timeline，但能显著提升“日常效率”和“舒适度”，并且需要保持可停止与可观测：
+
+| 工具 | 说明 | 状态 |
+|------|------|------|
+| Key→Click（A–Z 按住连点） | 开启后按住 `A`–`Z` 任意键即可持续模拟鼠标点击；按下 `Space` 立即终止 | 📋 规划中（见 `docs/FEATURE_KEY_TO_CLICK_MODE.md`） |
+
 ## 文档索引
 
 - [Phase 1 - MVP](./PHASE_1_MVP.md)
@@ -59,3 +67,4 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 - [Phase 3 - Conditions](./PHASE_3_CONDITIONS.md)
 - [Phase 4 - Extensibility](./PHASE_4_EXTENSIBILITY.md)
 - [Phase 5 - Architecture](./PHASE_5_ARCHITECTURE.md)
+- [Feature - Key→Click（A–Z 按住连点）](../FEATURE_KEY_TO_CLICK_MODE.md)
