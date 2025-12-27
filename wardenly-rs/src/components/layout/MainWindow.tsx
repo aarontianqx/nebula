@@ -1,16 +1,49 @@
 import { useEffect, useState } from "react";
-import { Settings } from "lucide-react";
+import { Settings, Play, Square } from "lucide-react";
 import { useAccountStore } from "../../stores/accountStore";
+import { useSessionStore } from "../../stores/sessionStore";
+import { useTauriEvents } from "../../hooks/useTauriEvents";
 import ManagementDialog from "../dialogs/ManagementDialog";
+import SessionList from "../session/SessionList";
+import CanvasWindow from "../canvas/CanvasWindow";
 
 function MainWindow() {
-  const { accounts, groups, fetchAccounts, fetchGroups } = useAccountStore();
+  const { accounts, fetchAccounts, fetchGroups } = useAccountStore();
+  const {
+    sessions,
+    selectedSessionId,
+    startSession,
+    stopAllSessions,
+    loading,
+  } = useSessionStore();
   const [showManagement, setShowManagement] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+
+  // Initialize Tauri event listeners
+  useTauriEvents();
 
   useEffect(() => {
     fetchAccounts();
     fetchGroups();
   }, [fetchAccounts, fetchGroups]);
+
+  const handleRun = async () => {
+    if (!selectedAccountId) return;
+    try {
+      await startSession(selectedAccountId);
+    } catch (error) {
+      console.error("Failed to start session:", error);
+    }
+  };
+
+  const handleStopAll = async () => {
+    await stopAllSessions();
+  };
+
+  // Check if selected account already has a session
+  const hasSessionForAccount = sessions.some(
+    (s) => s.account_id === selectedAccountId
+  );
 
   return (
     <div className="flex flex-col h-screen bg-[var(--color-bg-primary)]">
@@ -20,10 +53,47 @@ function MainWindow() {
           <h1 className="text-lg font-semibold text-[var(--color-text-primary)]">
             Wardenly
           </h1>
+
+          {/* Account selector */}
+          <select
+            value={selectedAccountId}
+            onChange={(e) => setSelectedAccountId(e.target.value)}
+            className="px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)]"
+          >
+            <option value="">Select Account</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.server_id} - {account.role_name}
+              </option>
+            ))}
+          </select>
+
+          {/* Run button */}
+          <button
+            onClick={handleRun}
+            disabled={!selectedAccountId || hasSessionForAccount || loading}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Play size={14} />
+            Run
+          </button>
+
+          {/* Stop All button */}
+          {sessions.length > 0 && (
+            <button
+              onClick={handleStopAll}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-error)] text-white hover:opacity-80 transition-opacity"
+            >
+              <Square size={14} />
+              Stop All
+            </button>
+          )}
+
           <span className="text-sm text-[var(--color-text-secondary)]">
-            {accounts.length} accounts · {groups.length} groups
+            {sessions.length} sessions
           </span>
         </div>
+
         <button
           onClick={() => setShowManagement(true)}
           className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
@@ -35,46 +105,23 @@ function MainWindow() {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Account List */}
+        {/* Session List */}
         <div className="w-64 flex-shrink-0 bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] overflow-y-auto">
-          <div className="p-2">
-            {accounts.length === 0 ? (
-              <div className="p-4 text-center text-[var(--color-text-muted)]">
-                No accounts yet.
-                <br />
-                <button
-                  onClick={() => setShowManagement(true)}
-                  className="mt-2 text-[var(--color-accent)] hover:underline"
-                >
-                  Add one
-                </button>
-              </div>
-            ) : (
-              accounts.map((account) => (
-                <div
-                  key={account.id}
-                  className="p-3 mb-1 rounded-md bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] cursor-pointer transition-colors"
-                >
-                  <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                    {account.role_name}
-                  </div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
-                    Server {account.server_id}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+          <SessionList />
         </div>
 
-        {/* Detail Panel */}
-        <div className="flex-1 flex items-center justify-center text-[var(--color-text-muted)]">
-          <div className="text-center">
-            <p className="text-lg">Select an account to start</p>
-            <p className="text-sm mt-2">
-              Or use the Manage button to add accounts
-            </p>
-          </div>
+        {/* Canvas Panel */}
+        <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
+          {selectedSessionId ? (
+            <CanvasWindow sessionId={selectedSessionId} />
+          ) : (
+            <div className="text-center text-[var(--color-text-muted)]">
+              <p className="text-lg">Select a session to view</p>
+              <p className="text-sm mt-2">
+                Or select an account and click Run to start
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -87,4 +134,3 @@ function MainWindow() {
 }
 
 export default MainWindow;
-
