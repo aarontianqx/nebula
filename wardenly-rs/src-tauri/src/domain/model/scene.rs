@@ -24,7 +24,7 @@ pub struct Scene {
 pub struct ColorPoint {
     pub x: i32,
     pub y: i32,
-    #[serde(flatten)]
+    /// The expected color at this point (nested color object in YAML)
     pub color: ColorValue,
 }
 
@@ -40,16 +40,16 @@ pub struct ColorValue {
 
 /// Predefined action within a scene
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SceneAction {
-    #[serde(rename = "type")]
-    pub action_type: String,
-    pub point: Option<ActionPoint>,
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum SceneAction {
+    Click { point: ActionPoint },
+    Drag { from: ActionPoint, to: ActionPoint },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionPoint {
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
 }
 
 /// Scene matcher with configurable threshold
