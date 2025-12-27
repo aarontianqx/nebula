@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Settings, Play, Square } from "lucide-react";
+import { Settings, Play, Square, Keyboard } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useAccountStore } from "../../stores/accountStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useTauriEvents } from "../../hooks/useTauriEvents";
@@ -19,6 +20,8 @@ function MainWindow() {
   } = useSessionStore();
   const [showManagement, setShowManagement] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [keyboardPassthrough, setKeyboardPassthrough] = useState(false);
+  const [spreadToAll, setSpreadToAll] = useState(false);
 
   // Initialize Tauri event listeners
   useTauriEvents();
@@ -45,6 +48,27 @@ function MainWindow() {
   const hasSessionForAccount = sessions.some(
     (s) => s.account_id === selectedAccountId
   );
+
+  const toggleKeyboardPassthrough = async () => {
+    const newValue = !keyboardPassthrough;
+    try {
+      await invoke("set_keyboard_passthrough", { enabled: newValue });
+      setKeyboardPassthrough(newValue);
+    } catch (error) {
+      console.error("Failed to toggle keyboard passthrough:", error);
+      // Show permission dialog hint on macOS
+      if (String(error).includes("accessibility")) {
+        alert(
+          "Keyboard passthrough requires accessibility permissions. Please enable in System Preferences > Security & Privacy > Privacy > Accessibility."
+        );
+      }
+    }
+  };
+
+  // Update active session for input processor when selection changes
+  useEffect(() => {
+    invoke("set_active_session_for_input", { sessionId: selectedSessionId });
+  }, [selectedSessionId]);
 
   return (
     <div className="flex flex-col h-screen bg-[var(--color-bg-primary)]">
@@ -104,6 +128,32 @@ function MainWindow() {
               sessions.find((s) => s.id === selectedSessionId)?.state || null
             }
           />
+
+          {/* Divider */}
+          <div className="w-px h-6 bg-[var(--color-border)]" />
+
+          {/* Keyboard Passthrough */}
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text-primary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={keyboardPassthrough}
+              onChange={toggleKeyboardPassthrough}
+              className="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-accent)]"
+            />
+            <Keyboard size={14} />
+            Keyboard
+          </label>
+
+          {/* Spread to All */}
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text-primary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={spreadToAll}
+              onChange={(e) => setSpreadToAll(e.target.checked)}
+              className="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-accent)] focus:ring-[var(--color-accent)]"
+            />
+            Spread
+          </label>
         </div>
 
         <button
@@ -125,7 +175,10 @@ function MainWindow() {
         {/* Canvas Panel */}
         <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
           {selectedSessionId ? (
-            <CanvasWindow sessionId={selectedSessionId} />
+            <CanvasWindow
+              sessionId={selectedSessionId}
+              spreadToAll={spreadToAll}
+            />
           ) : (
             <div className="text-center text-[var(--color-text-muted)]">
               <p className="text-lg">Select a session to view</p>

@@ -230,3 +230,52 @@ pub async fn stop_all_scripts(state: State<'_, AppState>) -> Result<(), String> 
     Ok(())
 }
 
+// ====== Input Commands ======
+
+#[tauri::command]
+pub async fn set_keyboard_passthrough(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state
+        .input_processor
+        .lock()
+        .await
+        .set_enabled(enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_keyboard_passthrough_status(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.input_processor.lock().await.is_enabled())
+}
+
+#[tauri::command]
+pub async fn update_cursor_position(
+    state: State<'_, AppState>,
+    x: i32,
+    y: i32,
+    in_bounds: bool,
+) -> Result<(), String> {
+    state
+        .input_processor
+        .lock()
+        .await
+        .update_cursor(x, y, in_bounds);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_active_session_for_input(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    state
+        .input_processor
+        .lock()
+        .await
+        .set_active_session(session_id);
+    Ok(())
+}
+

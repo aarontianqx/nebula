@@ -17,6 +17,7 @@ interface SessionStore {
   stopSession: (sessionId: string) => Promise<void>;
   stopAllSessions: () => Promise<void>;
   clickSession: (sessionId: string, x: number, y: number) => Promise<void>;
+  clickAllSessions: (x: number, y: number) => Promise<void>;
   dragSession: (
     sessionId: string,
     fromX: number,
@@ -85,6 +86,14 @@ export const useSessionStore = create<SessionStore>((set) => ({
       await invoke("click_session", { sessionId, x, y });
     } catch (error) {
       console.error("Click failed:", error);
+    }
+  },
+
+  clickAllSessions: async (x: number, y: number) => {
+    try {
+      await invoke("click_all_sessions", { x, y });
+    } catch (error) {
+      console.error("Click all failed:", error);
     }
   },
 

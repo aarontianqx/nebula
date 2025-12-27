@@ -49,6 +49,9 @@ wardenly-rs/
 - [tokio](https://tokio.rs/) - Async runtime
 - [tracing](https://tracing.rs/) - Structured logging
 - [serde](https://serde.rs/) - Serialization/Deserialization
+- [chromiumoxide](https://github.com/mattsse/chromiumoxide) - Browser automation
+- [rdev](https://github.com/Narsil/rdev) - Keyboard event listening
+- [mongodb](https://github.com/mongodb/mongo-rust-driver) - MongoDB driver (optional)
 
 ### Frontend
 
@@ -115,7 +118,7 @@ storage:
 - **Phase 1** ✅ - Core Framework (Account/Group CRUD, SQLite, Config)
 - **Phase 2** ✅ - Browser Integration (chromiumoxide, Session Actor, Canvas)
 - **Phase 3** ✅ - Script Engine (Scene matching, Script execution)
-- **Phase 4** - Extensibility (Keyboard passthrough, Batch operations, OCR, MongoDB)
+- **Phase 4** ✅ - Extensibility (Keyboard passthrough, Batch operations, MongoDB)
 
 ## License
 

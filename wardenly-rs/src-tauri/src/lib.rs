@@ -61,6 +61,11 @@ pub fn run() {
             commands::stop_script,
             commands::start_all_scripts,
             commands::stop_all_scripts,
+            // Input commands
+            commands::set_keyboard_passthrough,
+            commands::get_keyboard_passthrough_status,
+            commands::update_cursor_position,
+            commands::set_active_session_for_input,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -38,3 +38,11 @@ image = "0.25"
 humantime = "2"
 rand = "0.8"
 
+# Phase 4: Extensibility
+rdev = "0.5"
+mongodb = { version = "3", optional = true }
+
+[features]
+default = []
+mongodb = ["dep:mongodb"]
+

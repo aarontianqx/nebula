@@ -1,15 +1,18 @@
 import { useRef, useEffect, useState, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useSessionStore } from "../../stores/sessionStore";
 
 interface Props {
   sessionId: string;
+  spreadToAll?: boolean;
 }
 
-export default function CanvasWindow({ sessionId }: Props) {
+export default function CanvasWindow({ sessionId, spreadToAll = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frame = useSessionStore((s) => s.frames[sessionId]);
   const clickSession = useSessionStore((s) => s.clickSession);
   const dragSession = useSessionStore((s) => s.dragSession);
+  const clickAllSessions = useSessionStore((s) => s.clickAllSessions);
 
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
@@ -69,9 +72,13 @@ export default function CanvasWindow({ sessionId }: Props) {
 
         // If moved less than 5 pixels, treat as click
         if (dx < 5 && dy < 5) {
-          await clickSession(sessionId, coords.x, coords.y);
+          if (spreadToAll) {
+            await clickAllSessions(coords.x, coords.y);
+          } else {
+            await clickSession(sessionId, coords.x, coords.y);
+          }
         } else {
-          // Drag
+          // Drag (not spread for drag operations)
           await dragSession(
             sessionId,
             dragStart.x,
@@ -91,6 +98,8 @@ export default function CanvasWindow({ sessionId }: Props) {
       sessionId,
       clickSession,
       dragSession,
+      clickAllSessions,
+      spreadToAll,
       getCanvasCoordinates,
     ]
   );
@@ -98,7 +107,29 @@ export default function CanvasWindow({ sessionId }: Props) {
   const handleMouseLeave = useCallback(() => {
     setIsDragging(false);
     setDragStart(null);
+    // Notify backend that cursor left canvas
+    invoke("update_cursor_position", { x: 0, y: 0, inBounds: false });
   }, []);
+
+  // Throttled cursor position update
+  const lastUpdateRef = useRef<number>(0);
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const now = Date.now();
+      if (now - lastUpdateRef.current < 50) return; // Throttle to 50ms
+      lastUpdateRef.current = now;
+
+      const coords = getCanvasCoordinates(e);
+      if (coords) {
+        invoke("update_cursor_position", {
+          x: Math.round(coords.x),
+          y: Math.round(coords.y),
+          inBounds: true,
+        });
+      }
+    },
+    [getCanvasCoordinates]
+  );
 
   return (
     <div className="relative">
@@ -108,6 +139,7 @@ export default function CanvasWindow({ sessionId }: Props) {
         height={720}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
+        onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         className="w-full max-w-[1080px] border border-[var(--color-border)] rounded cursor-crosshair bg-black"
         style={{ aspectRatio: "1080 / 720" }}
