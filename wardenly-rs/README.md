@@ -92,4 +92,4 @@ When using Keyboard Passthrough feature, grant Accessibility permission:
 
 ## License
 
-MIT License
+This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](../LICENSE) file for details.
