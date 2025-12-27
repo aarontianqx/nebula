@@ -1,6 +1,7 @@
 use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
 use crate::application::service::{SessionActor, SessionHandle};
+use crate::domain::event::DomainEvent;
 use crate::domain::repository::AccountRepository;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,11 +16,48 @@ pub struct Coordinator<R: AccountRepository> {
 
 impl<R: AccountRepository + 'static> Coordinator<R> {
     pub fn new(event_bus: SharedEventBus, account_repo: Arc<R>) -> Self {
-        Self {
+        let coordinator = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             event_bus,
             account_repo,
-        }
+        };
+        
+        coordinator
+    }
+    
+    /// Start the event listener for auto-cleanup of stopped sessions
+    /// This should be called after the Coordinator is created and wrapped in Arc
+    pub fn start_event_listener(self: &Arc<Self>) {
+        let sessions = self.sessions.clone();
+        let mut receiver = self.event_bus.subscribe();
+        
+        tauri::async_runtime::spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(event) => {
+                        if let DomainEvent::SessionStopped { session_id } = event {
+                            // Auto-remove stopped session from coordinator
+                            let mut sessions_guard = sessions.write().await;
+                            if sessions_guard.remove(&session_id).is_some() {
+                                tracing::info!(
+                                    "Auto-removed stopped session {} from coordinator",
+                                    session_id
+                                );
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Coordinator event listener lagged by {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Event bus closed, stopping coordinator event listener");
+                        break;
+                    }
+                }
+            }
+        });
+        
+        tracing::info!("Coordinator event listener started");
     }
 
     /// Create a session for an account
@@ -224,6 +262,57 @@ impl<R: AccountRepository + 'static> Coordinator<R> {
                 tracing::info!("Stopped script on session {}", session_id);
             }
         }
+    }
+    
+    /// Refresh/reload page on a specific session
+    pub async fn refresh_session(&self, session_id: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::Refresh)
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send refresh command"))?;
+
+        tracing::info!("Refreshed session {}", session_id);
+        Ok(())
+    }
+    
+    /// Start screencast streaming on a specific session
+    pub async fn start_screencast(&self, session_id: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::StartScreencast)
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send start screencast command"))?;
+
+        tracing::info!("Started screencast for session {}", session_id);
+        Ok(())
+    }
+    
+    /// Stop screencast streaming on a specific session
+    pub async fn stop_screencast(&self, session_id: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::StopScreencast)
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send stop screencast command"))?;
+
+        tracing::info!("Stopped screencast for session {}", session_id);
+        Ok(())
     }
 }
 

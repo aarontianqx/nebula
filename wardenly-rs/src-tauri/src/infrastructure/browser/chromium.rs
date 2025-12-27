@@ -1,4 +1,5 @@
 use super::driver::BrowserDriver;
+use crate::domain::model::Cookie;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chromiumoxide::browser::{Browser, BrowserConfig};
@@ -8,28 +9,39 @@ use chromiumoxide::cdp::browser_protocol::input::{
 use chromiumoxide::page::Page;
 use futures::StreamExt;
 use image::DynamicImage;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 /// Chromium browser driver using chromiumoxide
 pub struct ChromiumDriver {
+    session_id: String,
     browser: RwLock<Option<Browser>>,
     page: RwLock<Option<Arc<Mutex<Page>>>>,
     handler_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     frame_tx: mpsc::UnboundedSender<String>,
     screenshot_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    user_data_dir: PathBuf,
     viewport_width: u32,
     viewport_height: u32,
 }
 
 impl ChromiumDriver {
-    pub fn new(frame_tx: mpsc::UnboundedSender<String>) -> Self {
+    /// Create a new ChromiumDriver with a unique user data directory per session
+    pub fn new(session_id: &str, frame_tx: mpsc::UnboundedSender<String>) -> Self {
+        // Create unique user data directory for this session to avoid SingletonLock conflicts
+        let user_data_dir = std::env::temp_dir()
+            .join("wardenly-browsers")
+            .join(session_id);
+        
         Self {
+            session_id: session_id.to_string(),
             browser: RwLock::new(None),
             page: RwLock::new(None),
             handler_handle: RwLock::new(None),
             frame_tx,
             screenshot_handle: RwLock::new(None),
+            user_data_dir,
             viewport_width: 1080,
             viewport_height: 720,
         }
@@ -42,11 +54,35 @@ impl ChromiumDriver {
             .clone()
             .ok_or_else(|| anyhow!("Browser not started"))
     }
+    
+    /// Cleanup user data directory after browser stops
+    fn cleanup_user_data_dir(&self) {
+        if self.user_data_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&self.user_data_dir) {
+                tracing::warn!(
+                    "Failed to cleanup user data dir {:?}: {}",
+                    self.user_data_dir,
+                    e
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl BrowserDriver for ChromiumDriver {
     async fn start(&self) -> Result<()> {
+        // Ensure user data directory exists
+        if let Err(e) = std::fs::create_dir_all(&self.user_data_dir) {
+            return Err(anyhow!("Failed to create user data dir: {}", e));
+        }
+        
+        tracing::info!(
+            "Starting browser for session {} with user data dir: {:?}",
+            self.session_id,
+            self.user_data_dir
+        );
+        
         let config = BrowserConfig::builder()
             .window_size(self.viewport_width, self.viewport_height + 120)
             .viewport(chromiumoxide::handler::viewport::Viewport {
@@ -57,6 +93,14 @@ impl BrowserDriver for ChromiumDriver {
                 is_landscape: false,
                 has_touch: false,
             })
+            // Use unique user data directory per session to avoid SingletonLock conflicts
+            .user_data_dir(&self.user_data_dir)
+            // Disable GPU for stability
+            .arg("--disable-gpu")
+            // Disable infobars
+            .arg("--disable-infobars")
+            // Mute audio
+            .arg("--mute-audio")
             .build()
             .map_err(|e| anyhow!("Failed to build browser config: {}", e))?;
 
@@ -75,11 +119,13 @@ impl BrowserDriver for ChromiumDriver {
         *self.page.write().await = Some(Arc::new(Mutex::new(page)));
         *self.handler_handle.write().await = Some(handler_handle);
 
-        tracing::info!("Browser started successfully");
+        tracing::info!("Browser started successfully for session {}", self.session_id);
         Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
+        tracing::info!("Stopping browser for session {}", self.session_id);
+        
         // Stop screenshot task first
         if let Some(handle) = self.screenshot_handle.write().await.take() {
             handle.abort();
@@ -96,8 +142,11 @@ impl BrowserDriver for ChromiumDriver {
         }
 
         *self.page.write().await = None;
+        
+        // Cleanup user data directory
+        self.cleanup_user_data_dir();
 
-        tracing::info!("Browser stopped");
+        tracing::info!("Browser stopped for session {}", self.session_id);
         Ok(())
     }
 
@@ -168,10 +217,19 @@ impl BrowserDriver for ChromiumDriver {
     }
 
     async fn start_screencast(&self) -> Result<()> {
+        // Idempotent: if already running, do nothing
+        {
+            let handle = self.screenshot_handle.read().await;
+            if handle.is_some() {
+                tracing::debug!("Screencast already running, skipping start");
+                return Ok(());
+            }
+        }
+        
         let page = self.page().await?;
         let frame_tx = self.frame_tx.clone();
 
-        // Use periodic screenshots as screencast
+        // Use periodic screenshots as screencast (~5 FPS)
         let handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -213,37 +271,52 @@ impl BrowserDriver for ChromiumDriver {
         Ok(())
     }
 
-    async fn set_cookies(&self, cookies_json: &str) -> Result<()> {
+    async fn set_cookies(&self, cookies: &[Cookie]) -> Result<()> {
         let page = self.page().await?;
         let page = page.lock().await;
-
-        let cookies: Vec<chromiumoxide::cdp::browser_protocol::network::CookieParam> =
-            serde_json::from_str(cookies_json)?;
 
         for cookie in cookies {
             let mut params = chromiumoxide::cdp::browser_protocol::network::SetCookieParams::new(
                 cookie.name.clone(),
                 cookie.value.clone(),
             );
-            params.domain = cookie.domain.clone();
+            params.domain = Some(cookie.domain.clone());
+            params.path = Some(cookie.path.clone());
+            params.secure = Some(cookie.secure);
+            params.http_only = Some(cookie.http_only);
 
             page.execute(params).await?;
         }
 
+        tracing::debug!("Set {} cookies", cookies.len());
         Ok(())
     }
 
-    async fn get_cookies(&self) -> Result<String> {
+    async fn get_cookies(&self) -> Result<Vec<Cookie>> {
         let page = self.page().await?;
         let page = page.lock().await;
 
-        let cookies = page
+        let result = page
             .execute(
                 chromiumoxide::cdp::browser_protocol::network::GetCookiesParams::default(),
             )
             .await?;
 
-        Ok(serde_json::to_string(&cookies.result.cookies)?)
+        let cookies: Vec<Cookie> = result
+            .result
+            .cookies
+            .into_iter()
+            .map(|c| Cookie {
+                name: c.name,
+                value: c.value,
+                domain: c.domain,
+                path: c.path,
+                http_only: c.http_only,
+                secure: c.secure,
+            })
+            .collect();
+
+        Ok(cookies)
     }
 
     async fn evaluate(&self, script: &str) -> Result<String> {
@@ -269,5 +342,114 @@ impl BrowserDriver for ChromiumDriver {
 
         let img = image::load_from_memory(&data)?;
         Ok(img)
+    }
+
+    async fn input_text(&self, selector: &str, text: &str) -> Result<()> {
+        let page = self.page().await?;
+        let page = page.lock().await;
+
+        // Find element and type text
+        let element = page.find_element(selector).await?;
+        element.click().await?;
+        element.type_str(text).await?;
+
+        tracing::debug!("Input text into {}", selector);
+        Ok(())
+    }
+
+    async fn click_element(&self, selector: &str) -> Result<()> {
+        let page = self.page().await?;
+        let page = page.lock().await;
+
+        let element = page.find_element(selector).await?;
+        element.click().await?;
+
+        tracing::debug!("Clicked element {}", selector);
+        Ok(())
+    }
+    
+    async fn wait_visible(&self, selector: &str, timeout: std::time::Duration) -> Result<()> {
+        let page = self.page().await?;
+        let start = std::time::Instant::now();
+        
+        loop {
+            if start.elapsed() > timeout {
+                return Err(anyhow!("Timeout waiting for element: {}", selector));
+            }
+            
+            let page_guard = page.lock().await;
+            match page_guard.find_element(selector).await {
+                Ok(_) => {
+                    tracing::debug!("Element {} is visible", selector);
+                    return Ok(());
+                }
+                Err(_) => {
+                    drop(page_guard);
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+        }
+    }
+    
+    async fn login_with_password(
+        &self,
+        url: &str,
+        username: &str,
+        password: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        tracing::info!("Starting login with password for URL: {}", url);
+        
+        // Navigate to game URL
+        self.navigate(url).await?;
+        
+        // Wait for username field to be visible
+        self.wait_visible("#username", timeout).await?;
+        
+        // Input username
+        self.input_text("#username", username).await?;
+        
+        // Input password (use #userpwd as per wardenly-go)
+        self.input_text("#userpwd", password).await?;
+        
+        // Click login button (selector from wardenly-go)
+        self.click_element("#form1 > div.r06 > div.login_box3 > p > input").await?;
+        
+        // Wait for game iframe to appear (indicates successful login)
+        self.wait_visible("#S_Iframe", timeout).await?;
+        
+        tracing::info!("Login with password completed successfully");
+        Ok(())
+    }
+    
+    async fn login_with_cookies(
+        &self,
+        url: &str,
+        cookies: &[Cookie],
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        tracing::info!("Starting login with cookies for URL: {}", url);
+        
+        // Set cookies first
+        self.set_cookies(cookies).await?;
+        
+        // Navigate to game URL
+        self.navigate(url).await?;
+        
+        // Wait for game iframe to appear (indicates cookies are valid)
+        self.wait_visible("#S_Iframe", timeout).await?;
+        
+        tracing::info!("Login with cookies completed successfully");
+        Ok(())
+    }
+    
+    async fn refresh(&self) -> Result<()> {
+        let page = self.page().await?;
+        let page = page.lock().await;
+        
+        page.reload().await?;
+        
+        tracing::info!("Page refreshed");
+        Ok(())
     }
 }

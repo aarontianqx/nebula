@@ -48,12 +48,41 @@ pub fn run() {
     // Create application state
     let state = AppState::new(db, event_bus.clone());
 
+    // Get references before moving state
+    let input_processor = state.input_processor.clone();
+    let click_rx = state.click_rx.clone();
+    let coordinator = state.coordinator.clone();
+    
+    // Start coordinator event listener for auto-cleanup of stopped sessions
+    coordinator.start_event_listener();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(state)
         .setup(move |app| {
             // Start event forwarder to push events to frontend
             events::start_event_forwarder(app.handle().clone(), event_bus);
+
+            // Start input processing
+            let input_proc = input_processor.clone();
+            tauri::async_runtime::spawn(async move {
+                input_proc.start_processing().await;
+            });
+
+            // Start click event forwarder from keyboard passthrough to coordinator
+            let coord = coordinator.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut rx = click_rx.lock().await;
+                while let Some(click_event) = rx.recv().await {
+                    if let Err(e) = coord
+                        .click_session(&click_event.session_id, click_event.x, click_event.y)
+                        .await
+                    {
+                        tracing::warn!("Failed to forward keyboard click: {}", e);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -75,6 +104,9 @@ pub fn run() {
             commands::click_session,
             commands::drag_session,
             commands::click_all_sessions,
+            commands::refresh_session,
+            commands::start_screencast,
+            commands::stop_screencast,
             // Script commands
             commands::get_scripts,
             commands::start_script,

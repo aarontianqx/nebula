@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Browser cookie
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub http_only: bool,
+    pub secure: bool,
+}
+
 /// Account entity - represents a game account
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -10,7 +21,7 @@ pub struct Account {
     pub password: String,
     pub server_id: i32,
     pub ranking: i32,
-    pub cookies: Option<String>,
+    pub cookies: Option<Vec<Cookie>>,
 }
 
 impl Account {
@@ -33,6 +44,11 @@ impl Account {
 
     #[allow(dead_code)]
     pub fn display_name(&self) -> String {
+        format!("{} - {}", self.server_id, self.role_name)
+    }
+
+    /// Returns identity string in format "ServerID - RoleName"
+    pub fn identity(&self) -> String {
         format!("{} - {}", self.server_id, self.role_name)
     }
 }

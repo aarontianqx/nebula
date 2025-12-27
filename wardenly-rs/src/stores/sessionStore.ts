@@ -117,9 +117,13 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
   // Event handlers
   addSession: (session: SessionInfo) => {
-    set((state) => ({
-      sessions: [...state.sessions, session],
-    }));
+    set((state) => {
+      // Prevent duplicate sessions (can happen with React StrictMode or race conditions)
+      if (state.sessions.some((s) => s.id === session.id)) {
+        return state;
+      }
+      return { sessions: [...state.sessions, session] };
+    });
   },
 
   updateSessionState: (sessionId: string, newState: SessionState) => {

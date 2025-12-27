@@ -185,6 +185,42 @@ pub async fn click_all_sessions(state: State<'_, AppState>, x: f64, y: f64) -> R
     Ok(())
 }
 
+#[tauri::command]
+pub async fn refresh_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .refresh_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_screencast(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .start_screencast(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn stop_screencast(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .stop_screencast(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ====== Script Commands ======
 
 #[tauri::command]
@@ -239,8 +275,6 @@ pub async fn set_keyboard_passthrough(
 ) -> Result<(), String> {
     state
         .input_processor
-        .lock()
-        .await
         .set_enabled(enabled)
         .await
         .map_err(|e| e.to_string())
@@ -248,7 +282,7 @@ pub async fn set_keyboard_passthrough(
 
 #[tauri::command]
 pub async fn get_keyboard_passthrough_status(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.input_processor.lock().await.is_enabled())
+    Ok(state.input_processor.is_enabled().await)
 }
 
 #[tauri::command]
@@ -260,9 +294,8 @@ pub async fn update_cursor_position(
 ) -> Result<(), String> {
     state
         .input_processor
-        .lock()
-        .await
-        .update_cursor(x, y, in_bounds);
+        .update_cursor(x, y, in_bounds)
+        .await;
     Ok(())
 }
 
@@ -273,9 +306,8 @@ pub async fn set_active_session_for_input(
 ) -> Result<(), String> {
     state
         .input_processor
-        .lock()
-        .await
-        .set_active_session(session_id);
+        .set_active_session(session_id)
+        .await;
     Ok(())
 }
 

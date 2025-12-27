@@ -1,5 +1,8 @@
 use async_trait::async_trait;
 use image::DynamicImage;
+use std::time::Duration;
+
+use crate::domain::model::Cookie;
 
 /// Browser driver trait for abstracting browser automation
 #[allow(dead_code)]
@@ -27,15 +30,46 @@ pub trait BrowserDriver: Send + Sync {
     async fn stop_screencast(&self) -> anyhow::Result<()>;
 
     /// Set cookies for the browser
-    async fn set_cookies(&self, cookies: &str) -> anyhow::Result<()>;
+    async fn set_cookies(&self, cookies: &[Cookie]) -> anyhow::Result<()>;
 
     /// Get cookies from the browser
-    async fn get_cookies(&self) -> anyhow::Result<String>;
+    async fn get_cookies(&self) -> anyhow::Result<Vec<Cookie>>;
 
     /// Execute JavaScript and return result
     async fn evaluate(&self, script: &str) -> anyhow::Result<String>;
 
     /// Capture the current screen as an image
     async fn capture_screen(&self) -> anyhow::Result<DynamicImage>;
+
+    /// Input text into a form field by selector
+    async fn input_text(&self, selector: &str, text: &str) -> anyhow::Result<()>;
+
+    /// Click an element by selector
+    async fn click_element(&self, selector: &str) -> anyhow::Result<()>;
+    
+    /// Wait for an element to be visible
+    async fn wait_visible(&self, selector: &str, timeout: Duration) -> anyhow::Result<()>;
+    
+    /// Perform complete login with username/password
+    /// This executes all steps atomically like wardenly-go
+    async fn login_with_password(
+        &self,
+        url: &str,
+        username: &str,
+        password: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<()>;
+    
+    /// Perform complete login with cookies
+    /// This sets cookies and navigates to the game URL
+    async fn login_with_cookies(
+        &self,
+        url: &str,
+        cookies: &[Cookie],
+        timeout: Duration,
+    ) -> anyhow::Result<()>;
+    
+    /// Refresh/reload the current page
+    async fn refresh(&self) -> anyhow::Result<()>;
 }
 
