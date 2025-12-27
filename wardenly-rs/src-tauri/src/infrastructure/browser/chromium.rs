@@ -7,16 +7,17 @@ use chromiumoxide::cdp::browser_protocol::input::{
 };
 use chromiumoxide::page::Page;
 use futures::StreamExt;
+use image::DynamicImage;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 /// Chromium browser driver using chromiumoxide
 pub struct ChromiumDriver {
-    browser: Option<Browser>,
-    page: Option<Arc<Mutex<Page>>>,
-    handler_handle: Option<tokio::task::JoinHandle<()>>,
+    browser: RwLock<Option<Browser>>,
+    page: RwLock<Option<Arc<Mutex<Page>>>>,
+    handler_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     frame_tx: mpsc::UnboundedSender<String>,
-    screenshot_handle: Option<tokio::task::JoinHandle<()>>,
+    screenshot_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     viewport_width: u32,
     viewport_height: u32,
 }
@@ -24,18 +25,20 @@ pub struct ChromiumDriver {
 impl ChromiumDriver {
     pub fn new(frame_tx: mpsc::UnboundedSender<String>) -> Self {
         Self {
-            browser: None,
-            page: None,
-            handler_handle: None,
+            browser: RwLock::new(None),
+            page: RwLock::new(None),
+            handler_handle: RwLock::new(None),
             frame_tx,
-            screenshot_handle: None,
+            screenshot_handle: RwLock::new(None),
             viewport_width: 1080,
             viewport_height: 720,
         }
     }
 
-    fn page(&self) -> Result<Arc<Mutex<Page>>> {
+    async fn page(&self) -> Result<Arc<Mutex<Page>>> {
         self.page
+            .read()
+            .await
             .clone()
             .ok_or_else(|| anyhow!("Browser not started"))
     }
@@ -43,7 +46,7 @@ impl ChromiumDriver {
 
 #[async_trait]
 impl BrowserDriver for ChromiumDriver {
-    async fn start(&mut self) -> Result<()> {
+    async fn start(&self) -> Result<()> {
         let config = BrowserConfig::builder()
             .window_size(self.viewport_width, self.viewport_height + 120)
             .viewport(chromiumoxide::handler::viewport::Viewport {
@@ -68,38 +71,38 @@ impl BrowserDriver for ChromiumDriver {
 
         let page = browser.new_page("about:blank").await?;
 
-        self.browser = Some(browser);
-        self.page = Some(Arc::new(Mutex::new(page)));
-        self.handler_handle = Some(handler_handle);
+        *self.browser.write().await = Some(browser);
+        *self.page.write().await = Some(Arc::new(Mutex::new(page)));
+        *self.handler_handle.write().await = Some(handler_handle);
 
         tracing::info!("Browser started successfully");
         Ok(())
     }
 
-    async fn stop(&mut self) -> Result<()> {
+    async fn stop(&self) -> Result<()> {
         // Stop screenshot task first
-        if let Some(handle) = self.screenshot_handle.take() {
+        if let Some(handle) = self.screenshot_handle.write().await.take() {
             handle.abort();
         }
 
         // Close browser
-        if let Some(mut browser) = self.browser.take() {
+        if let Some(mut browser) = self.browser.write().await.take() {
             let _ = browser.close().await;
         }
 
         // Abort handler
-        if let Some(handle) = self.handler_handle.take() {
+        if let Some(handle) = self.handler_handle.write().await.take() {
             handle.abort();
         }
 
-        self.page = None;
+        *self.page.write().await = None;
 
         tracing::info!("Browser stopped");
         Ok(())
     }
 
     async fn navigate(&self, url: &str) -> Result<()> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let page = page.lock().await;
         page.goto(url).await?;
         tracing::debug!("Navigated to {}", url);
@@ -107,7 +110,7 @@ impl BrowserDriver for ChromiumDriver {
     }
 
     async fn click(&self, x: f64, y: f64) -> Result<()> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let page = page.lock().await;
 
         // Move mouse
@@ -115,13 +118,15 @@ impl BrowserDriver for ChromiumDriver {
         page.execute(move_params).await?;
 
         // Mouse down
-        let mut down_params = DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, x, y);
+        let mut down_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, x, y);
         down_params.button = Some(MouseButton::Left);
         down_params.click_count = Some(1);
         page.execute(down_params).await?;
 
         // Mouse up
-        let mut up_params = DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, x, y);
+        let mut up_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, x, y);
         up_params.button = Some(MouseButton::Left);
         up_params.click_count = Some(1);
         page.execute(up_params).await?;
@@ -131,25 +136,29 @@ impl BrowserDriver for ChromiumDriver {
     }
 
     async fn drag(&self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let page = page.lock().await;
 
         // Move to start position
-        let move_params = DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, from.0, from.1);
+        let move_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, from.0, from.1);
         page.execute(move_params).await?;
 
         // Mouse down at start
-        let mut down_params = DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, from.0, from.1);
+        let mut down_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, from.0, from.1);
         down_params.button = Some(MouseButton::Left);
         down_params.click_count = Some(1);
         page.execute(down_params).await?;
 
         // Move to end position
-        let move_params = DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, to.0, to.1);
+        let move_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, to.0, to.1);
         page.execute(move_params).await?;
 
         // Mouse up at end
-        let mut up_params = DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, to.0, to.1);
+        let mut up_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, to.0, to.1);
         up_params.button = Some(MouseButton::Left);
         up_params.click_count = Some(1);
         page.execute(up_params).await?;
@@ -159,7 +168,7 @@ impl BrowserDriver for ChromiumDriver {
     }
 
     async fn start_screencast(&self) -> Result<()> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let frame_tx = self.frame_tx.clone();
 
         // Use periodic screenshots as screencast
@@ -168,9 +177,13 @@ impl BrowserDriver for ChromiumDriver {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
                 let page_guard = page.lock().await;
-                match page_guard.screenshot(
-                    chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams::default()
-                ).await {
+                match page_guard
+                    .screenshot(
+                        chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams::default(
+                        ),
+                    )
+                    .await
+                {
                     Ok(data) => {
                         use base64::Engine;
                         let base64_data = base64::engine::general_purpose::STANDARD.encode(&data);
@@ -186,21 +199,22 @@ impl BrowserDriver for ChromiumDriver {
             }
         });
 
-        // Store handle - for now we'll leak it since we need mutable self
-        std::mem::forget(handle);
+        *self.screenshot_handle.write().await = Some(handle);
 
         tracing::info!("Screencast started (using periodic screenshots)");
         Ok(())
     }
 
     async fn stop_screencast(&self) -> Result<()> {
-        // Screencast will stop when the channel is dropped
+        if let Some(handle) = self.screenshot_handle.write().await.take() {
+            handle.abort();
+        }
         tracing::info!("Screencast stopped");
         Ok(())
     }
 
     async fn set_cookies(&self, cookies_json: &str) -> Result<()> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let page = page.lock().await;
 
         let cookies: Vec<chromiumoxide::cdp::browser_protocol::network::CookieParam> =
@@ -212,7 +226,7 @@ impl BrowserDriver for ChromiumDriver {
                 cookie.value.clone(),
             );
             params.domain = cookie.domain.clone();
-            
+
             page.execute(params).await?;
         }
 
@@ -220,22 +234,40 @@ impl BrowserDriver for ChromiumDriver {
     }
 
     async fn get_cookies(&self) -> Result<String> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let page = page.lock().await;
 
         let cookies = page
-            .execute(chromiumoxide::cdp::browser_protocol::network::GetCookiesParams::default())
+            .execute(
+                chromiumoxide::cdp::browser_protocol::network::GetCookiesParams::default(),
+            )
             .await?;
 
         Ok(serde_json::to_string(&cookies.result.cookies)?)
     }
 
     async fn evaluate(&self, script: &str) -> Result<String> {
-        let page = self.page()?;
+        let page = self.page().await?;
         let page = page.lock().await;
 
         let result = page.evaluate(script).await?;
         let value: serde_json::Value = result.into_value()?;
         Ok(value.to_string())
+    }
+
+    async fn capture_screen(&self) -> Result<DynamicImage> {
+        let page = self.page().await?;
+        let page = page.lock().await;
+
+        let data = page
+            .screenshot(
+                chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams::builder()
+                    .format(chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat::Png)
+                    .build(),
+            )
+            .await?;
+
+        let img = image::load_from_memory(&data)?;
+        Ok(img)
     }
 }

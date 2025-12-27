@@ -1,6 +1,7 @@
 use crate::adapter::tauri::error::ApiError;
 use crate::adapter::tauri::state::AppState;
-use crate::domain::model::{Account, Group, SessionInfo};
+use crate::domain::model::{Account, Group, ScriptInfo, SessionInfo};
+use crate::infrastructure::config::resources;
 use serde::Deserialize;
 use tauri::State;
 
@@ -181,6 +182,51 @@ pub async fn drag_session(
 #[tauri::command]
 pub async fn click_all_sessions(state: State<'_, AppState>, x: f64, y: f64) -> Result<(), String> {
     state.coordinator.click_all(x, y).await;
+    Ok(())
+}
+
+// ====== Script Commands ======
+
+#[tauri::command]
+pub fn get_scripts() -> Result<Vec<ScriptInfo>, String> {
+    let scripts = resources::load_scripts().map_err(|e| e.to_string())?;
+    Ok(scripts.iter().map(ScriptInfo::from).collect())
+}
+
+#[tauri::command]
+pub async fn start_script(
+    state: State<'_, AppState>,
+    session_id: String,
+    script_name: String,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .start_script(&session_id, &script_name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn stop_script(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    state
+        .coordinator
+        .stop_script(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_all_scripts(
+    state: State<'_, AppState>,
+    script_name: String,
+) -> Result<(), String> {
+    state.coordinator.start_all_scripts(&script_name).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_all_scripts(state: State<'_, AppState>) -> Result<(), String> {
+    state.coordinator.stop_all_scripts().await;
     Ok(())
 }
 

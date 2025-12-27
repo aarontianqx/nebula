@@ -34,6 +34,18 @@ pub enum DomainEvent {
 
     /// Login failed
     LoginFailed { session_id: String, reason: String },
+
+    /// Script started
+    ScriptStarted {
+        session_id: String,
+        script_name: String,
+    },
+
+    /// Script stopped
+    ScriptStopped {
+        session_id: String,
+        script_name: String,
+    },
 }
 
 impl DomainEvent {
@@ -47,6 +59,8 @@ impl DomainEvent {
             Self::SessionStopped { session_id } => session_id,
             Self::LoginSucceeded { session_id } => session_id,
             Self::LoginFailed { session_id, .. } => session_id,
+            Self::ScriptStarted { session_id, .. } => session_id,
+            Self::ScriptStopped { session_id, .. } => session_id,
         }
     }
 
@@ -59,6 +73,8 @@ impl DomainEvent {
             Self::SessionStopped { .. } => "session_stopped",
             Self::LoginSucceeded { .. } => "login_succeeded",
             Self::LoginFailed { .. } => "login_failed",
+            Self::ScriptStarted { .. } => "script_started",
+            Self::ScriptStopped { .. } => "script_stopped",
         }
     }
 }

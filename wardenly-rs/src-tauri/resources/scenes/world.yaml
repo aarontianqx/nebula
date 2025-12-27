@@ -1,0 +1,25 @@
+category: world
+scenes:
+  - name: old_world
+    points:
+      - {x: 47, y: 568, color: {r: 200, g: 134, b: 68, a: 255}}
+      - {x: 58, y: 500, color: {r: 212, g: 212, b: 201, a: 255}}
+    actions:
+      ToResource:
+        type: click
+        point: {x: 47, y: 568}
+      ToDistrict:
+        type: click
+        point: {x: 58, y: 500}
+
+  - name: old_world_clear
+    points:
+      - {x: 47, y: 568, color: {r: 200, g: 134, b: 68, a: 255}}
+      - {x: 58, y: 500, color: {r: 212, g: 212, b: 201, a: 255}}
+    actions:
+      ToResource:
+        type: click
+        point: {x: 47, y: 568}
+      ToDistrict:
+        type: click
+        point: {x: 58, y: 500} 

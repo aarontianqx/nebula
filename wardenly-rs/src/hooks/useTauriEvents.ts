@@ -24,6 +24,11 @@ interface SessionStoppedPayload {
   session_id: string;
 }
 
+interface ScriptStoppedPayload {
+  session_id: string;
+  script_name: string;
+}
+
 export function useTauriEvents() {
   const { addSession, updateSessionState, removeSession, setFrame } =
     useSessionStore();
@@ -58,6 +63,16 @@ export function useTauriEvents() {
     listen<SessionStoppedPayload>("session_stopped", (event) => {
       const payload = event.payload;
       removeSession(payload.session_id);
+    }).then((u) => unlisteners.push(u));
+
+    // Listen for script stopped
+    listen<ScriptStoppedPayload>("script_stopped", (event) => {
+      const payload = event.payload;
+      console.log(
+        `Script ${payload.script_name} stopped on session ${payload.session_id}`
+      );
+      // When a script stops, the session state changes to Ready
+      // This is already handled by session_state_changed event
     }).then((u) => unlisteners.push(u));
 
     return () => {

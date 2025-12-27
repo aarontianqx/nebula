@@ -162,5 +162,68 @@ impl<R: AccountRepository + 'static> Coordinator<R> {
     pub async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
     }
+
+    /// Start script on a specific session
+    pub async fn start_script(&self, session_id: &str, script_name: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::StartScript {
+                script_name: script_name.to_string(),
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send start script command"))?;
+
+        tracing::info!("Started script {} on session {}", script_name, session_id);
+        Ok(())
+    }
+
+    /// Stop script on a specific session
+    pub async fn stop_script(&self, session_id: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::StopScript)
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send stop script command"))?;
+
+        tracing::info!("Stopped script on session {}", session_id);
+        Ok(())
+    }
+
+    /// Start script on all sessions
+    pub async fn start_all_scripts(&self, script_name: &str) {
+        let sessions = self.sessions.read().await;
+        for (session_id, handle) in sessions.iter() {
+            if handle
+                .cmd_tx
+                .send(SessionCommand::StartScript {
+                    script_name: script_name.to_string(),
+                })
+                .await
+                .is_ok()
+            {
+                tracing::info!("Started script {} on session {}", script_name, session_id);
+            }
+        }
+    }
+
+    /// Stop scripts on all sessions
+    pub async fn stop_all_scripts(&self) {
+        let sessions = self.sessions.read().await;
+        for (session_id, handle) in sessions.iter() {
+            if handle.cmd_tx.send(SessionCommand::StopScript).await.is_ok() {
+                tracing::info!("Stopped script on session {}", session_id);
+            }
+        }
+    }
 }
 

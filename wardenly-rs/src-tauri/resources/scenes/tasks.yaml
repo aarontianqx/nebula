@@ -1,0 +1,13 @@
+category: tasks
+scenes:
+  - name: daily_tasks
+    points:
+      - {x: 539, y: 132, color: {r: 35, g: 66, b: 46, a: 255}}
+      - {x: 522, y: 134, color: {r: 249, g: 250, b: 223, a: 255}}
+      - {x: 54, y: 28, color: {r: 175, g: 153, b: 95, a: 255}}
+      - {x: 126, y: 381, color: {r: 216, g: 197, b: 91, a: 255}}
+      - {x: 346, y: 272, color: {r: 119, g: 143, b: 160, a: 255}}
+    actions:
+      ToMainCity:
+        type: click
+        point: {x: 54, y: 28}
