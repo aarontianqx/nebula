@@ -1,0 +1,11 @@
+# Gesture recognition configuration
+keyboard_passthrough:
+  # Time before a press is considered a long press
+  long_press_threshold_ms: 300
+  
+  # Interval between repeated clicks during long press
+  repeat_interval_ms: 100
+  
+  # Debounce window to prevent duplicate events
+  debounce_window_ms: 50
+
