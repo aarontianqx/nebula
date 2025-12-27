@@ -34,3 +34,7 @@ yarn tauri:build
 - `docs/DSL_REFERENCE.md` — YAML DSL 语法参考
 - `docs/roadmap/` — 开发路线图
 - `templates/` — YAML 宏模板示例
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](../LICENSE) file for details.

@@ -82,7 +82,7 @@ go build -trimpath -ldflags="-s -w -H windowsgui" -o wardenly-go.exe ./cmd/warde
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](../LICENSE) file for details.
 
 ## Acknowledgments
 
