@@ -1,0 +1,25 @@
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// Group entity - represents a collection of accounts
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub account_ids: Vec<String>,
+    pub ranking: i32,
+}
+
+impl Group {
+    pub fn new(name: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            description: None,
+            account_ids: Vec::new(),
+            ranking: 0,
+        }
+    }
+}
+
