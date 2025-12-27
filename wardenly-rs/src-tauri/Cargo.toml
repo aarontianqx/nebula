@@ -45,4 +45,3 @@ mongodb = { version = "3", optional = true }
 [features]
 default = []
 mongodb = ["dep:mongodb"]
-

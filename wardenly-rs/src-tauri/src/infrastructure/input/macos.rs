@@ -89,18 +89,9 @@ impl KeyboardListener for MacOSKeyboardListener {
 }
 
 /// Convert rdev Key to our KeyCode
+/// Only A-Z letter keys are converted; all others become KeyCode::Other
 fn convert_key(key: Key) -> KeyCode {
     match key {
-        Key::Num0 | Key::Kp0 => KeyCode::Num0,
-        Key::Num1 | Key::Kp1 => KeyCode::Num1,
-        Key::Num2 | Key::Kp2 => KeyCode::Num2,
-        Key::Num3 | Key::Kp3 => KeyCode::Num3,
-        Key::Num4 | Key::Kp4 => KeyCode::Num4,
-        Key::Num5 | Key::Kp5 => KeyCode::Num5,
-        Key::Num6 | Key::Kp6 => KeyCode::Num6,
-        Key::Num7 | Key::Kp7 => KeyCode::Num7,
-        Key::Num8 | Key::Kp8 => KeyCode::Num8,
-        Key::Num9 | Key::Kp9 => KeyCode::Num9,
         Key::KeyA => KeyCode::A,
         Key::KeyB => KeyCode::B,
         Key::KeyC => KeyCode::C,
@@ -127,11 +118,7 @@ fn convert_key(key: Key) -> KeyCode {
         Key::KeyX => KeyCode::X,
         Key::KeyY => KeyCode::Y,
         Key::KeyZ => KeyCode::Z,
-        Key::Space => KeyCode::Space,
-        Key::Return => KeyCode::Enter,
-        Key::Escape => KeyCode::Escape,
-        Key::Unknown(code) => KeyCode::Other(code as u32),
-        _ => KeyCode::Other(0),
+        _ => KeyCode::Other,
     }
 }
 

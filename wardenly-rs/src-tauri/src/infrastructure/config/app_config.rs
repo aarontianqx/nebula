@@ -8,16 +8,48 @@ pub struct AppConfig {
     pub storage: StorageConfig,
 }
 
+/// Storage type selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageType {
+    #[default]
+    Sqlite,
+    #[cfg(feature = "mongodb")]
+    Mongodb,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StorageConfig {
+    /// Storage backend type: "sqlite" (default) or "mongodb"
+    #[serde(rename = "type")]
+    pub storage_type: StorageType,
     pub sqlite: SqliteConfig,
+    #[cfg(feature = "mongodb")]
+    pub mongodb: MongoDbConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SqliteConfig {
     /// Leave empty to use platform default path
     pub path: String,
+}
+
+#[cfg(feature = "mongodb")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MongoDbConfig {
+    pub uri: String,
+    pub database: String,
+}
+
+#[cfg(feature = "mongodb")]
+impl Default for MongoDbConfig {
+    fn default() -> Self {
+        Self {
+            uri: "mongodb://localhost:27017".to_string(),
+            database: "wardenly".to_string(),
+        }
+    }
 }
 
 impl SqliteConfig {
@@ -33,7 +65,10 @@ impl SqliteConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
+            storage_type: StorageType::default(),
             sqlite: SqliteConfig::default(),
+            #[cfg(feature = "mongodb")]
+            mongodb: MongoDbConfig::default(),
         }
     }
 }

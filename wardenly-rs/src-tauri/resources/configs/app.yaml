@@ -2,10 +2,18 @@
 # This file contains runtime configuration settings
 
 storage:
+  # Storage backend: "sqlite" (default) or "mongodb" (requires mongodb feature)
+  type: sqlite
+
   sqlite:
     # Leave empty to use platform default path:
     # - macOS: ~/Library/Application Support/wardenly/data.db
     # - Windows: %APPDATA%/wardenly/data.db
     # - Linux: ~/.config/wardenly/data.db
     path: ""
+
+  # MongoDB settings (only used when type: mongodb and mongodb feature enabled)
+  # mongodb:
+  #   uri: "mongodb://localhost:27017"
+  #   database: "wardenly"
 

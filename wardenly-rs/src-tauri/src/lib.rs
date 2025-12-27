@@ -3,12 +3,33 @@ mod application;
 mod domain;
 mod infrastructure;
 
+use std::sync::Arc;
+
 use adapter::tauri::{commands, events};
 use adapter::tauri::state::AppState;
 use application::eventbus::create_event_bus;
 use infrastructure::config;
 use infrastructure::logging;
 use infrastructure::persistence;
+use rusqlite::Connection;
+
+/// Initialize storage based on configuration
+fn init_storage() -> Arc<std::sync::Mutex<Connection>> {
+    #[cfg(feature = "mongodb")]
+    {
+        use config::StorageType;
+        let app_config = config::app();
+        if app_config.storage.storage_type == StorageType::Mongodb {
+            // MongoDB initialization would go here
+            // For now, fall back to SQLite as MongoDB support is optional
+            tracing::warn!("MongoDB storage selected but not fully implemented, falling back to SQLite");
+        }
+    }
+
+    // Default: SQLite
+    persistence::sqlite::init_database()
+        .expect("Failed to initialize SQLite database")
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,9 +39,8 @@ pub fn run() {
     // Initialize configuration
     config::init();
 
-    // Initialize database
-    let db = persistence::sqlite::init_database()
-        .expect("Failed to initialize database");
+    // Initialize database based on config
+    let db = init_storage();
 
     // Create event bus
     let event_bus = create_event_bus();
