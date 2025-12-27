@@ -9,18 +9,19 @@ wardenly-rs/
 ├── src-tauri/               # Rust backend (Tauri)
 │   ├── src/
 │   │   ├── main.rs          # Application entry point
-│   │   ├── core/            # Core abstractions (Command, Event, State, EventBus)
-│   │   ├── domain/          # Domain models (Account, Scene, Script)
-│   │   ├── application/     # Business logic (Session Actor, Coordinator)
-│   │   └── infrastructure/  # External integrations (SQLite/MongoDB, Browser, OCR)
+│   │   ├── lib.rs           # Library entry point
+│   │   ├── domain/          # Domain models (Account, Group, Scene, Script)
+│   │   ├── application/     # Business logic (Services, Session Actor)
+│   │   ├── infrastructure/  # External integrations (SQLite, Config, Logging)
+│   │   └── adapter/         # Interface adapters (Tauri commands)
+│   ├── resources/           # Embedded resources (configs)
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                     # Frontend (React + TypeScript)
 │   ├── App.tsx
+│   ├── main.tsx
 │   ├── components/          # UI components
-│   ├── hooks/               # Custom React hooks
-│   └── stores/              # State management
-├── resources/               # Embedded resources (scenes, scripts, icons)
+│   └── stores/              # State management (Zustand)
 └── docs/                    # Documentation
 ```
 
@@ -28,14 +29,15 @@ wardenly-rs/
 
 - Rust 1.75 or higher
 - Node.js 18 or higher (for frontend build)
-- Chrome/Chromium browser (for browser automation)
+- Yarn (package manager)
 - One of the following operating systems:
   - Windows 10 or later
   - macOS 10.15 or later
   - Linux with X11 or Wayland
 
-### Optional
+### Optional (Phase 2+)
 
+- Chrome/Chromium browser (for browser automation)
 - MongoDB (if using MongoDB storage backend)
 
 ## Key Dependencies
@@ -43,16 +45,18 @@ wardenly-rs/
 ### Backend (Rust)
 
 - [Tauri](https://tauri.app/) v2 - Cross-platform desktop framework
-- [chromiumoxide](https://github.com/mattsse/chromiumoxide) - Browser automation via CDP
+- [rusqlite](https://github.com/rusqlite/rusqlite) - SQLite database
 - [tokio](https://tokio.rs/) - Async runtime
-- [SeaORM](https://www.sea-ql.org/SeaORM/) - Database ORM (SQLite/MongoDB)
 - [tracing](https://tracing.rs/) - Structured logging
+- [serde](https://serde.rs/) - Serialization/Deserialization
 
 ### Frontend
 
 - [React](https://react.dev/) 18 - UI library
 - [TypeScript](https://www.typescriptlang.org/) - Type-safe JavaScript
-- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS
+- [Tailwind CSS](https://tailwindcss.com/) v4 - Utility-first CSS
+- [Zustand](https://zustand.docs.pmnd.rs/) - State management
+- [Lucide React](https://lucide.dev/) - Icons
 
 ## Building the Application
 
@@ -60,17 +64,17 @@ wardenly-rs/
 
 ```bash
 # Install frontend dependencies
-npm install
+yarn install
 
 # Run in development mode (hot-reload enabled)
-npm run tauri dev
+yarn tauri dev
 ```
 
 ### Production Build
 
 ```bash
 # Build optimized release
-npm run tauri build
+yarn tauri build
 ```
 
 The built application will be in `src-tauri/target/release/`.
@@ -79,27 +83,24 @@ The built application will be in `src-tauri/target/release/`.
 
 ```bash
 # Development
-npm run tauri dev
+yarn tauri dev
 
 # Or run the built binary directly
-./src-tauri/target/release/wardenly
+./src-tauri/target/release/wardenly-rs
 ```
 
 ## Configuration
 
-Storage backend can be configured in `config.toml`:
+Application configuration is in `src-tauri/resources/configs/app.yaml`:
 
-```toml
-[storage]
-# Options: "sqlite" (default) or "mongodb"
-backend = "sqlite"
-
-# SQLite settings (when backend = "sqlite")
-sqlite_path = "~/.config/wardenly/data.db"
-
-# MongoDB settings (when backend = "mongodb")
-mongodb_uri = "mongodb://localhost:27017"
-mongodb_database = "wardenly"
+```yaml
+storage:
+  sqlite:
+    # Leave empty for platform default path:
+    # - macOS: ~/Library/Application Support/wardenly/data.db
+    # - Windows: %APPDATA%/wardenly/data.db
+    # - Linux: ~/.config/wardenly/data.db
+    path: ""
 ```
 
 ## Documentation
@@ -107,22 +108,15 @@ mongodb_database = "wardenly"
 - [Project Structure](docs/PROJECT_STRUCTURE.md) - 项目架构设计
 - [Functional Guide](docs/FUNCTIONAL_GUIDE.md) - 功能说明手册
 - [UI Design](docs/UI_DESIGN.md) - UI 设计规范
+- [Roadmap](docs/roadmap/ROADMAP.md) - 开发路线图
 
-## Contributing
+## Development Roadmap
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **Phase 1** ✅ - Core Framework (Account/Group CRUD, SQLite, Config)
+- **Phase 2** - Browser Integration (chromiumoxide, Session Actor, Canvas)
+- **Phase 3** - Script Engine (Scene matching, Script execution, OCR)
+- **Phase 4** - Extensibility (Keyboard passthrough, Batch operations, MongoDB)
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- Tauri team for the excellent cross-platform framework
-- chromiumoxide team for the Rust CDP implementation
-- tokio team for the async runtime
-

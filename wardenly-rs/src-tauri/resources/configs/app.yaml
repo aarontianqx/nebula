@@ -1,0 +1,11 @@
+# Wardenly Application Configuration
+# This file contains runtime configuration settings
+
+storage:
+  sqlite:
+    # Leave empty to use platform default path:
+    # - macOS: ~/Library/Application Support/wardenly/data.db
+    # - Windows: %APPDATA%/wardenly/data.db
+    # - Linux: ~/.config/wardenly/data.db
+    path: ""
+
