@@ -6,6 +6,7 @@ import { useTauriEvents } from "../../hooks/useTauriEvents";
 import ManagementDialog from "../dialogs/ManagementDialog";
 import SessionList from "../session/SessionList";
 import CanvasWindow from "../canvas/CanvasWindow";
+import ScriptControls from "../session/ScriptControls";
 
 function MainWindow() {
   const { accounts, fetchAccounts, fetchGroups } = useAccountStore();
@@ -92,6 +93,17 @@ function MainWindow() {
           <span className="text-sm text-[var(--color-text-secondary)]">
             {sessions.length} sessions
           </span>
+
+          {/* Divider */}
+          <div className="w-px h-6 bg-[var(--color-border)]" />
+
+          {/* Script Controls */}
+          <ScriptControls
+            sessionId={selectedSessionId}
+            sessionState={
+              sessions.find((s) => s.id === selectedSessionId)?.state || null
+            }
+          />
         </div>
 
         <button

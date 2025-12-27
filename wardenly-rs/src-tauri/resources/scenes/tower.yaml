@@ -1,0 +1,27 @@
+category: tower
+scenes:
+  - name: tower_entrance_1
+    points:
+      - {x: 86, y: 20, color: {r: 227, g: 208, b: 153, a: 255}}
+      - {x: 551, y: 295, color: {r: 33, g: 0, b: 0, a: 255}}
+      - {x: 540, y: 674, color: {r: 38, g: 147, b: 100, a: 255}}
+    actions:
+      IntoTower:
+        type: click
+        point: {x: 540, y: 674}
+      ToWorld:
+        type: click
+        point: {x: 86, y: 20}
+
+  - name: tower_entrance_2
+    points:
+      - {x: 86, y: 20, color: {r: 214, g: 193, b: 143, a: 255}}
+      - {x: 543, y: 298, color: {r: 99, g: 180, b: 214, a: 255}}
+      - {x: 540, y: 674, color: {r: 35, g: 145, b: 99, a: 255}}
+    actions:
+      IntoTower:
+        type: click
+        point: {x: 540, y: 674}
+      ToWorld:
+        type: click
+        point: {x: 86, y: 20}

@@ -114,8 +114,8 @@ storage:
 
 - **Phase 1** ✅ - Core Framework (Account/Group CRUD, SQLite, Config)
 - **Phase 2** ✅ - Browser Integration (chromiumoxide, Session Actor, Canvas)
-- **Phase 3** - Script Engine (Scene matching, Script execution, OCR)
-- **Phase 4** - Extensibility (Keyboard passthrough, Batch operations, MongoDB)
+- **Phase 3** ✅ - Script Engine (Scene matching, Script execution)
+- **Phase 4** - Extensibility (Keyboard passthrough, Batch operations, OCR, MongoDB)
 
 ## License
 
