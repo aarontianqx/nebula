@@ -26,6 +26,9 @@ pub enum SessionCommand {
 
     /// Stop the currently running script
     StopScript,
+    
+    /// Refresh/reload the current page
+    Refresh,
 }
 
 /// Commands that can be sent to the Coordinator
