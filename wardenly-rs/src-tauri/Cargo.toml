@@ -28,3 +28,9 @@ dirs = "5"
 uuid = { version = "1", features = ["v4", "serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# Phase 2: Browser automation
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], default-features = false }
+base64 = "0.22"
+futures = "0.3"
+image = "0.25"
+

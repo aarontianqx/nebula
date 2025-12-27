@@ -5,7 +5,7 @@ use super::DbConnection;
 use rusqlite::params;
 
 pub struct SqliteAccountRepository {
-    conn: DbConnection,
+    pub conn: DbConnection,
 }
 
 impl SqliteAccountRepository {
