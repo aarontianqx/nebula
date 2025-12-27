@@ -2,48 +2,20 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 
 /// Key codes for keyboard events
+/// Only A-Z letter keys are supported for keyboard passthrough
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {
-    Num0,
-    Num1,
-    Num2,
-    Num3,
-    Num4,
-    Num5,
-    Num6,
-    Num7,
-    Num8,
-    Num9,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    H,
-    I,
-    J,
-    K,
-    L,
-    M,
-    N,
-    O,
-    P,
-    Q,
-    R,
-    S,
-    T,
-    U,
-    V,
-    W,
-    X,
-    Y,
-    Z,
-    Space,
-    Enter,
-    Escape,
-    Other(u32),
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    /// Unsupported keys (ignored for passthrough)
+    Other,
+}
+
+impl KeyCode {
+    /// Returns true if this key should trigger passthrough clicks
+    pub fn is_passthrough_enabled(&self) -> bool {
+        !matches!(self, KeyCode::Other)
+    }
 }
 
 /// Type of keyboard event

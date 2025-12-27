@@ -48,7 +48,13 @@ impl GestureRecognizer {
     }
 
     /// Process a raw keyboard event
+    /// Only A-Z letter keys are processed for passthrough
     pub fn process(&mut self, event: RawKeyEvent) {
+        // Ignore non-letter keys
+        if !event.key.is_passthrough_enabled() {
+            return;
+        }
+
         match event.event_type {
             KeyEventType::Press => self.on_press(event.key, event.timestamp),
             KeyEventType::Release => self.on_release(event.key, event.timestamp),

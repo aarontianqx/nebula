@@ -4,4 +4,3 @@
 fn main() {
     wardenly_lib::run()
 }
-
