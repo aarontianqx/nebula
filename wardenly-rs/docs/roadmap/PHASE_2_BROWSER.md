@@ -6,11 +6,11 @@
 
 ## 完成标准
 
-- [ ] Session 生命周期完整 (创建→登录→就绪→停止)
-- [ ] 浏览器 headless 启动正常
-- [ ] 自动登录功能可用
-- [ ] 画布 Screencast 同步
-- [ ] 画布点击/拖拽交互
+- [x] Session 生命周期完整 (创建→登录→就绪→停止)
+- [x] 浏览器 headless 启动正常
+- [x] 自动登录功能可用
+- [x] 画布 Screencast 同步 (使用周期性截图)
+- [x] 画布点击/拖拽交互
 
 ---
 
@@ -18,10 +18,10 @@
 
 ```toml
 # Cargo.toml 新增
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
-image = "0.25"
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], default-features = false }
 base64 = "0.22"
-tokio-stream = "0.1"
+futures = "0.3"
+image = "0.25"
 ```
 
 ---

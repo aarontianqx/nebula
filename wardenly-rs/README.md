@@ -113,7 +113,7 @@ storage:
 ## Development Roadmap
 
 - **Phase 1** ✅ - Core Framework (Account/Group CRUD, SQLite, Config)
-- **Phase 2** - Browser Integration (chromiumoxide, Session Actor, Canvas)
+- **Phase 2** ✅ - Browser Integration (chromiumoxide, Session Actor, Canvas)
 - **Phase 3** - Script Engine (Scene matching, Script execution, OCR)
 - **Phase 4** - Extensibility (Keyboard passthrough, Batch operations, MongoDB)
 
