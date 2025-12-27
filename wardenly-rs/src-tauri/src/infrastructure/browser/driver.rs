@@ -1,14 +1,15 @@
 use async_trait::async_trait;
+use image::DynamicImage;
 
 /// Browser driver trait for abstracting browser automation
 #[allow(dead_code)]
 #[async_trait]
 pub trait BrowserDriver: Send + Sync {
     /// Start the browser instance
-    async fn start(&mut self) -> anyhow::Result<()>;
+    async fn start(&self) -> anyhow::Result<()>;
 
     /// Stop the browser instance
-    async fn stop(&mut self) -> anyhow::Result<()>;
+    async fn stop(&self) -> anyhow::Result<()>;
 
     /// Navigate to a URL
     async fn navigate(&self, url: &str) -> anyhow::Result<()>;
@@ -33,5 +34,8 @@ pub trait BrowserDriver: Send + Sync {
 
     /// Execute JavaScript and return result
     async fn evaluate(&self, script: &str) -> anyhow::Result<String>;
+
+    /// Capture the current screen as an image
+    async fn capture_screen(&self) -> anyhow::Result<DynamicImage>;
 }
 

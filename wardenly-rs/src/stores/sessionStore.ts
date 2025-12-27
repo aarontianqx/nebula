@@ -1,20 +1,8 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { SessionInfo, SessionState } from "../types";
 
-export interface SessionInfo {
-  id: string;
-  account_id: string;
-  display_name: string;
-  state: SessionState;
-}
-
-export type SessionState =
-  | "Idle"
-  | "Starting"
-  | "LoggingIn"
-  | "Ready"
-  | "ScriptRunning"
-  | "Stopped";
+export type { SessionInfo, SessionState };
 
 interface SessionStore {
   sessions: SessionInfo[];

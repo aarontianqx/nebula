@@ -1,6 +1,7 @@
 mod app_config;
 mod loader;
 mod paths;
+pub mod resources;
 
 pub use app_config::*;
 

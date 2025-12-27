@@ -1,8 +1,11 @@
 use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
+use crate::application::service::script_runner::{ScriptHandle, ScriptRunner};
 use crate::domain::event::DomainEvent;
 use crate::domain::model::{Account, SessionInfo, SessionState};
 use crate::infrastructure::browser::{BrowserDriver, ChromiumDriver};
+use crate::infrastructure::config::resources;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
@@ -20,8 +23,9 @@ pub struct SessionActor {
     state: SessionState,
     cmd_rx: mpsc::Receiver<SessionCommand>,
     event_bus: SharedEventBus,
-    browser: Box<dyn BrowserDriver + Send>,
+    browser: Arc<dyn BrowserDriver + Send + Sync>,
     frame_rx: mpsc::UnboundedReceiver<String>,
+    script_handle: Option<ScriptHandle>,
 }
 
 impl SessionActor {
@@ -33,7 +37,7 @@ impl SessionActor {
         frame_tx: mpsc::UnboundedSender<String>,
         frame_rx: mpsc::UnboundedReceiver<String>,
     ) -> Self {
-        let browser = Box::new(ChromiumDriver::new(frame_tx));
+        let browser = Arc::new(ChromiumDriver::new(frame_tx));
 
         Self {
             id,
@@ -43,6 +47,7 @@ impl SessionActor {
             event_bus,
             browser,
             frame_rx,
+            script_handle: None,
         }
     }
 
@@ -166,6 +171,8 @@ impl SessionActor {
     async fn handle_command(&mut self, cmd: SessionCommand) -> bool {
         match cmd {
             SessionCommand::Stop => {
+                // Stop script if running
+                self.stop_script().await;
                 self.transition_to(SessionState::Stopped).await;
                 return false;
             }
@@ -195,6 +202,12 @@ impl SessionActor {
             }
             SessionCommand::Start => {
                 tracing::warn!("Session already started");
+            }
+            SessionCommand::StartScript { script_name } => {
+                self.start_script(&script_name).await;
+            }
+            SessionCommand::StopScript => {
+                self.stop_script().await;
             }
         }
         true
@@ -253,8 +266,81 @@ impl SessionActor {
         });
     }
 
+    async fn start_script(&mut self, script_name: &str) {
+        if self.state != SessionState::Ready {
+            tracing::warn!("Cannot start script: session not ready");
+            return;
+        }
+
+        // Stop existing script if any
+        self.stop_script().await;
+
+        // Load scripts
+        let scripts = resources::load_scripts().unwrap_or_default();
+        let script = match resources::find_script(&scripts, script_name) {
+            Some(s) => s.clone(),
+            None => {
+                tracing::error!("Script not found: {}", script_name);
+                return;
+            }
+        };
+
+        // Load scenes
+        let scenes = resources::load_scenes().unwrap_or_default();
+
+        // Create script runner
+        let (cmd_tx, cmd_rx) = mpsc::channel(8);
+        let mut runner = ScriptRunner::new(
+            script.clone(),
+            scenes,
+            self.browser.clone(),
+            cmd_rx,
+        );
+
+        self.script_handle = Some(ScriptHandle { cmd_tx });
+        self.transition_to(SessionState::ScriptRunning).await;
+
+        let session_id = self.id.clone();
+        let script_name_for_spawn = script.name.clone();
+        let script_name_for_log = script.name.clone();
+        let event_bus = self.event_bus.clone();
+
+        // Spawn script runner
+        tokio::spawn(async move {
+            let reason = runner.run().await;
+            tracing::info!(
+                session_id = %session_id,
+                script = %script_name_for_spawn,
+                reason = ?reason,
+                "Script finished"
+            );
+
+            // Publish script stopped event
+            event_bus.publish(DomainEvent::ScriptStopped {
+                session_id,
+                script_name: script_name_for_spawn,
+            });
+        });
+
+        tracing::info!("Started script: {}", script_name_for_log);
+    }
+
+    async fn stop_script(&mut self) {
+        if let Some(handle) = self.script_handle.take() {
+            handle.stop().await;
+            tracing::info!("Stopped script");
+        }
+
+        if self.state == SessionState::ScriptRunning {
+            self.transition_to(SessionState::Ready).await;
+        }
+    }
+
     async fn cleanup(&mut self) {
         tracing::info!("Session {} cleaning up", self.id);
+
+        // Stop script if running
+        self.stop_script().await;
 
         if let Err(e) = self.browser.stop().await {
             tracing::warn!("Failed to stop browser: {}", e);

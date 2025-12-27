@@ -1,0 +1,31 @@
+category: battle
+scenes:
+  - name: battle_group_entrance
+    points:
+      - {x: 87, y: 658, color: {r: 239, g: 236, b: 234, a: 255}}
+      - {x: 1023, y: 652, color: {r: 211, g: 176, b: 101, a: 255}}
+      - {x: 536, y: 180, color: {r: 67, g: 111, b: 104, a: 255}}
+      - {x: 538, y: 544, color: {r: 199, g: 160, b: 62, a: 255}}
+      - {x: 534, y: 544, color: {r: 245, g: 242, b: 207, a: 255}}
+    actions:
+      ToBattleGroupPrepare:
+        type: click
+        point: {x: 538, y: 544}
+      ToBattleMap:
+        type: click
+        point: {x: 879, y: 168}
+
+  - name: battle_group_prepare
+    points:
+      - {x: 87, y: 658, color: {r: 110, g: 109, b: 108, a: 255}}
+      - {x: 1023, y: 652, color: {r: 99, g: 84, b: 54, a: 255}}
+      - {x: 538, y: 132, color: {r: 68, g: 110, b: 104, a: 255}}
+      - {x: 540, y: 580, color: {r: 49, g: 151, b: 89, a: 255}}
+      - {x: 536, y: 588, color: {r: 252, g: 253, b: 218, a: 255}}
+    actions:
+      ToBattleGroupGroupCreated:
+        type: click
+        point: {x: 540, y: 580}
+      ToBattleMap:
+        type: click
+        point: {x: 974, y: 115}

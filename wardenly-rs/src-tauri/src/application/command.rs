@@ -20,10 +20,17 @@ pub enum SessionCommand {
 
     /// Stop screencast streaming
     StopScreencast,
+
+    /// Start executing a script
+    StartScript { script_name: String },
+
+    /// Stop the currently running script
+    StopScript,
 }
 
 /// Commands that can be sent to the Coordinator
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum CoordinatorCommand {
     /// Create a new session for an account
     CreateSession { account_id: String },
@@ -45,5 +52,17 @@ pub enum CoordinatorCommand {
 
     /// Drag on all active sessions  
     DragAll { from: (f64, f64), to: (f64, f64) },
+
+    /// Start script on a specific session
+    StartScript { session_id: String, script_name: String },
+
+    /// Stop script on a specific session
+    StopScript { session_id: String },
+
+    /// Start script on all sessions
+    StartAllScripts { script_name: String },
+
+    /// Stop scripts on all sessions
+    StopAllScripts,
 }
 

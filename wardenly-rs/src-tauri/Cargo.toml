@@ -34,3 +34,7 @@ base64 = "0.22"
 futures = "0.3"
 image = "0.25"
 
+# Phase 3: Script execution
+humantime = "2"
+rand = "0.8"
+
