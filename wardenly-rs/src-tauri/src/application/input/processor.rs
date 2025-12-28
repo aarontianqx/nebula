@@ -165,11 +165,6 @@ impl InputEventProcessor {
     pub async fn is_enabled(&self) -> bool {
         *self.enabled.read().await
     }
-
-    /// Get click sender for external use
-    pub fn click_sender(&self) -> mpsc::UnboundedSender<ClickEvent> {
-        self.click_tx.clone()
-    }
 }
 
 impl Default for InputEventProcessor {

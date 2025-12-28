@@ -5,30 +5,67 @@ mod infrastructure;
 
 use std::sync::Arc;
 
+use adapter::tauri::state::{AppState, DynAccountRepository, DynGroupRepository};
 use adapter::tauri::{commands, events};
-use adapter::tauri::state::AppState;
 use application::eventbus::create_event_bus;
-use infrastructure::config;
+use domain::repository::AccountRepository;
+use infrastructure::config::{self, StorageType};
 use infrastructure::logging;
 use infrastructure::persistence;
-use rusqlite::Connection;
+
+/// Storage backend holder for runtime switching
+struct StorageBackend {
+    account_repo: DynAccountRepository,
+    group_repo: DynGroupRepository,
+    coordinator_account_repo: Arc<dyn AccountRepository>,
+}
 
 /// Initialize storage based on configuration
-fn init_storage() -> Arc<std::sync::Mutex<Connection>> {
-    #[cfg(feature = "mongodb")]
-    {
-        use config::StorageType;
-        let app_config = config::app();
-        if app_config.storage.storage_type == StorageType::Mongodb {
-            // MongoDB initialization would go here
-            // For now, fall back to SQLite as MongoDB support is optional
-            tracing::warn!("MongoDB storage selected but not fully implemented, falling back to SQLite");
+fn init_storage() -> StorageBackend {
+    let app_config = config::app();
+
+    match app_config.storage.storage_type {
+        StorageType::Sqlite => {
+            tracing::info!("Using SQLite storage backend");
+            let db = persistence::sqlite::init_database()
+                .expect("Failed to initialize SQLite database");
+
+            use persistence::sqlite::{SqliteAccountRepository, SqliteGroupRepository};
+
+            let account_repo = Box::new(SqliteAccountRepository::new(db.clone()));
+            let group_repo = Box::new(SqliteGroupRepository::new(db.clone()));
+            let coordinator_account_repo: Arc<dyn AccountRepository> = Arc::new(SqliteAccountRepository::new(db));
+
+            StorageBackend {
+                account_repo,
+                group_repo,
+                coordinator_account_repo,
+            }
+        }
+        StorageType::Mongodb => {
+            tracing::info!("Using MongoDB storage backend");
+
+            // MongoDB requires async initialization
+            let mongo_config = &app_config.storage.mongodb;
+            let conn = tauri::async_runtime::block_on(async {
+                persistence::mongodb::init_mongodb(&mongo_config.uri, &mongo_config.database)
+                    .await
+                    .expect("Failed to initialize MongoDB connection")
+            });
+
+            use persistence::mongodb::{MongoAccountRepository, MongoGroupRepository};
+
+            let account_repo = Box::new(MongoAccountRepository::new(conn.clone()));
+            let group_repo = Box::new(MongoGroupRepository::new(conn.clone()));
+            let coordinator_account_repo: Arc<dyn AccountRepository> = Arc::new(MongoAccountRepository::new(conn));
+
+            StorageBackend {
+                account_repo,
+                group_repo,
+                coordinator_account_repo,
+            }
         }
     }
-
-    // Default: SQLite
-    persistence::sqlite::init_database()
-        .expect("Failed to initialize SQLite database")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -39,20 +76,25 @@ pub fn run() {
     // Initialize configuration
     config::init();
 
-    // Initialize database based on config
-    let db = init_storage();
+    // Initialize storage based on config
+    let storage = init_storage();
 
     // Create event bus
     let event_bus = create_event_bus();
 
     // Create application state
-    let state = AppState::new(db, event_bus.clone());
+    let state = AppState::new(
+        storage.account_repo,
+        storage.group_repo,
+        storage.coordinator_account_repo,
+        event_bus.clone(),
+    );
 
     // Get references before moving state
     let input_processor = state.input_processor.clone();
     let click_rx = state.click_rx.clone();
     let coordinator = state.coordinator.clone();
-    
+
     // Start coordinator event listener for auto-cleanup of stopped sessions
     coordinator.start_event_listener();
 

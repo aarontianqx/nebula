@@ -57,7 +57,7 @@ impl SessionActor {
         account: Account,
         event_bus: SharedEventBus,
     ) -> SessionHandle {
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = ulid::Ulid::new().to_string();
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (frame_tx, frame_rx) = mpsc::unbounded_channel();
 

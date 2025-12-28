@@ -1,17 +1,57 @@
 //! MongoDB Group Repository implementation
+//!
+//! Uses `_id` as primary key (mapped from Group.id) for MongoDB compatibility.
+//! Sorting is consistent with SQLite: ranking DESC, name ASC.
 
 use crate::domain::error::DomainError;
 use crate::domain::model::Group;
 use crate::domain::repository::{GroupRepository, Result};
 use mongodb::bson::doc;
 use mongodb::Collection;
+use mongodb::options::FindOptions;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use super::MongoConnection;
 
+/// MongoDB document wrapper for Group with _id field
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GroupDocument {
+    #[serde(rename = "_id")]
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    account_ids: Vec<String>,
+    ranking: i32,
+}
+
+impl From<Group> for GroupDocument {
+    fn from(group: Group) -> Self {
+        Self {
+            id: group.id,
+            name: group.name,
+            description: group.description,
+            account_ids: group.account_ids,
+            ranking: group.ranking,
+        }
+    }
+}
+
+impl From<GroupDocument> for Group {
+    fn from(doc: GroupDocument) -> Self {
+        Self {
+            id: doc.id,
+            name: doc.name,
+            description: doc.description,
+            account_ids: doc.account_ids,
+            ranking: doc.ranking,
+        }
+    }
+}
+
 pub struct MongoGroupRepository {
-    collection: Collection<Group>,
+    collection: Collection<GroupDocument>,
 }
 
 impl MongoGroupRepository {
@@ -33,8 +73,9 @@ impl GroupRepository for MongoGroupRepository {
 
         Self::runtime().block_on(async move {
             collection
-                .find_one(doc! { "id": id })
+                .find_one(doc! { "_id": id })
                 .await
+                .map(|opt| opt.map(Group::from))
                 .map_err(|e| DomainError::Database(e.to_string()))
         })
     }
@@ -45,21 +86,28 @@ impl GroupRepository for MongoGroupRepository {
         Self::runtime().block_on(async move {
             use futures::TryStreamExt;
 
+            let options = FindOptions::builder()
+                .sort(doc! { "ranking": 1, "name": 1 })
+                .build();
+
             let cursor = collection
                 .find(doc! {})
+                .with_options(options)
                 .await
                 .map_err(|e| DomainError::Database(e.to_string()))?;
 
-            cursor
+            let docs: Vec<GroupDocument> = cursor
                 .try_collect()
                 .await
-                .map_err(|e| DomainError::Database(e.to_string()))
+                .map_err(|e| DomainError::Database(e.to_string()))?;
+
+            Ok(docs.into_iter().map(Group::from).collect())
         })
     }
 
     fn save(&self, group: &Group) -> Result<()> {
         let collection = self.collection.clone();
-        let group = group.clone();
+        let doc = GroupDocument::from(group.clone());
 
         Self::runtime().block_on(async move {
             let options = mongodb::options::ReplaceOptions::builder()
@@ -67,7 +115,7 @@ impl GroupRepository for MongoGroupRepository {
                 .build();
 
             collection
-                .replace_one(doc! { "id": &group.id }, &group)
+                .replace_one(doc! { "_id": &doc.id }, &doc)
                 .with_options(options)
                 .await
                 .map_err(|e| DomainError::Database(e.to_string()))?;
@@ -82,7 +130,7 @@ impl GroupRepository for MongoGroupRepository {
 
         Self::runtime().block_on(async move {
             collection
-                .delete_one(doc! { "id": id })
+                .delete_one(doc! { "_id": id })
                 .await
                 .map_err(|e| DomainError::Database(e.to_string()))?;
 

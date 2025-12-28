@@ -47,7 +47,7 @@ impl GroupRepository for SqliteGroupRepository {
 
         let mut stmt = conn.prepare(
             "SELECT id, name, description, account_ids, ranking 
-             FROM groups ORDER BY ranking DESC, name ASC"
+             FROM groups ORDER BY ranking ASC, name ASC"
         )?;
 
         let rows = stmt.query_map([], |row| {

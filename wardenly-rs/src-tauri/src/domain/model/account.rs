@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use ulid::Ulid;
 
 /// Browser cookie
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,21 +30,17 @@ impl Account {
         user_name: String,
         password: String,
         server_id: i32,
+        ranking: i32,
     ) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: Ulid::new().to_string(),
             role_name,
             user_name,
             password,
             server_id,
-            ranking: 0,
+            ranking,
             cookies: None,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn display_name(&self) -> String {
-        format!("{} - {}", self.server_id, self.role_name)
     }
 
     /// Returns identity string in format "ServerID - RoleName"

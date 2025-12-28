@@ -521,100 +521,27 @@ impl SessionActor {
 
 ---
 
-## 3. MongoDB 支持 (可选)
+## 3. MongoDB 支持
+
+通过配置文件选择存储后端，无需编译时 feature flag。
 
 ### 3.1 配置
 
 ```yaml
 # resources/configs/app.yaml
 storage:
-  type: mongodb
+  type: mongodb  # 或 sqlite (默认)
   mongodb:
     uri: "mongodb://localhost:27017"
     database: "wardenly"
 ```
 
-### 3.2 Repository 实现
+### 3.2 主键处理
 
-**`infrastructure/persistence/mongodb/account_repo.rs`**:
-```rust
-use mongodb::{Client, Collection};
-use mongodb::bson::{doc, Document};
-use async_trait::async_trait;
-
-use crate::domain::model::account::Account;
-use crate::domain::repository::AccountRepository;
-
-pub struct MongoAccountRepository {
-    collection: Collection<Account>,
-}
-
-impl MongoAccountRepository {
-    pub async fn new(uri: &str, database: &str) -> anyhow::Result<Self> {
-        let client = Client::with_uri_str(uri).await?;
-        let db = client.database(database);
-        let collection = db.collection("accounts");
-        
-        Ok(Self { collection })
-    }
-}
-
-#[async_trait]
-impl AccountRepository for MongoAccountRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<Account>> {
-        let filter = doc! { "id": id };
-        let account = self.collection.find_one(filter, None).await?;
-        Ok(account)
-    }
-    
-    async fn find_all(&self) -> Result<Vec<Account>> {
-        let cursor = self.collection.find(None, None).await?;
-        let accounts: Vec<Account> = cursor.try_collect().await?;
-        Ok(accounts)
-    }
-    
-    async fn save(&self, account: &Account) -> Result<()> {
-        let filter = doc! { "id": &account.id };
-        let options = mongodb::options::ReplaceOptions::builder()
-            .upsert(true)
-            .build();
-        self.collection.replace_one(filter, account, options).await?;
-        Ok(())
-    }
-    
-    async fn delete(&self, id: &str) -> Result<()> {
-        let filter = doc! { "id": id };
-        self.collection.delete_one(filter, None).await?;
-        Ok(())
-    }
-}
-```
-
-### 3.3 存储工厂
-
-```rust
-// infrastructure/persistence/mod.rs
-use crate::infrastructure::config;
-
-pub async fn create_account_repository() -> anyhow::Result<Box<dyn AccountRepository>> {
-    let cfg = config::app();
-    
-    match cfg.storage.storage_type {
-        StorageType::Sqlite => {
-            let path = cfg.storage.sqlite.effective_path();
-            let repo = sqlite::SqliteAccountRepository::new(&path).await?;
-            Ok(Box::new(repo))
-        }
-        StorageType::Mongodb => {
-            let repo = mongodb::MongoAccountRepository::new(
-                &cfg.storage.mongodb.uri,
-                &cfg.storage.mongodb.database,
-            ).await?;
-            Ok(Box::new(repo))
-        }
-    }
-}
-```
+MongoDB 使用 `_id` 作为主键，SQLite 使用 `id`。通过 ULID 确保 ID 时间有序，便于数据迁移：
+- ULID 字符串作为主键，兼容两种存储
+- MongoDB 将 `id` 字段映射到 `_id`
+- 排序按 `(ranking ASC, id ASC)` 保持一致
 
 ---
 

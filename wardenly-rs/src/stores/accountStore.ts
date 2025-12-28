@@ -27,7 +27,7 @@ interface AccountStore {
 
   // Account actions
   fetchAccounts: () => Promise<void>;
-  createAccount: (data: Omit<Account, "id" | "ranking" | "cookies">) => Promise<void>;
+  createAccount: (data: Omit<Account, "id" | "cookies">) => Promise<void>;
   updateAccount: (account: Account) => Promise<void>;
   deleteAccount: (id: string) => Promise<void>;
 

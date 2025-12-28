@@ -47,7 +47,7 @@ storage:
     # Leave empty for platform default path
     path: ""
 
-  # MongoDB (requires --features mongodb when building)
+  # MongoDB configuration (used when type: mongodb)
   # mongodb:
   #   uri: "mongodb://localhost:27017"
   #   database: "wardenly"
@@ -68,15 +68,6 @@ keyboard_passthrough:
   long_press_threshold_ms: 300
   repeat_interval_ms: 100
   debounce_window_ms: 50
-```
-
-## Building with MongoDB Support
-
-MongoDB support is optional and requires the `mongodb` feature:
-
-```bash
-cd src-tauri
-cargo build --release --features mongodb
 ```
 
 ## macOS Permissions
