@@ -12,13 +12,13 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, ranking: i32) -> Self {
         Self {
             id: Ulid::new().to_string(),
             name,
             description: None,
             account_ids: Vec::new(),
-            ranking: 0,
+            ranking,
         }
     }
 }

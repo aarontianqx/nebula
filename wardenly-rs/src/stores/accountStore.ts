@@ -33,7 +33,7 @@ interface AccountStore {
 
   // Group actions
   fetchGroups: () => Promise<void>;
-  createGroup: (data: { name: string; description?: string }) => Promise<void>;
+  createGroup: (data: { name: string; description?: string; ranking?: number }) => Promise<void>;
   updateGroup: (group: Group) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
 }

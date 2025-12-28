@@ -15,6 +15,7 @@ function GroupForm({ group, onClose }: Props) {
     name: group?.name ?? "",
     description: group?.description ?? "",
     account_ids: group?.account_ids ?? [],
+    ranking: group?.ranking ?? 0,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -26,11 +27,13 @@ function GroupForm({ group, onClose }: Props) {
         name: formData.name,
         description: formData.description || null,
         account_ids: formData.account_ids,
+        ranking: formData.ranking,
       });
     } else {
       await createGroup({
         name: formData.name,
         description: formData.description || undefined,
+        ranking: formData.ranking,
       });
     }
 
@@ -90,6 +93,22 @@ function GroupForm({ group, onClose }: Props) {
                 setFormData({ ...formData, description: e.target.value })
               }
               className="w-full px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--color-text-secondary)] mb-1">
+              Ranking
+            </label>
+            <input
+              type="number"
+              value={formData.ranking}
+              onChange={(e) =>
+                setFormData({ ...formData, ranking: parseInt(e.target.value) || 0 })
+              }
+              className="w-full px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
+              min={0}
+              title="Lower ranking values appear first in the list."
             />
           </div>
 

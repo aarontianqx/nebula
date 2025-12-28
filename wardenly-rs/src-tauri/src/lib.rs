@@ -138,6 +138,7 @@ pub fn run() {
             commands::create_group,
             commands::update_group,
             commands::delete_group,
+            commands::run_group,
             // Session commands
             commands::get_sessions,
             commands::start_session,
@@ -149,6 +150,7 @@ pub fn run() {
             commands::refresh_session,
             commands::start_screencast,
             commands::stop_screencast,
+            commands::capture_screenshot,
             // Script commands
             commands::get_scripts,
             commands::start_script,
