@@ -402,30 +402,50 @@ pub async fn set_active_session_for_input(
     Ok(())
 }
 
-// ====== Theme Commands ======
+// ====== Settings & Theme Commands ======
 
-use crate::infrastructure::config::{ThemeConfig, ThemeResponse};
+use crate::infrastructure::config::{
+    themes, user_settings, ThemeResponse, UserSettings, SettingsResponse,
+    loader::{save_user_settings, settings_file_path},
+};
+
+#[tauri::command]
+pub fn get_settings() -> Result<SettingsResponse, String> {
+    let settings = user_settings();
+    let theme_config = themes();
+    
+    Ok(SettingsResponse {
+        settings,
+        available_themes: theme_config.available_themes(),
+        default_theme: theme_config.default_theme.clone(),
+    })
+}
+
+#[tauri::command]
+pub fn save_settings(settings: UserSettings) -> Result<(), String> {
+    save_user_settings(&settings).map_err(|e| e.to_string())?;
+    tracing::info!("Settings saved to {:?}", settings_file_path());
+    Ok(())
+}
 
 #[tauri::command]
 pub fn get_theme_config() -> Result<ThemeResponse, String> {
-    use crate::infrastructure::config::loader::load_config;
+    let settings = user_settings();
+    let theme_config = themes();
     
-    let config: ThemeConfig = load_config("themes");
-    let active_theme_name = config.active_theme.clone();
+    // Determine which theme to use: user preference > default
+    let active_theme_name = settings
+        .theme
+        .filter(|t| theme_config.themes.contains_key(t))
+        .unwrap_or_else(|| theme_config.default_theme.clone());
     
-    // Get the active theme, or fall back to default
-    let theme = config
-        .themes
-        .get(&active_theme_name)
-        .cloned()
-        .unwrap_or_default();
-    
-    let available_themes: Vec<String> = config.themes.keys().cloned().collect();
+    // Get the theme
+    let theme = theme_config.get_theme(&active_theme_name);
     
     Ok(ThemeResponse {
         active_theme: active_theme_name,
         css_vars: theme.to_css_vars(),
-        available_themes,
+        available_themes: theme_config.available_themes(),
     })
 }
 

@@ -44,3 +44,6 @@ humantime = "2"
 # Phase 4: Extensibility
 rdev = "0.5"
 mongodb = "3"
+
+# Embed directories at compile time
+include_dir = "0.7"

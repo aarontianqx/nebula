@@ -20,11 +20,11 @@ struct StorageBackend {
     coordinator_account_repo: Arc<dyn AccountRepository>,
 }
 
-/// Initialize storage based on configuration
+/// Initialize storage based on user settings
 fn init_storage() -> StorageBackend {
-    let app_config = config::app();
+    let settings = config::user_settings();
 
-    match app_config.storage.storage_type {
+    match settings.storage.storage_type {
         StorageType::Sqlite => {
             tracing::info!("Using SQLite storage backend");
             let db = persistence::sqlite::init_database()
@@ -46,7 +46,7 @@ fn init_storage() -> StorageBackend {
             tracing::info!("Using MongoDB storage backend");
 
             // MongoDB requires async initialization
-            let mongo_config = &app_config.storage.mongodb;
+            let mongo_config = &settings.storage.mongodb;
             let conn = tauri::async_runtime::block_on(async {
                 persistence::mongodb::init_mongodb(&mongo_config.uri, &mongo_config.database)
                     .await
@@ -73,10 +73,10 @@ pub fn run() {
     // Initialize logging
     logging::setup(false);
 
-    // Initialize configuration
+    // Initialize embedded configuration (themes, gestures)
     config::init();
 
-    // Initialize storage based on config
+    // Initialize storage based on user settings
     let storage = init_storage();
 
     // Create event bus
@@ -162,7 +162,9 @@ pub fn run() {
             commands::get_keyboard_passthrough_status,
             commands::update_cursor_position,
             commands::set_active_session_for_input,
-            // Theme commands
+            // Settings & Theme commands
+            commands::get_settings,
+            commands::save_settings,
             commands::get_theme_config,
         ])
         .run(tauri::generate_context!())

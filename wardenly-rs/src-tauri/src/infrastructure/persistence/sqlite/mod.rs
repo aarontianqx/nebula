@@ -4,7 +4,7 @@ mod group_repo;
 pub use account_repo::SqliteAccountRepository;
 pub use group_repo::SqliteGroupRepository;
 
-use crate::infrastructure::config;
+use crate::infrastructure::config::paths::default_sqlite_path;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +12,7 @@ pub type DbConnection = Arc<Mutex<Connection>>;
 
 /// Initialize the SQLite database
 pub fn init_database() -> anyhow::Result<DbConnection> {
-    let db_path = config::app().storage.sqlite.effective_path();
+    let db_path = default_sqlite_path();
 
     // Ensure directory exists
     if let Some(parent) = db_path.parent() {

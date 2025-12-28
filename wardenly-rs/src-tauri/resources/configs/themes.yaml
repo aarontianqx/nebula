@@ -1,9 +1,9 @@
 # Wardenly Theme Configuration
-# Users can customize colors by editing this file.
-# Changes take effect after restarting the application.
+# Official theme presets bundled with the application.
+# Users select a theme via Settings, not by editing this file.
 
-# Active theme name (must match a key in 'themes' below)
-activeTheme: "ocean-dark"
+# Default theme used when user has no preference set
+defaultTheme: "ocean-dark"
 
 themes:
   # Default dark theme - Slate-based ocean palette
