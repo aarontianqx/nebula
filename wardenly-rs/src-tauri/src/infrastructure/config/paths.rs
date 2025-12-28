@@ -28,8 +28,3 @@ pub fn default_sqlite_path() -> PathBuf {
     config_dir().join("data.db")
 }
 
-#[allow(dead_code)]
-pub fn log_dir() -> PathBuf {
-    config_dir().join("logs")
-}
-

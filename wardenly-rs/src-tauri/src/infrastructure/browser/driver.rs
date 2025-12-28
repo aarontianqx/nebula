@@ -5,7 +5,6 @@ use std::time::Duration;
 use crate::domain::model::Cookie;
 
 /// Browser driver trait for abstracting browser automation
-#[allow(dead_code)]
 #[async_trait]
 pub trait BrowserDriver: Send + Sync {
     /// Start the browser instance

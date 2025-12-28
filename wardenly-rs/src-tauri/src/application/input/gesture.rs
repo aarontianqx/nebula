@@ -24,12 +24,13 @@ pub enum Gesture {
 /// State of a single key
 #[derive(Debug)]
 enum KeyState {
-    /// Key is not pressed
-    Idle,
     /// Key is pressed, waiting to determine if it's a tap or long press
     Pressed {
         since: Instant,
+        /// Set to true when long press is triggered OR when key is released early (cancels timer)
         long_press_triggered: Arc<AtomicBool>,
+        /// Set to true when key is released to stop the repeat loop
+        cancelled: Arc<AtomicBool>,
     },
 }
 
@@ -72,6 +73,7 @@ impl GestureRecognizer {
         }
 
         let long_press_triggered = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
 
         // Update state
         self.key_states.insert(
@@ -79,6 +81,7 @@ impl GestureRecognizer {
             KeyState::Pressed {
                 since: now,
                 long_press_triggered: long_press_triggered.clone(),
+                cancelled: cancelled.clone(),
             },
         );
 
@@ -91,7 +94,7 @@ impl GestureRecognizer {
         tokio::spawn(async move {
             tokio::time::sleep(threshold).await;
 
-            // Check if still pressed (not cancelled)
+            // Check if still pressed (not cancelled by early release)
             if !triggered.load(Ordering::SeqCst) {
                 triggered.store(true, Ordering::SeqCst);
 
@@ -100,9 +103,13 @@ impl GestureRecognizer {
                     return;
                 }
 
-                // Periodically send repeat events
-                loop {
+                // Periodically send repeat events until cancelled
+                while !cancelled.load(Ordering::SeqCst) {
                     tokio::time::sleep(repeat_interval).await;
+                    // Check again after sleep to avoid sending extra event
+                    if cancelled.load(Ordering::SeqCst) {
+                        break;
+                    }
                     if tx.send(Gesture::LongPressRepeat { key }).is_err() {
                         break;
                     }
@@ -118,27 +125,28 @@ impl GestureRecognizer {
 
         let cfg = config::gesture();
 
-        match state {
-            KeyState::Pressed {
-                since,
-                long_press_triggered,
-            } => {
-                let was_long_press = long_press_triggered.load(Ordering::SeqCst);
+        let KeyState::Pressed {
+            since,
+            long_press_triggered,
+            cancelled,
+        } = state;
 
-                if was_long_press {
-                    // Long press ended
-                    let _ = self.gesture_tx.send(Gesture::LongPressEnd { key });
-                } else {
-                    // Check if it was a tap (released before threshold)
-                    let duration = now.duration_since(since);
-                    if duration < cfg.keyboard_passthrough.long_press_threshold() {
-                        let _ = self.gesture_tx.send(Gesture::Tap { key });
-                    }
-                    // Mark as triggered to cancel the timer task
-                    long_press_triggered.store(true, Ordering::SeqCst);
-                }
+        // Signal the repeat loop to stop
+        cancelled.store(true, Ordering::SeqCst);
+
+        let was_long_press = long_press_triggered.load(Ordering::SeqCst);
+
+        if was_long_press {
+            // Long press ended
+            let _ = self.gesture_tx.send(Gesture::LongPressEnd { key });
+        } else {
+            // Check if it was a tap (released before threshold)
+            let duration = now.duration_since(since);
+            if duration < cfg.keyboard_passthrough.long_press_threshold() {
+                let _ = self.gesture_tx.send(Gesture::Tap { key });
             }
-            KeyState::Idle => {}
+            // Mark as triggered to cancel the timer task before it starts long press
+            long_press_triggered.store(true, Ordering::SeqCst);
         }
     }
 }

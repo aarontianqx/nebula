@@ -16,6 +16,7 @@ function AccountForm({ account, onClose }: Props) {
     user_name: account?.user_name ?? "",
     password: account?.password ?? "",
     server_id: account?.server_id ?? 1,
+    ranking: account?.ranking ?? 0,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -109,6 +110,21 @@ function AccountForm({ account, onClose }: Props) {
               className="w-full px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
               min={1}
               required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--color-text-secondary)] mb-1">
+              Ranking
+            </label>
+            <input
+              type="number"
+              value={formData.ranking}
+              onChange={(e) =>
+                setFormData({ ...formData, ranking: parseInt(e.target.value) || 0 })
+              }
+              className="w-full px-3 py-2 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-md text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
+              title="Lower ranking accounts appear first in the dropdown"
             />
           </div>
 

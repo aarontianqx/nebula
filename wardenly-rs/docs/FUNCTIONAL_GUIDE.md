@@ -13,9 +13,12 @@ Wardenly 是一款用于 WLY 网页游戏自动化的桌面控制工具。通过
 - **UserName**: 登录用户名
 - **Password**: 登录密码
 - **ServerID**: 游戏服务器 ID
+- **Ranking**: 排序优先级（数值越小越靠前）
 - **Cookies**: 保存的登录 Cookie
 
 账户在界面中显示为 `ServerID - RoleName` 格式（如 `126 - 追风`）。
+
+账户下拉框按 `(Ranking ASC, ID ASC)` 排序，低 Ranking 的账户优先显示。
 
 ### 分组管理
 

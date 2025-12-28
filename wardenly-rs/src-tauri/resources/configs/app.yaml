@@ -2,7 +2,7 @@
 # This file contains runtime configuration settings
 
 storage:
-  # Storage backend: "sqlite" (default) or "mongodb" (requires mongodb feature)
+  # Storage backend: "sqlite" (default) or "mongodb"
   type: sqlite
 
   sqlite:
@@ -12,7 +12,7 @@ storage:
     # - Linux: ~/.config/wardenly/data.db
     path: ""
 
-  # MongoDB settings (only used when type: mongodb and mongodb feature enabled)
+  # MongoDB settings (used when type: mongodb)
   # mongodb:
   #   uri: "mongodb://localhost:27017"
   #   database: "wardenly"
