@@ -68,7 +68,7 @@ impl AccountRepository for SqliteAccountRepository {
 
         let mut stmt = conn.prepare(
             "SELECT id, role_name, user_name, password, server_id, ranking, cookies 
-             FROM accounts ORDER BY ranking DESC, server_id ASC"
+             FROM accounts ORDER BY ranking ASC, id ASC"
         )?;
 
         let rows = stmt.query_map([], |row| {

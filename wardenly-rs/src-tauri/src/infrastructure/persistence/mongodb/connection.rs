@@ -2,7 +2,6 @@
 
 use mongodb::{Client, Database};
 use std::sync::Arc;
-use tokio::sync::OnceCell;
 
 /// MongoDB connection wrapper
 pub struct MongoConnection {
@@ -23,27 +22,14 @@ impl MongoConnection {
         Ok(Self { client, database })
     }
 
-    pub fn collection<T>(&self, name: &str) -> mongodb::Collection<T> {
+    pub fn collection<T: Send + Sync>(&self, name: &str) -> mongodb::Collection<T> {
         self.database.collection(name)
     }
 }
 
-static MONGO_CONN: OnceCell<Arc<MongoConnection>> = OnceCell::const_new();
-
-/// Initialize MongoDB connection (called at app startup if configured)
+/// Initialize MongoDB connection
 pub async fn init_mongodb(uri: &str, db_name: &str) -> anyhow::Result<Arc<MongoConnection>> {
     let conn = Arc::new(MongoConnection::new(uri, db_name).await?);
-
-    MONGO_CONN
-        .set(conn.clone())
-        .map_err(|_| anyhow::anyhow!("MongoDB already initialized"))?;
-
     Ok(conn)
-}
-
-/// Get the MongoDB connection (panics if not initialized)
-#[allow(dead_code)]
-pub fn get_mongo_connection() -> &'static Arc<MongoConnection> {
-    MONGO_CONN.get().expect("MongoDB not initialized")
 }
 

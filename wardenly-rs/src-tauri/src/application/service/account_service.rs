@@ -14,11 +14,6 @@ impl<R: AccountRepository> AccountService<R> {
         self.repo.find_all()
     }
 
-    #[allow(dead_code)]
-    pub fn get_by_id(&self, id: &str) -> Result<Option<Account>> {
-        self.repo.find_by_id(id)
-    }
-
     pub fn create(&self, account: Account) -> Result<Account> {
         self.repo.save(&account)?;
         Ok(account)

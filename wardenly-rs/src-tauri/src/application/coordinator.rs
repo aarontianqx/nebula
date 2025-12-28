@@ -8,14 +8,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Coordinator manages multiple SessionActors
-pub struct Coordinator<R: AccountRepository> {
+pub struct Coordinator {
     sessions: Arc<RwLock<HashMap<String, SessionHandle>>>,
     event_bus: SharedEventBus,
-    account_repo: Arc<R>,
+    account_repo: Arc<dyn AccountRepository>,
 }
 
-impl<R: AccountRepository + 'static> Coordinator<R> {
-    pub fn new(event_bus: SharedEventBus, account_repo: Arc<R>) -> Self {
+impl Coordinator {
+    pub fn new(event_bus: SharedEventBus, account_repo: Arc<dyn AccountRepository>) -> Self {
         let coordinator = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             event_bus,
@@ -25,7 +25,7 @@ impl<R: AccountRepository + 'static> Coordinator<R> {
         coordinator
     }
     
-    /// Start the event listener for auto-cleanup of stopped sessions
+    /// Start the event listener for state sync and auto-cleanup of stopped sessions
     /// This should be called after the Coordinator is created and wrapped in Arc
     pub fn start_event_listener(self: &Arc<Self>) {
         let sessions = self.sessions.clone();
@@ -35,15 +35,29 @@ impl<R: AccountRepository + 'static> Coordinator<R> {
             loop {
                 match receiver.recv().await {
                     Ok(event) => {
-                        if let DomainEvent::SessionStopped { session_id } = event {
-                            // Auto-remove stopped session from coordinator
-                            let mut sessions_guard = sessions.write().await;
-                            if sessions_guard.remove(&session_id).is_some() {
-                                tracing::info!(
-                                    "Auto-removed stopped session {} from coordinator",
-                                    session_id
-                                );
+                        match event {
+                            DomainEvent::SessionStateChanged { session_id, new_state, .. } => {
+                                // Sync session state to SessionHandle
+                                let mut sessions_guard = sessions.write().await;
+                                if let Some(handle) = sessions_guard.get_mut(&session_id) {
+                                    handle.info.state = new_state;
+                                    tracing::trace!(
+                                        "Synced session {} state to {:?}",
+                                        session_id, new_state
+                                    );
+                                }
                             }
+                            DomainEvent::SessionStopped { session_id } => {
+                                // Auto-remove stopped session from coordinator
+                                let mut sessions_guard = sessions.write().await;
+                                if sessions_guard.remove(&session_id).is_some() {
+                                    tracing::info!(
+                                        "Auto-removed stopped session {} from coordinator",
+                                        session_id
+                                    );
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -182,23 +196,10 @@ impl<R: AccountRepository + 'static> Coordinator<R> {
         }
     }
 
-    /// Drag on all active sessions
-    pub async fn drag_all(&self, from: (f64, f64), to: (f64, f64)) {
-        let sessions = self.sessions.read().await;
-        for handle in sessions.values() {
-            let _ = handle.cmd_tx.send(SessionCommand::Drag { from, to }).await;
-        }
-    }
-
-    /// Get all session infos
+    /// Get all session infos (states are kept in sync via event listener)
     pub async fn get_sessions(&self) -> Vec<crate::domain::model::SessionInfo> {
         let sessions = self.sessions.read().await;
         sessions.values().map(|h| h.info.clone()).collect()
-    }
-
-    /// Get session count
-    pub async fn session_count(&self) -> usize {
-        self.sessions.read().await.len()
     }
 
     /// Start script on a specific session
@@ -315,4 +316,3 @@ impl<R: AccountRepository + 'static> Coordinator<R> {
         Ok(())
     }
 }
-

@@ -2,30 +2,33 @@ use crate::application::coordinator::Coordinator;
 use crate::application::eventbus::SharedEventBus;
 use crate::application::input::{ClickEvent, InputEventProcessor};
 use crate::application::service::{AccountService, GroupService};
-use crate::infrastructure::persistence::sqlite::{
-    DbConnection, SqliteAccountRepository, SqliteGroupRepository,
-};
+use crate::domain::repository::{AccountRepository, GroupRepository};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
+/// Type aliases for dynamic repository types
+pub type DynAccountRepository = Box<dyn AccountRepository>;
+pub type DynGroupRepository = Box<dyn GroupRepository>;
+
 pub struct AppState {
-    pub account_service: AccountService<SqliteAccountRepository>,
-    pub group_service: GroupService<SqliteGroupRepository>,
-    pub coordinator: Arc<Coordinator<SqliteAccountRepository>>,
+    pub account_service: AccountService<DynAccountRepository>,
+    pub group_service: GroupService<DynGroupRepository>,
+    pub coordinator: Arc<Coordinator>,
     pub event_bus: SharedEventBus,
     pub input_processor: Arc<InputEventProcessor>,
     pub click_rx: Arc<Mutex<mpsc::UnboundedReceiver<ClickEvent>>>,
 }
 
 impl AppState {
-    pub fn new(conn: DbConnection, event_bus: SharedEventBus) -> Self {
-        let account_repo = SqliteAccountRepository::new(conn.clone());
-        let group_repo = SqliteGroupRepository::new(conn);
-
-        let account_repo_for_coordinator = SqliteAccountRepository::new(account_repo.conn.clone());
+    pub fn new(
+        account_repo: DynAccountRepository,
+        group_repo: DynGroupRepository,
+        coordinator_account_repo: Arc<dyn AccountRepository>,
+        event_bus: SharedEventBus,
+    ) -> Self {
         let coordinator = Arc::new(Coordinator::new(
             event_bus.clone(),
-            Arc::new(account_repo_for_coordinator),
+            coordinator_account_repo,
         ));
 
         let (input_processor, click_rx) = InputEventProcessor::new();

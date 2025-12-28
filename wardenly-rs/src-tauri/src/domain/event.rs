@@ -49,21 +49,6 @@ pub enum DomainEvent {
 }
 
 impl DomainEvent {
-    /// Get the session ID associated with this event
-    #[allow(dead_code)]
-    pub fn session_id(&self) -> &str {
-        match self {
-            Self::SessionCreated { session_id, .. } => session_id,
-            Self::SessionStateChanged { session_id, .. } => session_id,
-            Self::ScreencastFrame { session_id, .. } => session_id,
-            Self::SessionStopped { session_id } => session_id,
-            Self::LoginSucceeded { session_id } => session_id,
-            Self::LoginFailed { session_id, .. } => session_id,
-            Self::ScriptStarted { session_id, .. } => session_id,
-            Self::ScriptStopped { session_id, .. } => session_id,
-        }
-    }
-
     /// Get the event type name for frontend routing
     pub fn event_name(&self) -> &'static str {
         match self {

@@ -14,11 +14,6 @@ impl<R: GroupRepository> GroupService<R> {
         self.repo.find_all()
     }
 
-    #[allow(dead_code)]
-    pub fn get_by_id(&self, id: &str) -> Result<Option<Group>> {
-        self.repo.find_by_id(id)
-    }
-
     pub fn create(&self, group: Group) -> Result<Group> {
         self.repo.save(&group)?;
         Ok(group)

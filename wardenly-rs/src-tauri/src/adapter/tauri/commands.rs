@@ -21,6 +21,8 @@ pub struct CreateAccountRequest {
     user_name: String,
     password: String,
     server_id: i32,
+    #[serde(default)]
+    ranking: i32,
 }
 
 #[tauri::command]
@@ -33,6 +35,7 @@ pub fn create_account(
         request.user_name,
         request.password,
         request.server_id,
+        request.ranking,
     );
 
     state

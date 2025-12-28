@@ -14,7 +14,6 @@ pub struct AppConfig {
 pub enum StorageType {
     #[default]
     Sqlite,
-    #[cfg(feature = "mongodb")]
     Mongodb,
 }
 
@@ -25,7 +24,6 @@ pub struct StorageConfig {
     #[serde(rename = "type")]
     pub storage_type: StorageType,
     pub sqlite: SqliteConfig,
-    #[cfg(feature = "mongodb")]
     pub mongodb: MongoDbConfig,
 }
 
@@ -35,14 +33,12 @@ pub struct SqliteConfig {
     pub path: String,
 }
 
-#[cfg(feature = "mongodb")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MongoDbConfig {
     pub uri: String,
     pub database: String,
 }
 
-#[cfg(feature = "mongodb")]
 impl Default for MongoDbConfig {
     fn default() -> Self {
         Self {
@@ -67,7 +63,6 @@ impl Default for StorageConfig {
         Self {
             storage_type: StorageType::default(),
             sqlite: SqliteConfig::default(),
-            #[cfg(feature = "mongodb")]
             mongodb: MongoDbConfig::default(),
         }
     }

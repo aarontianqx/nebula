@@ -29,7 +29,7 @@ thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
 dirs = "5"
-uuid = { version = "1", features = ["v4", "serde"] }
+ulid = { version = "1", features = ["serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Phase 2: Browser automation
@@ -44,8 +44,4 @@ rand = "0.8"
 
 # Phase 4: Extensibility
 rdev = "0.5"
-mongodb = { version = "3", optional = true }
-
-[features]
-default = []
-mongodb = ["dep:mongodb"]
+mongodb = "3"

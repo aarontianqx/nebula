@@ -25,12 +25,6 @@ impl EventBus {
     pub fn subscribe(&self) -> broadcast::Receiver<DomainEvent> {
         self.sender.subscribe()
     }
-
-    /// Get number of active subscribers
-    #[allow(dead_code)]
-    pub fn subscriber_count(&self) -> usize {
-        self.sender.receiver_count()
-    }
 }
 
 impl Default for EventBus {

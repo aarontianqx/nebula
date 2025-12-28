@@ -241,7 +241,28 @@ wardenly-rs/
 | **Actor 模式** | Session 状态复杂，串行处理避免竞争 |
 | **broadcast channel** | 解耦事件发布/订阅，支持多订阅者 |
 | **Tauri v2** | Web UI 灵活，体积小 |
-| **双存储支持** | SQLite 本地优先，MongoDB 多设备同步 |
+| **运行时存储切换** | 通过配置文件选择 SQLite 或 MongoDB，无需编译时指定 |
 | **chromiumoxide** | CDP 功能丰富，纯 Rust |
 | **rdev** | 跨平台键盘监听，API 统一 |
 | **仅 A-Z 透传** | 避免与系统快捷键冲突 |
+| **事件驱动状态同步** | Coordinator 监听 SessionStateChanged 事件保持 SessionInfo 状态同步 |
+| **ULID 作为 ID** | 时间有序的唯一标识符，便于排序和索引 |
+
+## 存储后端
+
+存储后端通过 `resources/configs/app.yaml` 配置文件在运行时选择：
+
+```yaml
+storage:
+  type: sqlite  # 或 "mongodb"
+  sqlite:
+    path: ""    # 留空使用默认路径
+  mongodb:
+    uri: "mongodb://localhost:27017"
+    database: "wardenly"
+```
+
+- **SQLite**: 默认选项，本地存储，无需额外依赖
+- **MongoDB**: 远程存储，支持多设备数据同步
+
+Repository 使用 trait objects (`dyn AccountRepository`) 实现运行时多态。
