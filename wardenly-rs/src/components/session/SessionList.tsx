@@ -3,11 +3,11 @@ import { Square, Monitor } from "lucide-react";
 
 const stateColors: Record<SessionState, string> = {
   Idle: "bg-gray-500",
-  Starting: "bg-yellow-500",
+  Starting: "bg-[var(--color-warning)]",
   LoggingIn: "bg-orange-500",
-  Ready: "bg-green-500",
-  ScriptRunning: "bg-blue-500",
-  Stopped: "bg-red-500",
+  Ready: "bg-[var(--color-success)]",
+  ScriptRunning: "bg-[var(--color-accent)]",
+  Stopped: "bg-[var(--color-error)]",
 };
 
 const stateLabels: Record<SessionState, string> = {
@@ -39,44 +39,54 @@ export default function SessionList() {
 
   return (
     <div className="p-2 space-y-1">
-      {sessions.map((session) => (
-        <div
-          key={session.id}
-          onClick={() => selectSession(session.id)}
-          className={`p-3 rounded-md cursor-pointer transition-colors ${
-            selectedSessionId === session.id
-              ? "bg-[var(--color-accent)] text-white"
-              : "bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)]"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">
-                {session.display_name}
+      {sessions.map((session) => {
+        const isSelected = selectedSessionId === session.id;
+        const isRunning = session.state === "ScriptRunning" || session.state === "Ready";
+        
+        return (
+          <div
+            key={session.id}
+            onClick={() => selectSession(session.id)}
+            className={`
+              relative p-3 rounded-r-md cursor-pointer transition-all
+              ${isSelected
+                ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)] border-l-4 border-[var(--color-accent)]"
+                : "bg-[var(--color-bg-surface)] hover:bg-[var(--color-bg-hover)] border-l-4 border-transparent"
+              }
+            `}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm font-medium truncate ${isSelected ? "" : "text-[var(--color-text-primary)]"}`}>
+                  {session.display_name}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span
+                    className={`w-2 h-2 rounded-full ${stateColors[session.state]} ${isRunning ? "animate-pulse" : ""}`}
+                  />
+                  <span className={`text-xs ${isSelected ? "text-[var(--color-accent)]/75" : "text-[var(--color-text-secondary)]"}`}>
+                    {stateLabels[session.state]}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 mt-1">
-                <span
-                  className={`w-2 h-2 rounded-full ${stateColors[session.state]}`}
-                />
-                <span className="text-xs opacity-75">
-                  {stateLabels[session.state]}
-                </span>
-              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  stopSession(session.id);
+                }}
+                className={`p-1.5 rounded transition-colors ${
+                  isSelected 
+                    ? "hover:bg-[var(--color-accent)]/20 text-[var(--color-accent)]" 
+                    : "hover:bg-[var(--color-error)]/20 text-[var(--color-text-secondary)] hover:text-[var(--color-error)]"
+                }`}
+                title="Stop session"
+              >
+                <Square size={14} />
+              </button>
             </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                stopSession(session.id);
-              }}
-              className="p-1.5 rounded hover:bg-black/20 transition-colors"
-              title="Stop session"
-            >
-              <Square size={14} />
-            </button>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
-

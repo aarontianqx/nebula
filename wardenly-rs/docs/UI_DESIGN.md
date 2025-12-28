@@ -1,194 +1,163 @@
-# Wardenly - UI 设计
+# Wardenly - UI 设计规范
 
-## 设计原则
+## 1. 设计哲学
 
-1. **分组与层次**: 相关功能通过卡片归类，减少认知负担
-2. **留白与呼吸感**: 增加组件间距，避免拥挤
-3. **视觉引导**: 图标辅助文字，颜色区分操作危险等级
-4. **对齐**: 输入框、标签、按钮视觉对齐
-5. **响应式**: 组件适应不同窗口尺寸
+**"Professional Utility" (专业工具)**
 
-## 技术选型
+Wardenly 作为一个自动化与监控工具，UI 设计应遵循以下核心原则：
 
-- **React 18**: 组件化开发
-- **TypeScript**: 类型安全
-- **Tailwind CSS v4**: 实用优先样式
-- **Lucide React**: 图标库
-- **Zustand**: 状态管理
+1.  **内容优先**: 游戏画面（Canvas）是核心，UI 应作为框架存在，尽量降低视觉干扰（低饱和度背景）。
+2.  **状态显性**: 运行、停止、Screencast 等关键状态必须一目了然，但不要通过大面积高亮造成视觉疲劳。
+3.  **语义化色彩**: 颜色仅用于表达状态（绿=运行，红=停止/危险，蓝=选中/激活），避免装饰性用色。
+4.  **高密度与呼吸感平衡**: 作为桌面工具，需要保持较高的信息密度，但通过微调间距（Spacing）和边框（Borders）来维持界面的条理性。
 
-## 布局结构
+---
 
-### 主窗口
+## 2. 主题系统架构 (Theme Architecture)
 
-左右分栏布局：
+为了实现**用户自主换肤且无需重新编译**，我们采用 **"配置驱动的动态 CSS 变量注入"** 方案。
 
-```
-┌──────────────┬────────────────────────────────────────────┐
-│              │                  Toolbar                    │
-│   Session    ├────────────────────────────────────────────┤
-│    List      │                                            │
-│              │              Detail Panel                   │
-│              │                                            │
-└──────────────┴────────────────────────────────────────────┘
-```
+### 2.1 核心原理
+1.  **配置分离**: 主题色值不硬编码在代码中，而是存储在外部配置文件（如 `themes.json`）中。
+2.  **运行时注入**: 应用启动时，前端通过 Tauri 接口读取配置，将颜色值动态写入 DOM 的 `:root` 样式。
+3.  **编译无关**: Tailwind CSS 仅引用变量名（如 `var(--bg-app)`），不关心具体色值，因此换肤无需重编译。
 
-```tsx
-<div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-  <aside className="w-64 border-r">
-    <SessionList />
-  </aside>
-  <main className="flex-1 flex flex-col">
-    <Toolbar />
-    <DetailPanel />
-  </main>
-</div>
-```
-
-### 工具栏
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│ [Account ▼] [▶ Run] │ [Group ▼] [▶▶ Run] │  spacer  │ [⚙ Manage] │
-├────────────────────────────────────────────────────────────────┤
-│ ☐ Spread to All    ☐ Auto Refresh    ☐ Keyboard Passthrough    │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### 会话列表
-
-```tsx
-<SessionListItem>
-  {/* 状态指示器 */}
-  <span className={cn(
-    "w-2 h-2 rounded-full",
-    session.isScriptRunning ? "bg-red-500" : "bg-gray-300"
-  )} />
-  {/* 账户名 */}
-  <span className="truncate">{session.accountName}</span>
-</SessionListItem>
-```
-
-### 详情面板
-
-右侧详情区域使用 Card 组件划分为三个板块：
-
-1. **Browser Control**: 浏览器操作 (Stop, Refresh, Cookies)
-2. **Script Engine**: 脚本控制
-3. **Inspector**: 坐标与颜色查看
-
-## 组件规范
-
-### 图标使用
-
-| 位置 | 按钮 | 图标 |
-|------|------|------|
-| Toolbar | Run Account | `Play` |
-| Toolbar | Run Group | `FastForward` |
-| Toolbar | Manage | `Settings` |
-| SessionTab | Stop | `Square` |
-| SessionTab | Refresh | `RefreshCw` |
-| SessionTab | Start Script | `Play` |
-| SessionTab | Stop Script | `Square` |
-| SessionTab | Click | `MousePointer` |
-| SessionTab | Fetch | `Pipette` |
-| Management | New | `Plus` |
-| Management | Delete | `Trash2` |
-| Management | Save | `Save` |
-| Tabs | Accounts | `User` |
-| Tabs | Groups | `Folder` |
-
-### 按钮样式
-
-| 变体 | 样式 | 使用场景 |
-|------|------|----------|
-| Primary | `bg-blue-600 text-white` | Save, Run, Start |
-| Destructive | `bg-red-600 text-white` | Delete, Stop |
-| Outline | `border border-gray-300` | Refresh, Sync |
-| Ghost | `bg-transparent hover:bg-gray-100` | Select All |
-
-```tsx
-const buttonVariants = cva(
-  "inline-flex items-center justify-center rounded-md text-sm font-medium",
-  {
-    variants: {
-      variant: {
-        default: "bg-blue-600 text-white hover:bg-blue-700",
-        destructive: "bg-red-600 text-white hover:bg-red-700",
-        outline: "border border-gray-300 hover:bg-gray-100",
-        ghost: "bg-transparent hover:bg-gray-100",
-      },
-      size: {
-        default: "h-9 px-4",
-        sm: "h-8 px-3 text-xs",
-        lg: "h-10 px-6",
-      },
+### 2.2 配置文件结构 (示例)
+用户可编辑此文件来自定义主题：
+```json
+{
+  "activeTheme": "ocean-dark",
+  "themes": {
+    "ocean-dark": {
+      "colors": {
+        "bg-app": "#0f172a",
+        "bg-panel": "#1e293b",
+        "accent": "#38bdf8",
+        "text-primary": "#f1f5f9"
+      }
     },
+    "forest-light": {
+      "colors": {
+        "bg-app": "#f0fdf4",
+        "bg-panel": "#ffffff",
+        "accent": "#16a34a",
+        "text-primary": "#14532d"
+      }
+    }
   }
-);
-```
-
-## 颜色主题
-
-支持亮色和暗色主题：
-
-```css
-:root {
-  --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
-  --primary: 221.2 83.2% 53.3%;
-  --destructive: 0 84.2% 60.2%;
-  --muted: 210 40% 96.1%;
-  --border: 214.3 31.8% 91.4%;
-}
-
-.dark {
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --primary: 217.2 91.2% 59.8%;
-  --destructive: 0 62.8% 30.6%;
-  --muted: 217.2 32.6% 17.5%;
-  --border: 217.2 32.6% 17.5%;
 }
 ```
 
-## 响应式断点
+### 2.3 语义化 Token 定义
 
-| 断点 | 像素 | 设备 |
-|------|------|------|
-| sm | 640px | 小屏 |
-| md | 768px | 平板 |
-| lg | 1024px | 桌面 |
-| xl | 1280px | 大屏 |
+| Token 变量 | 说明 | Dark Mode (Default) | Light Mode |
+|:---|:---|:---|:---|
+| **基础层级** | | | |
+| `--bg-app` | 应用背景色 | `#0f172a` (Slate 950) | `#f8fafc` (Slate 50) |
+| `--bg-panel` | 侧边栏/面板背景 | `#1e293b` (Slate 800) | `#ffffff` (White) |
+| `--bg-surface` | 卡片/输入框背景 | `#334155` (Slate 700) | `#f1f5f9` (Slate 100) |
+| `--border` | 边框颜色 | `#334155` (Slate 700) | `#e2e8f0` (Slate 200) |
+| **文本层级** | | | |
+| `--text-primary` | 主要文字 | `#f1f5f9` (Slate 100) | `#0f172a` (Slate 900) |
+| `--text-secondary` | 次要文字 | `#94a3b8` (Slate 400) | `#64748b` (Slate 500) |
+| `--text-muted` | 禁用/提示文字 | `#475569` (Slate 600) | `#94a3b8` (Slate 400) |
+| **品牌与状态** | | | |
+| `--accent` | 品牌色/选中态 | `#3b82f6` (Blue 500) | `#2563eb` (Blue 600) |
+| `--accent-fg` | 品牌色上的文字 | `#ffffff` | `#ffffff` |
+| `--success` | 运行/成功 | `#10b981` (Emerald 500) | `#059669` (Emerald 600) |
+| `--danger` | 停止/危险 | `#ef4444` (Red 500) | `#dc2626` (Red 600) |
+| `--warning` | 警告/等待 | `#f59e0b` (Amber 500) | `#d97706` (Amber 600) |
 
-侧边栏可折叠：
+---
 
-```tsx
-<aside className={cn(
-  "border-r transition-all duration-200",
-  sidebarOpen ? "w-64" : "w-0 overflow-hidden"
-)}>
+## 3. 组件设计规范
+
+### 3.1 布局框架
+采用经典的 **Sidebar + Header + Main** 布局。
+
+- **Header (Toolbar)**: 高度 `56px` (h-14)，底部边框分隔。
+- **Sidebar**: 宽度 `260px` (w-64)，右侧边框分隔。
+- **Canvas Area**: 占据剩余空间，居中显示内容。
+- **Inspector Bar**: 位于 Canvas 下方，作为独立的工具条悬浮或嵌入。
+
+### 3.2 交互组件
+
+#### 侧边栏列表项 (Session List Item)
+摒弃全背景高亮，改用左侧指示条，保持视觉清爽。
+
+*   **Default**: `text-secondary hover:bg-surface/50 hover:text-primary`
+*   **Active**: `bg-accent/10 text-accent border-l-4 border-accent` (左侧亮条)
+*   **Running**: 右侧显示微型呼吸灯 (Success color dot)。
+
+#### 按钮系统 (Button System)
+按钮高度统一为 `32px` (sm) 或 `36px` (default)，圆角 `6px` (rounded-md)。
+
+*   **Primary (Run)**: `bg-accent text-accent-fg hover:opacity-90`
+*   **Secondary (Manage)**: `bg-surface border border-border text-primary hover:bg-surface/80`
+*   **Destructive (Stop)**: `text-danger hover:bg-danger/10` (图标按钮) 或 `bg-danger text-white` (实心按钮)
+*   **Ghost (Icon Button)**: `text-secondary hover:text-primary hover:bg-surface`
+
+#### 输入框与下拉框 (Inputs)
+*   背景色: `var(--bg-surface)`
+*   边框: `1px solid var(--border)`
+*   Focus: `ring-2 ring-accent/20 border-accent`
+*   样式: 去除浏览器默认样式，高度与按钮对齐。
+
+### 3.3 Inspector 面板 (HUD 风格)
+设计为紧凑的工具条，位于 Canvas 下方 16px 处。
+
+*   **容器**: 圆角 `rounded-lg`，背景 `var(--bg-panel)`，边框 `var(--border)`，阴影 `shadow-sm`。
+*   **坐标显示**: 使用等宽字体 (Monospace)，如 `JetBrains Mono` 或 `Consolas`，增加专业感。
+    *   样式: `font-mono text-xs text-secondary`
+*   **颜色预览**: `w-6 h-6 rounded border border-border`，点击可复制 Hex 值。
+*   **操作按钮**: 集成 Fetch/Click 按钮，使用 Icon + Text 的小号按钮。
+
+---
+
+## 4. 技术栈升级与依赖
+
+为实现上述设计，建议更新 `tailwind.config.js` 配置：
+
+```javascript
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        bg: {
+          app: 'var(--bg-app)',
+          panel: 'var(--bg-panel)',
+          surface: 'var(--bg-surface)',
+        },
+        text: {
+          primary: 'var(--text-primary)',
+          secondary: 'var(--text-secondary)',
+          muted: 'var(--text-muted)',
+        },
+        border: 'var(--border)',
+        accent: {
+          DEFAULT: 'var(--accent)',
+          fg: 'var(--accent-fg)',
+          hover: 'var(--accent-hover)',
+        },
+        // ... 其他语义变量
+      }
+    }
+  }
+}
 ```
 
-## 动画
+## 5. 响应式与可访问性
 
-```tsx
-// 列表项 hover
-<div className="transition-colors hover:bg-gray-100" />
+1.  **对比度**: 确保 `--text-secondary` 在 `--bg-panel` 上有足够的对比度。
+2.  **Focus 状态**: 所有可交互元素必须保留 Focus Ring，支持键盘 Tab 切换。
+3.  **Tooltip**: 只有图标的按钮必须包含 Tooltip 说明。
 
-// 侧边栏折叠
-<aside className="transition-all duration-200" />
+---
 
-// 按钮点击
-<button className="transition-transform active:scale-95" />
+## 6. UI 改进清单 (Checklist for Next Dev Phase)
 
-// 对话框淡入
-<DialogContent className="animate-in fade-in-0 zoom-in-95" />
-```
-
-## 无障碍
-
-- 所有交互元素使用语义化标签
-- 图标按钮包含 `aria-label`
-- 表单字段关联 `<label>`
-- 键盘导航支持 (Tab, Enter, Escape)
-- 颜色对比度符合 WCAG AA 标准
+- [ ] **重构 Theme Provider**: 实现读取外部 JSON 配置并注入 CSS 变量的逻辑。
+- [ ] **优化 Sidebar**: 实现新的选中态样式（左侧边框高亮）。
+- [ ] **重构 Toolbar**: 对齐所有控件高度，增加竖线分隔符。
+- [ ] **美化 Inspector**: 实现 HUD 风格，使用等宽字体。
+- [ ] **字体统一**: 引入 Inter 或确保系统字体栈统一，解决 Windows/Mac 字体渲染差异。
