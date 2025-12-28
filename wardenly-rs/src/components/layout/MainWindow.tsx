@@ -5,6 +5,7 @@ import { useAccountStore } from "../../stores/accountStore";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useTauriEvents } from "../../hooks/useTauriEvents";
 import ManagementDialog from "../dialogs/ManagementDialog";
+import SettingsDialog from "../dialogs/SettingsDialog";
 import SessionList from "../session/SessionList";
 import CanvasWindow from "../canvas/CanvasWindow";
 import ScriptControls from "../session/ScriptControls";
@@ -20,6 +21,7 @@ function MainWindow() {
     frames,
   } = useSessionStore();
   const [showManagement, setShowManagement] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [selectedGroupId, setSelectedGroupId] = useState<string>("");
   const [runningGroup, setRunningGroup] = useState(false);
@@ -417,8 +419,15 @@ function MainWindow() {
             onClick={() => setShowManagement(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
           >
-            <Settings size={16} />
+            <Users size={16} />
             Manage
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
+          >
+            <Settings size={16} />
+            Settings
           </button>
         </div>
 
@@ -586,6 +595,16 @@ function MainWindow() {
       {/* Management Dialog */}
       {showManagement && (
         <ManagementDialog onClose={() => setShowManagement(false)} />
+      )}
+
+      {/* Settings Dialog */}
+      {showSettings && (
+        <SettingsDialog
+          onClose={() => setShowSettings(false)}
+          onThemeChange={() => {
+            // Theme changes require app restart, so just close for now
+          }}
+        />
       )}
     </div>
   );
