@@ -16,6 +16,17 @@ path = "src/main.rs"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[profile.release]
+lto = true          # 链接时优化
+codegen-units = 1   # 减少代码生成单元
+opt-level = 3       # "z" 最小体积, "s" 体积优化, 3 性能优化
+strip = true        # 去掉调试符号
+
+# 优化依赖
+[profile.release.package."*"]
+opt-level = "z"
+strip = true
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
