@@ -315,4 +315,21 @@ impl Coordinator {
         tracing::info!("Stopped screencast for session {}", session_id);
         Ok(())
     }
+
+    /// Capture a single screenshot from a session (for manual refresh when screencast is off)
+    pub async fn capture_screenshot(&self, session_id: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::CaptureScreenshot)
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send capture screenshot command"))?;
+
+        tracing::debug!("Requested screenshot capture for session {}", session_id);
+        Ok(())
+    }
 }

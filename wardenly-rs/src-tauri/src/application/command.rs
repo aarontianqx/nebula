@@ -29,5 +29,8 @@ pub enum SessionCommand {
 
     /// Refresh/reload the current page
     Refresh,
+
+    /// Capture a single screenshot (for manual refresh when screencast is off)
+    CaptureScreenshot,
 }
 

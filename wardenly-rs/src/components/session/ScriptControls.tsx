@@ -86,7 +86,7 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
       <select
         value={selectedScript}
         onChange={(e) => setSelectedScript(e.target.value)}
-        className="border rounded px-3 py-2 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-sm min-w-[140px]"
+        className="border rounded px-3 py-2 bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] text-sm min-w-[140px] focus:outline-none focus:border-[var(--color-accent)]"
         disabled={isRunning || loading}
       >
         <option value="">Select Script</option>
@@ -102,7 +102,7 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
         <button
           onClick={handleStop}
           disabled={loading || !sessionId}
-          className="p-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="p-2 bg-[var(--color-error)] text-white rounded hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
           title="Stop Script"
         >
           <Square className="w-4 h-4" />
@@ -111,7 +111,7 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
         <button
           onClick={handleStart}
           disabled={!canStart || loading}
-          className="p-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="p-2 bg-[var(--color-success)] text-white rounded hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
           title="Start Script"
         >
           <Play className="w-4 h-4" />
@@ -122,27 +122,27 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
       <button
         onClick={handleSync}
         disabled={loading}
-        className="p-2 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700"
+        className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
         title="Sync Script Selection"
       >
         <RefreshCw className="w-4 h-4" />
       </button>
 
-      {/* Run All Button */}
+      {/* Start All Scripts Button */}
       <button
         onClick={handleRunAll}
         disabled={!selectedScript || loading}
-        className="p-2 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
-        title="Run All Sessions"
+        className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
+        title="Start All Scripts"
       >
         <PlayCircle className="w-4 h-4" />
       </button>
 
-      {/* Stop All Button */}
+      {/* Stop All Scripts Button */}
       <button
         onClick={handleStopAll}
         disabled={loading}
-        className="p-2 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700"
+        className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
         title="Stop All Scripts"
       >
         <StopCircle className="w-4 h-4" />
@@ -150,4 +150,3 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
     </div>
   );
 }
-

@@ -77,6 +77,8 @@ pub fn get_groups(state: State<'_, AppState>) -> Result<Vec<Group>, String> {
 pub struct CreateGroupRequest {
     name: String,
     description: Option<String>,
+    #[serde(default)]
+    ranking: i32,
 }
 
 #[tauri::command]
@@ -84,7 +86,7 @@ pub fn create_group(
     state: State<'_, AppState>,
     request: CreateGroupRequest,
 ) -> Result<Group, String> {
-    let mut group = Group::new(request.name);
+    let mut group = Group::new(request.name, request.ranking);
     group.description = request.description;
 
     state
@@ -107,6 +109,80 @@ pub fn delete_group(state: State<'_, AppState>, id: String) -> Result<(), String
         .group_service
         .delete(&id)
         .map_err(|e| ApiError::from(e).into())
+}
+
+/// Run all accounts in a group sequentially with 3 second intervals.
+/// Skips accounts that already have a running session.
+#[tauri::command]
+pub async fn run_group(state: State<'_, AppState>, group_id: String) -> Result<(), String> {
+    // Get group from service
+    let groups = state.group_service.get_all().map_err(|e| e.to_string())?;
+    let group = groups
+        .iter()
+        .find(|g| g.id == group_id)
+        .ok_or_else(|| format!("Group not found: {}", group_id))?
+        .clone();
+
+    if group.account_ids.is_empty() {
+        return Err("Group has no accounts".to_string());
+    }
+
+    // Get all accounts to sort by ranking
+    let accounts = state.account_service.get_all().map_err(|e| e.to_string())?;
+
+    // Filter and sort accounts by ranking
+    let mut group_accounts: Vec<_> = accounts
+        .into_iter()
+        .filter(|a| group.account_ids.contains(&a.id))
+        .collect();
+    group_accounts.sort_by(|a, b| a.ranking.cmp(&b.ranking).then_with(|| a.id.cmp(&b.id)));
+
+    // Clone coordinator for async block
+    let coordinator = state.coordinator.clone();
+
+    // Spawn background task to start accounts sequentially
+    tauri::async_runtime::spawn(async move {
+        for (i, account) in group_accounts.iter().enumerate() {
+            // Check if session already exists for this account
+            let sessions = coordinator.get_sessions().await;
+            let already_running = sessions.iter().any(|s| s.account_id == account.id);
+
+            if already_running {
+                tracing::info!(
+                    "Skipping account {} - already has a running session",
+                    account.id
+                );
+                continue;
+            }
+
+            // Create and start session
+            match coordinator.create_session(&account.id).await {
+                Ok(session_id) => {
+                    if let Err(e) = coordinator.start_session(&session_id).await {
+                        tracing::error!("Failed to start session {}: {}", session_id, e);
+                    } else {
+                        tracing::info!(
+                            "Started session for account {} ({}/{})",
+                            account.id,
+                            i + 1,
+                            group_accounts.len()
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create session for account {}: {}", account.id, e);
+                }
+            }
+
+            // Wait 3 seconds before starting next account (except for last one)
+            if i < group_accounts.len() - 1 {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
+        tracing::info!("Finished starting group accounts");
+    });
+
+    Ok(())
 }
 
 // ====== Session Commands ======
@@ -220,6 +296,18 @@ pub async fn stop_screencast(
     state
         .coordinator
         .stop_screencast(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn capture_screenshot(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .capture_screenshot(&session_id)
         .await
         .map_err(|e| e.to_string())
 }

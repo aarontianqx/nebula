@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from "react";
-import { Settings, Play, Square, Keyboard, RefreshCw } from "lucide-react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { Settings, Play, Square, Keyboard, RefreshCw, Users, MousePointer, Pipette } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAccountStore } from "../../stores/accountStore";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -10,23 +10,32 @@ import CanvasWindow from "../canvas/CanvasWindow";
 import ScriptControls from "../session/ScriptControls";
 
 function MainWindow() {
-  const { accounts, fetchAccounts, fetchGroups } = useAccountStore();
+  const { accounts, groups, fetchAccounts, fetchGroups } = useAccountStore();
   const {
     sessions,
     selectedSessionId,
     startSession,
     stopAllSessions,
     loading,
+    frames,
   } = useSessionStore();
   const [showManagement, setShowManagement] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
+  const [runningGroup, setRunningGroup] = useState(false);
   const [keyboardPassthrough, setKeyboardPassthrough] = useState(false);
   const [spreadToAll, setSpreadToAll] = useState(false);
   // Screencast controls streaming (true = streaming mode, false = stopped)
-  // Default: true for better UX - user sees screen immediately after login
-  const [screencastEnabled, setScreencastEnabled] = useState(true);
-  // Track which session currently has screencast running to avoid duplicate start/stop
+  // Default: false - streaming must be explicitly enabled
+  const [screencastEnabled, setScreencastEnabled] = useState(false);
+  // Track which session currently has screencast running (only one at a time)
   const screencastSessionRef = useRef<string | null>(null);
+
+  // Inspector state
+  const [inspectorX, setInspectorX] = useState<string>("0");
+  const [inspectorY, setInspectorY] = useState<string>("0");
+  const [inspectorColor, setInspectorColor] = useState<string>("");
+  const [inspectorRgb, setInspectorRgb] = useState<[number, number, number]>([0, 0, 0]);
 
   // Initialize Tauri event listeners
   useTauriEvents();
@@ -49,10 +58,32 @@ function MainWindow() {
     await stopAllSessions();
   };
 
+  const handleRunGroup = async () => {
+    if (!selectedGroupId || runningGroup) return;
+    setRunningGroup(true);
+    try {
+      await invoke("run_group", { groupId: selectedGroupId });
+    } catch (error) {
+      console.error("Failed to run group:", error);
+    } finally {
+      // Note: The group run is async in background, so we reset immediately
+      // The actual sessions will appear as they are created
+      setRunningGroup(false);
+    }
+  };
+
   // Check if selected account already has a session
   const hasSessionForAccount = sessions.some(
     (s) => s.account_id === selectedAccountId
   );
+
+  // Check if selected group is empty or all accounts already have sessions
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId);
+  const groupHasNoNewAccounts =
+    selectedGroup &&
+    selectedGroup.account_ids.every((accId) =>
+      sessions.some((s) => s.account_id === accId)
+    );
 
   const toggleKeyboardPassthrough = async () => {
     const newValue = !keyboardPassthrough;
@@ -75,48 +106,92 @@ function MainWindow() {
     invoke("set_active_session_for_input", { sessionId: selectedSessionId });
   }, [selectedSessionId]);
 
-  // Manage screencast based on screencast toggle and selected session
-  // Screencast ON = start screencast (streaming mode at ~5 FPS)
-  // Screencast OFF = stop screencast
+  // Capture immediate screenshot when switching sessions
+  // This ensures the canvas shows the current session's latest frame immediately,
+  // regardless of screencast state. The invoke is non-blocking (async).
+  const prevSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedSessionId && selectedSessionId !== prevSessionIdRef.current) {
+      // Session changed - capture a screenshot to update canvas immediately
+      invoke("capture_screenshot", { sessionId: selectedSessionId }).catch(() => {
+        // Ignore errors (session might not be ready yet)
+      });
+    }
+    prevSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
+
+  // Manage screencast: only ONE session at a time, strictly controlled
+  // When screencast is enabled: stream the selected session
+  // When screencast is disabled: stop any streaming
+  // When session changes while enabled: stop old, start new
   useEffect(() => {
     const manageScreencast = async () => {
       const currentScreencast = screencastSessionRef.current;
+      const sessionIds = sessions.map((s) => s.id);
 
-      // If screencast is enabled and we have a selected session
-      if (screencastEnabled && selectedSessionId) {
-        // If currently screencasting a different session, stop it first
-        if (currentScreencast && currentScreencast !== selectedSessionId) {
-          try {
-            await invoke("stop_screencast", { sessionId: currentScreencast });
-          } catch {
-            // Ignore errors when stopping old screencast
-          }
+      // Stop screencast if the session no longer exists
+      if (currentScreencast && !sessionIds.includes(currentScreencast)) {
+        try {
+          await invoke("stop_screencast", { sessionId: currentScreencast });
+        } catch {
+          // Session already gone, ignore
         }
+        screencastSessionRef.current = null;
+        return;
+      }
 
-        // Start screencast for the new session if not already running
-        if (currentScreencast !== selectedSessionId) {
-          try {
-            await invoke("start_screencast", { sessionId: selectedSessionId });
-            screencastSessionRef.current = selectedSessionId;
-          } catch (error) {
-            console.error("Failed to start screencast:", error);
-          }
-        }
-      } else {
-        // Screencast disabled or no session selected - stop any active screencast
+      // If screencast disabled, stop any active screencast
+      if (!screencastEnabled) {
         if (currentScreencast) {
           try {
             await invoke("stop_screencast", { sessionId: currentScreencast });
           } catch {
-            // Ignore errors when stopping
+            // Ignore errors
           }
           screencastSessionRef.current = null;
         }
+        return;
+      }
+
+      // Screencast enabled - need a valid selected session
+      if (!selectedSessionId || !sessionIds.includes(selectedSessionId)) {
+        // No valid session selected, stop any active screencast
+        if (currentScreencast) {
+          try {
+            await invoke("stop_screencast", { sessionId: currentScreencast });
+          } catch {
+            // Ignore
+          }
+          screencastSessionRef.current = null;
+        }
+        return;
+      }
+
+      // If already streaming the selected session, nothing to do
+      if (currentScreencast === selectedSessionId) {
+        return;
+      }
+
+      // Need to switch: stop old, start new
+      if (currentScreencast) {
+        try {
+          await invoke("stop_screencast", { sessionId: currentScreencast });
+        } catch {
+          // Ignore
+        }
+      }
+
+      try {
+        await invoke("start_screencast", { sessionId: selectedSessionId });
+        screencastSessionRef.current = selectedSessionId;
+      } catch (error) {
+        console.error("Failed to start screencast:", error);
+        screencastSessionRef.current = null;
       }
     };
 
     manageScreencast();
-  }, [screencastEnabled, selectedSessionId]);
+  }, [screencastEnabled, selectedSessionId, sessions]);
 
   const handleRefresh = async () => {
     if (!selectedSessionId) return;
@@ -126,6 +201,129 @@ function MainWindow() {
       console.error("Failed to refresh:", error);
     }
   };
+
+  // Inspector: fetch color at X/Y from current frame
+  const fetchColorAtCoordinates = useCallback(() => {
+    if (!selectedSessionId) return;
+    const frame = frames[selectedSessionId];
+    if (!frame) return;
+
+    const x = parseInt(inspectorX) || 0;
+    const y = parseInt(inspectorY) || 0;
+
+    // Decode base64 frame and extract color
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0);
+
+      // Clamp coordinates
+      const clampedX = Math.max(0, Math.min(x, img.width - 1));
+      const clampedY = Math.max(0, Math.min(y, img.height - 1));
+
+      const pixel = ctx.getImageData(clampedX, clampedY, 1, 1).data;
+      const [r, g, b] = [pixel[0], pixel[1], pixel[2]];
+      setInspectorRgb([r, g, b]);
+      setInspectorColor(`RGB(${r}, ${g}, ${b})`);
+    };
+    img.src = `data:image/jpeg;base64,${frame}`;
+  }, [selectedSessionId, frames, inspectorX, inspectorY]);
+
+  // Update inspector when coordinates change via keyboard input
+  const handleInspectorKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      fetchColorAtCoordinates();
+    }
+  };
+
+  // Click button: execute click at X/Y coordinates
+  const handleClickAtCoordinates = async () => {
+    if (!selectedSessionId) return;
+    const x = parseInt(inspectorX) || 0;
+    const y = parseInt(inspectorY) || 0;
+
+    try {
+      if (spreadToAll) {
+        await invoke("click_all_sessions", { x, y });
+      } else {
+        await invoke("click_session", { sessionId: selectedSessionId, x, y });
+      }
+    } catch (error) {
+      console.error("Failed to click:", error);
+    }
+  };
+
+  // Handle canvas click: update inspector and optionally forward to browser
+  const handleCanvasClick = useCallback(
+    (x: number, y: number) => {
+      // Always update inspector coordinates and color
+      setInspectorX(Math.round(x).toString());
+      setInspectorY(Math.round(y).toString());
+
+      // Fetch color at clicked position
+      if (selectedSessionId && frames[selectedSessionId]) {
+        const frame = frames[selectedSessionId];
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0);
+
+          const clampedX = Math.max(0, Math.min(Math.round(x), img.width - 1));
+          const clampedY = Math.max(0, Math.min(Math.round(y), img.height - 1));
+
+          const pixel = ctx.getImageData(clampedX, clampedY, 1, 1).data;
+          const [r, g, b] = [pixel[0], pixel[1], pixel[2]];
+          setInspectorRgb([r, g, b]);
+          setInspectorColor(`RGB(${r}, ${g}, ${b})`);
+        };
+        img.src = `data:image/jpeg;base64,${frame}`;
+      }
+    },
+    [selectedSessionId, frames]
+  );
+
+  // Handle canvas mouse up: forward click to browser only if screencast enabled
+  const handleCanvasMouseAction = useCallback(
+    async (action: "click" | "drag", x: number, y: number, endX?: number, endY?: number) => {
+      if (!selectedSessionId) return;
+
+      if (screencastEnabled) {
+        // Screencast ON: forward mouse actions to browser
+        if (action === "click") {
+          if (spreadToAll) {
+            await invoke("click_all_sessions", { x, y });
+          } else {
+            await invoke("click_session", { sessionId: selectedSessionId, x, y });
+          }
+        } else if (action === "drag" && endX !== undefined && endY !== undefined) {
+          await invoke("drag_session", {
+            sessionId: selectedSessionId,
+            fromX: x,
+            fromY: y,
+            toX: endX,
+            toY: endY,
+          });
+        }
+      } else {
+        // Screencast OFF: capture a single screenshot to update the canvas
+        // This does NOT reload the browser page, just takes a screenshot
+        try {
+          await invoke("capture_screenshot", { sessionId: selectedSessionId });
+        } catch (error) {
+          console.error("Failed to capture screenshot:", error);
+        }
+      }
+    },
+    [selectedSessionId, screencastEnabled, spreadToAll]
+  );
 
   return (
     <div className="flex flex-col h-screen bg-[var(--color-bg-primary)]">
@@ -157,10 +355,47 @@ function MainWindow() {
               onClick={handleRun}
               disabled={!selectedAccountId || hasSessionForAccount || loading}
               className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Run selected account"
             >
               <Play size={14} />
               Run
             </button>
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-[var(--color-border)]" />
+
+            {/* Group selector */}
+            <select
+              value={selectedGroupId}
+              onChange={(e) => setSelectedGroupId(e.target.value)}
+              className="px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] border border-[var(--color-border)] focus:outline-none focus:border-[var(--color-accent)] min-w-[140px]"
+            >
+              <option value="">Select Group</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+
+            {/* Run Group button */}
+            <button
+              onClick={handleRunGroup}
+              disabled={
+                !selectedGroupId ||
+                runningGroup ||
+                groupHasNoNewAccounts ||
+                loading
+              }
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-success)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+              title="Run all accounts in the selected group"
+            >
+              <Users size={14} />
+              Run Group
+            </button>
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-[var(--color-border)]" />
 
             {/* Stop All button */}
             {sessions.length > 0 && (
@@ -259,12 +494,73 @@ function MainWindow() {
         </div>
 
         {/* Canvas Panel */}
-        <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
+        <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-auto">
           {selectedSessionId ? (
-            <CanvasWindow
-              sessionId={selectedSessionId}
-              spreadToAll={spreadToAll}
-            />
+            <>
+              <CanvasWindow
+                sessionId={selectedSessionId}
+                onCanvasClick={handleCanvasClick}
+                onMouseAction={handleCanvasMouseAction}
+              />
+              {/* Inspector Panel - below canvas */}
+              <div className="mt-3 flex items-center gap-3 px-4 py-2 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--color-text-secondary)]">X:</span>
+                  <input
+                    type="number"
+                    value={inspectorX}
+                    onChange={(e) => setInspectorX(e.target.value)}
+                    onKeyDown={handleInspectorKeyDown}
+                    className="w-16 px-2 py-1 text-sm bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--color-text-secondary)]">Y:</span>
+                  <input
+                    type="number"
+                    value={inspectorY}
+                    onChange={(e) => setInspectorY(e.target.value)}
+                    onKeyDown={handleInspectorKeyDown}
+                    className="w-16 px-2 py-1 text-sm bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
+                  />
+                </div>
+
+                <button
+                  onClick={fetchColorAtCoordinates}
+                  disabled={!selectedSessionId}
+                  className="flex items-center gap-1.5 px-3 py-1 text-sm rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                  title="Fetch color at coordinates (Enter)"
+                >
+                  <Pipette size={14} />
+                  Fetch
+                </button>
+
+                <button
+                  onClick={handleClickAtCoordinates}
+                  disabled={!selectedSessionId}
+                  className="flex items-center gap-1.5 px-3 py-1 text-sm rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                  title="Click at coordinates (respects Spread to All)"
+                >
+                  <MousePointer size={14} />
+                  Click
+                </button>
+
+                {/* Divider */}
+                <div className="w-px h-6 bg-[var(--color-border)]" />
+
+                {/* Color swatch */}
+                <div
+                  className="w-8 h-8 rounded border-2 border-[var(--color-border)] shadow-inner"
+                  style={{
+                    backgroundColor: `rgb(${inspectorRgb[0]}, ${inspectorRgb[1]}, ${inspectorRgb[2]})`,
+                  }}
+                  title={inspectorColor}
+                />
+                <span className="text-sm text-[var(--color-text-primary)] font-mono">
+                  {inspectorColor || "RGB(0, 0, 0)"}
+                </span>
+              </div>
+            </>
           ) : (
             <div className="text-center text-[var(--color-text-muted)]">
               <p className="text-lg">Select a session to view</p>
