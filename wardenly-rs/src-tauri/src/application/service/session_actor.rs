@@ -157,10 +157,9 @@ impl SessionActor {
 
         self.transition_to(SessionState::LoggingIn).await;
 
-        // Start screencast
-        if let Err(e) = self.browser.start_screencast().await {
-            tracing::warn!("Failed to start screencast: {}", e);
-        }
+        // NOTE: Screencast is NOT started automatically here.
+        // It is controlled by the frontend via StartScreencast/StopScreencast commands.
+        // This ensures the UI's screencast checkbox state is respected.
 
         // Perform login
         match self.perform_login().await {
@@ -239,6 +238,29 @@ impl SessionActor {
                 if self.state.can_accept_interaction() {
                     if let Err(e) = self.browser.refresh().await {
                         tracing::warn!("Refresh failed: {}", e);
+                    }
+                }
+            }
+            SessionCommand::CaptureScreenshot => {
+                // Capture a single screenshot and send it as a frame
+                // Used when screencast is off but user wants to see current state
+                if self.state.can_accept_interaction() {
+                    match self.browser.capture_screen().await {
+                        Ok(img) => {
+                            // Encode as JPEG base64
+                            let mut buffer = std::io::Cursor::new(Vec::new());
+                            if let Err(e) = img.write_to(&mut buffer, image::ImageFormat::Jpeg) {
+                                tracing::warn!("Failed to encode screenshot: {}", e);
+                            } else {
+                                use base64::Engine;
+                                let base64_data = base64::engine::general_purpose::STANDARD
+                                    .encode(buffer.into_inner());
+                                self.handle_frame(base64_data).await;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Screenshot capture failed: {}", e);
+                        }
                     }
                 }
             }

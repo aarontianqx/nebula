@@ -4,20 +4,16 @@ import { useSessionStore } from "../../stores/sessionStore";
 
 interface Props {
   sessionId: string;
-  spreadToAll?: boolean;
+  onCanvasClick?: (x: number, y: number) => void;
+  onMouseAction?: (action: "click" | "drag", x: number, y: number, endX?: number, endY?: number) => void;
 }
 
-export default function CanvasWindow({ sessionId, spreadToAll = false }: Props) {
+export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frame = useSessionStore((s) => s.frames[sessionId]);
-  const clickSession = useSessionStore((s) => s.clickSession);
-  const dragSession = useSessionStore((s) => s.dragSession);
-  const clickAllSessions = useSessionStore((s) => s.clickAllSessions);
 
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
-    null
-  );
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
 
   // Draw frame to canvas
   useEffect(() => {
@@ -70,38 +66,22 @@ export default function CanvasWindow({ sessionId, spreadToAll = false }: Props) 
         const dx = Math.abs(coords.x - dragStart.x);
         const dy = Math.abs(coords.y - dragStart.y);
 
+        // Always notify parent of the click position for inspector
+        onCanvasClick?.(coords.x, coords.y);
+
         // If moved less than 5 pixels, treat as click
         if (dx < 5 && dy < 5) {
-          if (spreadToAll) {
-            await clickAllSessions(coords.x, coords.y);
-          } else {
-            await clickSession(sessionId, coords.x, coords.y);
-          }
+          onMouseAction?.("click", coords.x, coords.y);
         } else {
-          // Drag (not spread for drag operations)
-          await dragSession(
-            sessionId,
-            dragStart.x,
-            dragStart.y,
-            coords.x,
-            coords.y
-          );
+          // Drag
+          onMouseAction?.("drag", dragStart.x, dragStart.y, coords.x, coords.y);
         }
       }
 
       setIsDragging(false);
       setDragStart(null);
     },
-    [
-      isDragging,
-      dragStart,
-      sessionId,
-      clickSession,
-      dragSession,
-      clickAllSessions,
-      spreadToAll,
-      getCanvasCoordinates,
-    ]
+    [isDragging, dragStart, onCanvasClick, onMouseAction, getCanvasCoordinates]
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -111,7 +91,7 @@ export default function CanvasWindow({ sessionId, spreadToAll = false }: Props) 
     invoke("update_cursor_position", { x: 0, y: 0, inBounds: false });
   }, []);
 
-  // Throttled cursor position update
+  // Throttled cursor position update for keyboard passthrough
   const lastUpdateRef = useRef<number>(0);
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -152,4 +132,3 @@ export default function CanvasWindow({ sessionId, spreadToAll = false }: Props) 
     </div>
   );
 }
-

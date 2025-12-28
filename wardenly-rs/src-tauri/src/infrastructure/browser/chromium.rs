@@ -95,12 +95,17 @@ impl BrowserDriver for ChromiumDriver {
             })
             // Use unique user data directory per session to avoid SingletonLock conflicts
             .user_data_dir(&self.user_data_dir)
-            // Disable GPU for stability
-            .arg("--disable-gpu")
+            // Enable headless mode for better performance (no visible window)
+            .arg("--headless=new")
+            // Enable GPU acceleration for better rendering performance
+            // (GPU is enabled by default, we just don't disable it)
             // Disable infobars
             .arg("--disable-infobars")
             // Mute audio
             .arg("--mute-audio")
+            // Disable unnecessary features for headless
+            .arg("--hide-scrollbars")
+            .arg("--disable-web-security")
             .build()
             .map_err(|e| anyhow!("Failed to build browser config: {}", e))?;
 
@@ -229,22 +234,30 @@ impl BrowserDriver for ChromiumDriver {
         let page = self.page().await?;
         let frame_tx = self.frame_tx.clone();
 
-        // Use periodic screenshots as screencast (~5 FPS)
+        // Use periodic screenshots as screencast (~3 FPS with JPEG for better performance)
+        // 3 FPS (333ms) is sufficient for game automation and reduces CPU load
         let handle = tokio::spawn(async move {
+            use chromiumoxide::cdp::browser_protocol::page::{
+                CaptureScreenshotFormat, CaptureScreenshotParams,
+            };
+            
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                // 3 FPS interval (333ms) - good balance between responsiveness and performance
+                tokio::time::sleep(tokio::time::Duration::from_millis(333)).await;
 
                 let page_guard = page.lock().await;
-                match page_guard
-                    .screenshot(
-                        chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams::default(
-                        ),
-                    )
-                    .await
-                {
+                // Use JPEG format with quality 80 for much better performance than PNG
+                let params = CaptureScreenshotParams::builder()
+                    .format(CaptureScreenshotFormat::Jpeg)
+                    .quality(80)
+                    .build();
+                    
+                match page_guard.screenshot(params).await {
                     Ok(data) => {
                         use base64::Engine;
                         let base64_data = base64::engine::general_purpose::STANDARD.encode(&data);
+                        // Non-blocking send - if channel is full, the frame is dropped
+                        // This prevents frame backlog when frontend can't keep up
                         if frame_tx.send(base64_data).is_err() {
                             break;
                         }
@@ -259,7 +272,7 @@ impl BrowserDriver for ChromiumDriver {
 
         *self.screenshot_handle.write().await = Some(handle);
 
-        tracing::info!("Screencast started (using periodic screenshots)");
+        tracing::info!("Screencast started (JPEG @ 3 FPS)");
         Ok(())
     }
 
