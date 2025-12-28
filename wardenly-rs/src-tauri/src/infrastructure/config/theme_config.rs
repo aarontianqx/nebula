@@ -1,21 +1,38 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Theme configuration loaded from themes.yaml
+/// Theme configuration loaded from embedded themes.yaml
+/// This is an official preset file bundled with the application
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeConfig {
-    /// Name of the active theme
-    #[serde(default = "default_active_theme")]
-    pub active_theme: String,
+    /// Default theme to use when user has no preference
+    #[serde(default = "default_theme_name")]
+    pub default_theme: String,
 
     /// Map of theme name to theme definition
     #[serde(default)]
     pub themes: HashMap<String, Theme>,
 }
 
-fn default_active_theme() -> String {
+fn default_theme_name() -> String {
     "ocean-dark".to_string()
+}
+
+impl ThemeConfig {
+    /// Get list of available theme names
+    pub fn available_themes(&self) -> Vec<String> {
+        self.themes.keys().cloned().collect()
+    }
+
+    /// Get a theme by name, falling back to default theme if not found
+    pub fn get_theme(&self, name: &str) -> Theme {
+        self.themes
+            .get(name)
+            .cloned()
+            .or_else(|| self.themes.get(&self.default_theme).cloned())
+            .unwrap_or_default()
+    }
 }
 
 /// A single theme definition containing color tokens
@@ -90,15 +107,14 @@ impl Theme {
     }
 }
 
-/// Response sent to frontend with active theme's CSS variables
+/// Response sent to frontend with resolved theme CSS variables
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeResponse {
-    /// Name of the active theme
+    /// Name of the currently applied theme
     pub active_theme: String,
     /// CSS variable name -> value mapping
     pub css_vars: HashMap<String, String>,
     /// List of available theme names
     pub available_themes: Vec<String>,
 }
-
