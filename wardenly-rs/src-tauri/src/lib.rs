@@ -162,6 +162,8 @@ pub fn run() {
             commands::get_keyboard_passthrough_status,
             commands::update_cursor_position,
             commands::set_active_session_for_input,
+            // Theme commands
+            commands::get_theme_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

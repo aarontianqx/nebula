@@ -1,0 +1,76 @@
+# Wardenly Theme Configuration
+# Users can customize colors by editing this file.
+# Changes take effect after restarting the application.
+
+# Active theme name (must match a key in 'themes' below)
+activeTheme: "ocean-dark"
+
+themes:
+  # Default dark theme - Slate-based ocean palette
+  ocean-dark:
+    bg-app: "#0f172a"
+    bg-panel: "#1e293b"
+    bg-surface: "#334155"
+    bg-hover: "#3f4f63"
+    border: "#475569"
+    text-primary: "#f8fafc"
+    text-secondary: "#94a3b8"
+    text-muted: "#64748b"
+    accent: "#3b82f6"
+    accent-hover: "#2563eb"
+    accent-fg: "#ffffff"
+    success: "#22c55e"
+    warning: "#f59e0b"
+    error: "#ef4444"
+
+  # Light theme - Clean and minimal
+  slate-light:
+    bg-app: "#f8fafc"
+    bg-panel: "#ffffff"
+    bg-surface: "#f1f5f9"
+    bg-hover: "#e2e8f0"
+    border: "#cbd5e1"
+    text-primary: "#0f172a"
+    text-secondary: "#475569"
+    text-muted: "#94a3b8"
+    accent: "#2563eb"
+    accent-hover: "#1d4ed8"
+    accent-fg: "#ffffff"
+    success: "#16a34a"
+    warning: "#d97706"
+    error: "#dc2626"
+
+  # High contrast dark theme
+  midnight:
+    bg-app: "#000000"
+    bg-panel: "#0a0a0a"
+    bg-surface: "#171717"
+    bg-hover: "#262626"
+    border: "#404040"
+    text-primary: "#fafafa"
+    text-secondary: "#a3a3a3"
+    text-muted: "#737373"
+    accent: "#60a5fa"
+    accent-hover: "#3b82f6"
+    accent-fg: "#000000"
+    success: "#4ade80"
+    warning: "#fbbf24"
+    error: "#f87171"
+
+  # Forest theme - Green accent
+  forest-dark:
+    bg-app: "#052e16"
+    bg-panel: "#14532d"
+    bg-surface: "#166534"
+    bg-hover: "#15803d"
+    border: "#22c55e"
+    text-primary: "#f0fdf4"
+    text-secondary: "#86efac"
+    text-muted: "#4ade80"
+    accent: "#22c55e"
+    accent-hover: "#16a34a"
+    accent-fg: "#052e16"
+    success: "#4ade80"
+    warning: "#fbbf24"
+    error: "#f87171"
+

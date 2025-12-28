@@ -502,63 +502,74 @@ function MainWindow() {
                 onCanvasClick={handleCanvasClick}
                 onMouseAction={handleCanvasMouseAction}
               />
-              {/* Inspector Panel - below canvas */}
-              <div className="mt-3 flex items-center gap-3 px-4 py-2 bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)]">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--color-text-secondary)]">X:</span>
-                  <input
-                    type="number"
-                    value={inspectorX}
-                    onChange={(e) => setInspectorX(e.target.value)}
-                    onKeyDown={handleInspectorKeyDown}
-                    className="w-16 px-2 py-1 text-sm bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
-                  />
+              {/* Inspector Panel - HUD style below canvas */}
+              <div className="mt-4 flex items-center gap-4 px-5 py-3 bg-[var(--color-bg-panel)] rounded-lg border border-[var(--color-border)] shadow-sm">
+                {/* Coordinates Section */}
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wide">X</span>
+                    <input
+                      type="number"
+                      value={inspectorX}
+                      onChange={(e) => setInspectorX(e.target.value)}
+                      onKeyDown={handleInspectorKeyDown}
+                      className="w-16 px-2 py-1.5 text-sm font-mono bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/20"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wide">Y</span>
+                    <input
+                      type="number"
+                      value={inspectorY}
+                      onChange={(e) => setInspectorY(e.target.value)}
+                      onKeyDown={handleInspectorKeyDown}
+                      className="w-16 px-2 py-1.5 text-sm font-mono bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/20"
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--color-text-secondary)]">Y:</span>
-                  <input
-                    type="number"
-                    value={inspectorY}
-                    onChange={(e) => setInspectorY(e.target.value)}
-                    onKeyDown={handleInspectorKeyDown}
-                    className="w-16 px-2 py-1 text-sm bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)]"
-                  />
-                </div>
-
-                <button
-                  onClick={fetchColorAtCoordinates}
-                  disabled={!selectedSessionId}
-                  className="flex items-center gap-1.5 px-3 py-1 text-sm rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
-                  title="Fetch color at coordinates (Enter)"
-                >
-                  <Pipette size={14} />
-                  Fetch
-                </button>
-
-                <button
-                  onClick={handleClickAtCoordinates}
-                  disabled={!selectedSessionId}
-                  className="flex items-center gap-1.5 px-3 py-1 text-sm rounded bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
-                  title="Click at coordinates (respects Spread to All)"
-                >
-                  <MousePointer size={14} />
-                  Click
-                </button>
 
                 {/* Divider */}
-                <div className="w-px h-6 bg-[var(--color-border)]" />
+                <div className="w-px h-7 bg-[var(--color-border)]" />
 
-                {/* Color swatch */}
-                <div
-                  className="w-8 h-8 rounded border-2 border-[var(--color-border)] shadow-inner"
-                  style={{
-                    backgroundColor: `rgb(${inspectorRgb[0]}, ${inspectorRgb[1]}, ${inspectorRgb[2]})`,
-                  }}
-                  title={inspectorColor}
-                />
-                <span className="text-sm text-[var(--color-text-primary)] font-mono">
-                  {inspectorColor || "RGB(0, 0, 0)"}
-                </span>
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchColorAtCoordinates}
+                    disabled={!selectedSessionId}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                    title="Fetch color at coordinates (Enter)"
+                  >
+                    <Pipette size={14} />
+                    Fetch
+                  </button>
+
+                  <button
+                    onClick={handleClickAtCoordinates}
+                    disabled={!selectedSessionId}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                    title="Click at coordinates (respects Spread to All)"
+                  >
+                    <MousePointer size={14} />
+                    Click
+                  </button>
+                </div>
+
+                {/* Divider */}
+                <div className="w-px h-7 bg-[var(--color-border)]" />
+
+                {/* Color Preview Section */}
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-8 h-8 rounded-md border-2 border-[var(--color-border)] shadow-inner"
+                    style={{
+                      backgroundColor: `rgb(${inspectorRgb[0]}, ${inspectorRgb[1]}, ${inspectorRgb[2]})`,
+                    }}
+                    title={inspectorColor}
+                  />
+                  <span className="text-sm text-[var(--color-text-secondary)] font-mono tabular-nums">
+                    {inspectorColor || "RGB(0, 0, 0)"}
+                  </span>
+                </div>
               </div>
             </>
           ) : (

@@ -144,6 +144,8 @@ wardenly-rs/
 │   │   └── forms/
 │   │       ├── AccountForm.tsx     # 账户表单
 │   │       └── GroupForm.tsx       # 分组表单
+│   ├── providers/
+│   │   └── ThemeProvider.tsx       # 主题运行时注入
 │   ├── hooks/
 │   │   └── useTauriEvents.ts       # Tauri 事件监听 Hook
 │   ├── stores/
@@ -152,7 +154,7 @@ wardenly-rs/
 │   ├── types/
 │   │   └── index.ts                # TypeScript 类型定义
 │   └── styles/
-│       └── globals.css             # 全局样式
+│       └── globals.css             # 全局样式 + CSS 变量定义
 │
 ├── src-tauri/                      # 后端 (Rust + Tauri)
 │   ├── src/
@@ -213,7 +215,8 @@ wardenly-rs/
 │   ├── resources/                  # 嵌入式资源
 │   │   ├── configs/
 │   │   │   ├── app.yaml            # 应用配置
-│   │   │   └── gesture.yaml        # 手势配置
+│   │   │   ├── gesture.yaml        # 手势配置
+│   │   │   └── themes.yaml         # 主题配色配置
 │   │   ├── scenes/                 # 场景定义 (*.yaml)
 │   │   └── scripts/                # 脚本定义 (*.yaml)
 │   │
@@ -247,6 +250,7 @@ wardenly-rs/
 | **仅 A-Z 透传** | 避免与系统快捷键冲突 |
 | **事件驱动状态同步** | Coordinator 监听 SessionStateChanged 事件保持 SessionInfo 状态同步 |
 | **ULID 作为 ID** | 时间有序的唯一标识符，便于排序和索引 |
+| **运行时主题注入** | 主题配色存储在外部 YAML，无需编译即可换肤 |
 
 ## 存储后端
 
@@ -266,3 +270,64 @@ storage:
 - **MongoDB**: 远程存储，支持多设备数据同步
 
 Repository 使用 trait objects (`dyn AccountRepository`) 实现运行时多态。
+
+## 主题系统
+
+主题系统采用 **"配置驱动的动态 CSS 变量注入"** 架构，实现用户自主换肤且无需重新编译：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          themes.yaml                                 │
+│  (用户可编辑的主题配置文件)                                           │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    get_theme_config (Tauri 命令)                     │
+│  读取 YAML → 解析为 ThemeConfig → 返回 CSS 变量映射                   │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      ThemeProvider (React)                           │
+│  调用后端 → 遍历 CSS 变量 → document.documentElement.style.setProperty │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     CSS Variables in :root                           │
+│  被 Tailwind 类和组件 var() 引用                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 配置文件示例
+
+```yaml
+# resources/configs/themes.yaml
+activeTheme: "ocean-dark"
+themes:
+  ocean-dark:
+    bg-app: "#0f172a"
+    accent: "#3b82f6"
+    # ...
+  custom-theme:
+    bg-app: "#000000"
+    accent: "#f0abfc"
+```
+
+### 关键组件
+
+| 组件 | 位置 | 职责 |
+|------|------|------|
+| `themes.yaml` | `resources/configs/` | 存储主题定义，用户可编辑 |
+| `ThemeConfig` | `infrastructure/config/theme_config.rs` | Rust 结构体，解析 YAML |
+| `get_theme_config` | `adapter/tauri/commands.rs` | Tauri 命令，返回当前主题 CSS 变量 |
+| `ThemeProvider` | `src/providers/ThemeProvider.tsx` | React 组件，注入 CSS 变量 |
+| `globals.css` | `src/styles/globals.css` | 定义 CSS 变量默认值（降级方案） |
+
+### 添加自定义主题
+
+1. 编辑 `resources/configs/themes.yaml`
+2. 在 `themes` 下添加新主题键
+3. 设置 `activeTheme` 为新主题名
+4. 重启应用生效

@@ -1,11 +1,13 @@
 mod app_config;
 mod gesture_config;
-mod loader;
+pub mod loader;
 mod paths;
 pub mod resources;
+mod theme_config;
 
 pub use app_config::*;
 pub use gesture_config::*;
+pub use theme_config::*;
 
 use std::sync::OnceLock;
 

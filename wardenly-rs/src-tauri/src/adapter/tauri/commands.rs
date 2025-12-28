@@ -402,3 +402,30 @@ pub async fn set_active_session_for_input(
     Ok(())
 }
 
+// ====== Theme Commands ======
+
+use crate::infrastructure::config::{ThemeConfig, ThemeResponse};
+
+#[tauri::command]
+pub fn get_theme_config() -> Result<ThemeResponse, String> {
+    use crate::infrastructure::config::loader::load_config;
+    
+    let config: ThemeConfig = load_config("themes");
+    let active_theme_name = config.active_theme.clone();
+    
+    // Get the active theme, or fall back to default
+    let theme = config
+        .themes
+        .get(&active_theme_name)
+        .cloned()
+        .unwrap_or_default();
+    
+    let available_themes: Vec<String> = config.themes.keys().cloned().collect();
+    
+    Ok(ThemeResponse {
+        active_theme: active_theme_name,
+        css_vars: theme.to_css_vars(),
+        available_themes,
+    })
+}
+
