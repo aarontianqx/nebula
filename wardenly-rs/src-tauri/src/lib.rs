@@ -65,14 +65,16 @@ fn init_storage() -> Result<StorageInitResult, String> {
             // Get Tauri's async runtime handle and extract the underlying tokio Handle.
             // This ensures we use the same runtime for all MongoDB operations,
             // avoiding deadlocks that occur when calling block_on from different runtimes.
-            use tauri::async_runtime::TokioHandle;
             let tauri_handle = tauri::async_runtime::handle();
             let runtime = tauri_handle.inner().clone();
 
             // Try to connect to MongoDB
             let mongo_config = &settings.storage.mongodb;
-            let mongo_result = tauri_handle.block_on(async {
-                persistence::mongodb::init_mongodb(&mongo_config.uri, &mongo_config.database).await
+            let uri = mongo_config.uri.clone();
+            let db = mongo_config.database.clone();
+
+            let mongo_result = tauri_handle.block_on(async move {
+                persistence::mongodb::init_mongodb(&uri, &db).await
             });
 
             match mongo_result {

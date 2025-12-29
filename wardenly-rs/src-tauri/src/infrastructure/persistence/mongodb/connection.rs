@@ -13,6 +13,9 @@ use std::time::Duration;
 /// Applies to both initial connection and server selection.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Hard timeout for the entire connection process (including DNS, handshake, etc.)
+const HARD_TIMEOUT: Duration = Duration::from_secs(4);
+
 /// MongoDB connection wrapper.
 /// Holds the database reference for collection operations.
 pub struct MongoConnection {
@@ -32,18 +35,25 @@ impl MongoConnection {
     /// - Connection cannot be established within timeout
     /// - Database ping fails
     pub async fn new(uri: &str, db_name: &str) -> anyhow::Result<Self> {
-        let options = Self::create_client_options(uri).await?;
-        let client = Client::with_options(options)?;
-        let database = client.database(db_name);
+        let uri = uri.to_string();
+        let db_name = db_name.to_string();
 
-        // Ping to verify connection is actually working
-        database
-            .run_command(mongodb::bson::doc! { "ping": 1 })
-            .await?;
+        tokio::time::timeout(HARD_TIMEOUT, async move {
+            let options = Self::create_client_options(&uri).await?;
+            let client = Client::with_options(options)?;
+            let database = client.database(&db_name);
 
-        tracing::info!("Connected to MongoDB: {}", db_name);
+            // Ping to verify connection is actually working
+            database
+                .run_command(mongodb::bson::doc! { "ping": 1 })
+                .await?;
 
-        Ok(Self { database })
+            tracing::info!("Connected to MongoDB: {}", db_name);
+
+            Ok(Self { database })
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Connection attempt timed out after {}s", HARD_TIMEOUT.as_secs()))?
     }
 
     /// Get a typed collection from the database.
