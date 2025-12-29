@@ -428,6 +428,15 @@ pub fn save_settings(settings: UserSettings) -> Result<(), String> {
     Ok(())
 }
 
+/// Test MongoDB connection before saving settings.
+/// Returns Ok(()) if connection is successful, Err with error message otherwise.
+#[tauri::command]
+pub async fn test_mongodb_connection(uri: String, database: String) -> Result<(), String> {
+    use crate::infrastructure::persistence::mongodb::test_connection;
+    
+    test_connection(&uri, &database).await
+}
+
 #[tauri::command]
 pub fn get_theme_config() -> Result<ThemeResponse, String> {
     let settings = user_settings();

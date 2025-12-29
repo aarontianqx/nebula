@@ -34,26 +34,32 @@ The built application will be in `src-tauri/target/release/`.
 
 ## Configuration
 
-Configuration files are located in `src-tauri/resources/configs/`.
+### User Settings
 
-### `app.yaml` - Application Settings
+User settings are stored in `settings.yaml` at the platform-specific config directory:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/wardenly/settings.yaml` |
+| Windows | `%APPDATA%\wardenly\settings.yaml` |
+| Linux | `~/.config/wardenly/settings.yaml` |
+
+Example configuration:
 
 ```yaml
+theme: ocean-dark
 storage:
-  # Storage backend: "sqlite" (default) or "mongodb"
-  type: sqlite
-
-  sqlite:
-    # Leave empty for platform default path
-    path: ""
-
-  # MongoDB configuration (used when type: mongodb)
-  # mongodb:
-  #   uri: "mongodb://localhost:27017"
-  #   database: "wardenly"
+  type: sqlite  # or "mongodb"
+  mongodb:
+    uri: "mongodb://localhost:27017"
+    database: "wardenly"
 ```
 
-**Default data paths:**
+Settings can be changed via the in-app Settings dialog. When using MongoDB:
+- Connection is verified before saving
+- On startup failure, the app falls back to SQLite with a warning
+
+**Default data paths (SQLite):**
 
 | Platform | Path |
 |----------|------|
@@ -61,14 +67,21 @@ storage:
 | Windows | `%APPDATA%\wardenly\data.db` |
 | Linux | `~/.config/wardenly/data.db` |
 
-### `gesture.yaml` - Keyboard Passthrough Settings
+### Embedded Configs
+
+Embedded configuration files in `src-tauri/resources/configs/`:
+
+- `themes.yaml` - Theme definitions
+- `gesture.yaml` - Keyboard passthrough settings
 
 ```yaml
+# gesture.yaml
 keyboard_passthrough:
   long_press_threshold_ms: 300
   repeat_interval_ms: 100
   debounce_window_ms: 50
 ```
+
 
 ## macOS Permissions
 
