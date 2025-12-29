@@ -20,52 +20,129 @@ struct StorageBackend {
     coordinator_account_repo: Arc<dyn AccountRepository>,
 }
 
-/// Initialize storage based on user settings
-fn init_storage() -> StorageBackend {
+/// Result of storage initialization
+struct StorageInitResult {
+    storage: StorageBackend,
+    /// If MongoDB connection failed, contains the error message for user notification
+    fallback_warning: Option<String>,
+}
+
+/// Initialize SQLite storage (always succeeds or fatally fails)
+fn init_sqlite_storage() -> Result<StorageBackend, String> {
+    tracing::info!("Using SQLite storage backend");
+    let db = persistence::sqlite::init_database()
+        .map_err(|e| format!("Failed to initialize SQLite database:\n\n{}", e))?;
+
+    use persistence::sqlite::{SqliteAccountRepository, SqliteGroupRepository};
+
+    let account_repo = Box::new(SqliteAccountRepository::new(db.clone()));
+    let group_repo = Box::new(SqliteGroupRepository::new(db.clone()));
+    let coordinator_account_repo: Arc<dyn AccountRepository> = Arc::new(SqliteAccountRepository::new(db));
+
+    Ok(StorageBackend {
+        account_repo,
+        group_repo,
+        coordinator_account_repo,
+    })
+}
+
+/// Initialize storage based on user settings.
+/// If MongoDB is configured but connection fails, falls back to SQLite with a warning.
+fn init_storage() -> Result<StorageInitResult, String> {
     let settings = config::user_settings();
 
     match settings.storage.storage_type {
         StorageType::Sqlite => {
-            tracing::info!("Using SQLite storage backend");
-            let db = persistence::sqlite::init_database()
-                .expect("Failed to initialize SQLite database");
-
-            use persistence::sqlite::{SqliteAccountRepository, SqliteGroupRepository};
-
-            let account_repo = Box::new(SqliteAccountRepository::new(db.clone()));
-            let group_repo = Box::new(SqliteGroupRepository::new(db.clone()));
-            let coordinator_account_repo: Arc<dyn AccountRepository> = Arc::new(SqliteAccountRepository::new(db));
-
-            StorageBackend {
-                account_repo,
-                group_repo,
-                coordinator_account_repo,
-            }
+            let storage = init_sqlite_storage()?;
+            Ok(StorageInitResult {
+                storage,
+                fallback_warning: None,
+            })
         }
         StorageType::Mongodb => {
-            tracing::info!("Using MongoDB storage backend");
+            tracing::info!("Attempting to connect to MongoDB...");
 
-            // MongoDB requires async initialization
+            // Get Tauri's async runtime handle and extract the underlying tokio Handle.
+            // This ensures we use the same runtime for all MongoDB operations,
+            // avoiding deadlocks that occur when calling block_on from different runtimes.
+            use tauri::async_runtime::TokioHandle;
+            let tauri_handle = tauri::async_runtime::handle();
+            let runtime = tauri_handle.inner().clone();
+
+            // Try to connect to MongoDB
             let mongo_config = &settings.storage.mongodb;
-            let conn = tauri::async_runtime::block_on(async {
-                persistence::mongodb::init_mongodb(&mongo_config.uri, &mongo_config.database)
-                    .await
-                    .expect("Failed to initialize MongoDB connection")
+            let mongo_result = tauri_handle.block_on(async {
+                persistence::mongodb::init_mongodb(&mongo_config.uri, &mongo_config.database).await
             });
 
-            use persistence::mongodb::{MongoAccountRepository, MongoGroupRepository};
+            match mongo_result {
+                Ok(conn) => {
+                    tracing::info!("MongoDB connection successful");
+                    use persistence::mongodb::{MongoAccountRepository, MongoGroupRepository};
 
-            let account_repo = Box::new(MongoAccountRepository::new(conn.clone()));
-            let group_repo = Box::new(MongoGroupRepository::new(conn.clone()));
-            let coordinator_account_repo: Arc<dyn AccountRepository> = Arc::new(MongoAccountRepository::new(conn));
+                    let account_repo = Box::new(MongoAccountRepository::new(conn.clone(), runtime.clone()));
+                    let group_repo = Box::new(MongoGroupRepository::new(conn.clone(), runtime.clone()));
+                    let coordinator_account_repo: Arc<dyn AccountRepository> = 
+                        Arc::new(MongoAccountRepository::new(conn, runtime));
 
-            StorageBackend {
-                account_repo,
-                group_repo,
-                coordinator_account_repo,
+                    Ok(StorageInitResult {
+                        storage: StorageBackend {
+                            account_repo,
+                            group_repo,
+                            coordinator_account_repo,
+                        },
+                        fallback_warning: None,
+                    })
+                }
+                Err(e) => {
+                    // MongoDB connection failed - fallback to SQLite
+                    let warning = format!(
+                        "MongoDB connection failed, using local SQLite storage.\n\n\
+                         Configured URI: {}\n\
+                         Database: {}\n\n\
+                         Error: {}\n\n\
+                         Your data will be stored locally. \
+                         Please check your MongoDB configuration in Settings.",
+                        mongo_config.uri, mongo_config.database, e
+                    );
+                    tracing::warn!("{}", warning);
+
+                    let storage = init_sqlite_storage()?;
+                    Ok(StorageInitResult {
+                        storage,
+                        fallback_warning: Some(warning),
+                    })
+                }
             }
         }
     }
+}
+
+/// Show an error dialog and exit the application
+fn show_error_and_exit(title: &str, message: &str) -> ! {
+    tracing::error!("{}: {}", title, message);
+
+    // Use rfd for native dialogs - it works without Tauri app handle
+    rfd::MessageDialog::new()
+        .set_title(title)
+        .set_description(message)
+        .set_level(rfd::MessageLevel::Error)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+
+    std::process::exit(1);
+}
+
+/// Show a warning dialog (non-blocking notification)
+fn show_warning_dialog(title: &str, message: &str) {
+    tracing::warn!("{}: {}", title, message);
+
+    rfd::MessageDialog::new()
+        .set_title(title)
+        .set_description(message)
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -77,7 +154,18 @@ pub fn run() {
     config::init();
 
     // Initialize storage based on user settings
-    let storage = init_storage();
+    // If MongoDB fails, will fallback to SQLite with a warning
+    let init_result = match init_storage() {
+        Ok(r) => r,
+        Err(e) => show_error_and_exit("Storage Initialization Error", &e),
+    };
+
+    // Show fallback warning if MongoDB connection failed
+    if let Some(warning) = &init_result.fallback_warning {
+        show_warning_dialog("Storage Connection Warning", warning);
+    }
+
+    let storage = init_result.storage;
 
     // Create event bus
     let event_bus = create_event_bus();
@@ -100,6 +188,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .setup(move |app| {
             // Start event forwarder to push events to frontend
@@ -165,8 +254,11 @@ pub fn run() {
             // Settings & Theme commands
             commands::get_settings,
             commands::save_settings,
+            commands::test_mongodb_connection,
             commands::get_theme_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+

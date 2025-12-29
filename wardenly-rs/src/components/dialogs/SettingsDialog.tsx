@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Palette, Database, RefreshCw } from "lucide-react";
+import { X, Palette, Database, RefreshCw, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface UserSettings {
@@ -46,11 +46,23 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // MongoDB connection test state
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
 
   // Load settings on mount and capture original theme for rollback
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Reset connection test result when MongoDB config changes
+  useEffect(() => {
+    setConnectionTestResult(null);
+  }, [settings?.storage.mongodb.uri, settings?.storage.mongodb.database]);
 
   const loadSettings = async () => {
     try {
@@ -71,8 +83,60 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
     }
   };
 
+  const testMongoConnection = async () => {
+    if (!settings) return;
+
+    setTestingConnection(true);
+    setConnectionTestResult(null);
+
+    try {
+      await invoke("test_mongodb_connection", {
+        uri: settings.storage.mongodb.uri,
+        database: settings.storage.mongodb.database,
+      });
+      setConnectionTestResult({
+        success: true,
+        message: "Connection successful!",
+      });
+    } catch (e) {
+      setConnectionTestResult({
+        success: false,
+        message: String(e),
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!settings) return;
+
+    // If MongoDB is selected, test connection before saving
+    if (settings.storage.type === "mongodb") {
+      setTestingConnection(true);
+      setError(null);
+
+      try {
+        await invoke("test_mongodb_connection", {
+          uri: settings.storage.mongodb.uri,
+          database: settings.storage.mongodb.database,
+        });
+      } catch (e) {
+        setTestingConnection(false);
+        setError(`Cannot save: MongoDB connection failed.\n\n${e}`);
+        setConnectionTestResult({
+          success: false,
+          message: String(e),
+        });
+        return;
+      }
+
+      setTestingConnection(false);
+      setConnectionTestResult({
+        success: true,
+        message: "Connection successful!",
+      });
+    }
 
     setSaving(true);
     try {
@@ -141,6 +205,8 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
       ...settings,
       storage: { ...settings.storage, type },
     });
+    setError(null);
+    setConnectionTestResult(null);
   };
 
   const handleMongoUriChange = (uri: string) => {
@@ -187,12 +253,15 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
             <div className="flex items-center justify-center py-8">
               <RefreshCw className="animate-spin text-[var(--color-text-muted)]" size={24} />
             </div>
-          ) : error ? (
-            <div className="p-4 bg-[var(--color-error)]/20 text-[var(--color-error)] rounded-lg text-sm">
-              {error}
-            </div>
           ) : (
             <>
+              {/* Error Banner */}
+              {error && (
+                <div className="p-3 bg-[var(--color-error)]/20 text-[var(--color-error)] rounded-lg text-sm whitespace-pre-wrap">
+                  {error}
+                </div>
+              )}
+
               {/* Theme Section */}
               <section>
                 <div className="flex items-center gap-2 mb-3">
@@ -253,7 +322,7 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
 
                   {/* MongoDB Config */}
                   {settings?.storage.type === "mongodb" && (
-                    <div className="space-y-2 p-3 bg-[var(--color-bg-surface)] rounded-lg">
+                    <div className="space-y-3 p-3 bg-[var(--color-bg-surface)] rounded-lg">
                       <div>
                         <label className="block text-xs text-[var(--color-text-secondary)] mb-1">
                           Connection URI
@@ -278,11 +347,49 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
                           className="w-full px-3 py-2 bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded text-sm focus:outline-none focus:border-[var(--color-accent)]"
                         />
                       </div>
+
+                      {/* Test Connection Button & Result */}
+                      <div className="space-y-2">
+                        <button
+                          onClick={testMongoConnection}
+                          disabled={testingConnection || !settings.storage.mongodb.uri}
+                          className="px-3 py-1.5 text-xs bg-[var(--color-bg-app)] border border-[var(--color-border)] rounded hover:bg-[var(--color-bg-hover)] transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          {testingConnection ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              Testing...
+                            </>
+                          ) : (
+                            "Test Connection"
+                          )}
+                        </button>
+
+                        {/* Connection Test Result - full width for better readability */}
+                        {connectionTestResult && (
+                          <div className={`flex items-start gap-1.5 text-xs p-2 rounded ${
+                            connectionTestResult.success 
+                              ? "text-[var(--color-success)] bg-[var(--color-success)]/10" 
+                              : "text-[var(--color-error)] bg-[var(--color-error)]/10"
+                          }`}>
+                            {connectionTestResult.success ? (
+                              <CheckCircle size={14} className="flex-shrink-0 mt-0.5" />
+                            ) : (
+                              <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                            )}
+                            <span className="break-all">
+                              {connectionTestResult.message}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
                   <p className="text-xs text-[var(--color-text-muted)]">
-                    Storage changes take effect after restarting the application.
+                    {settings?.storage.type === "mongodb" 
+                      ? "Connection will be verified before saving. Restart required to apply."
+                      : "Storage changes require restarting the application."}
                   </p>
                 </div>
               </section>
@@ -300,10 +407,11 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || loading}
-            className="px-4 py-2 text-sm bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
+            disabled={saving || loading || testingConnection}
+            className="px-4 py-2 text-sm bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50 flex items-center gap-2"
           >
-            {saving ? "Saving..." : "Save"}
+            {(saving || testingConnection) && <Loader2 size={14} className="animate-spin" />}
+            {testingConnection ? "Verifying..." : saving ? "Saving..." : "Save"}
           </button>
         </div>
       </div>
@@ -312,4 +420,5 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
 }
 
 export default SettingsDialog;
+
 

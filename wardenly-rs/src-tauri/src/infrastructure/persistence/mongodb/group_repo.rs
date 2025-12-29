@@ -52,17 +52,16 @@ impl From<GroupDocument> for Group {
 
 pub struct MongoGroupRepository {
     collection: Collection<GroupDocument>,
+    /// Tokio runtime handle captured at creation time.
+    runtime: Handle,
 }
 
 impl MongoGroupRepository {
-    pub fn new(conn: Arc<MongoConnection>) -> Self {
+    pub fn new(conn: Arc<MongoConnection>, runtime: Handle) -> Self {
         Self {
             collection: conn.collection("groups"),
+            runtime,
         }
-    }
-
-    fn runtime() -> Handle {
-        Handle::current()
     }
 }
 
@@ -70,72 +69,87 @@ impl GroupRepository for MongoGroupRepository {
     fn find_by_id(&self, id: &str) -> Result<Option<Group>> {
         let collection = self.collection.clone();
         let id = id.to_string();
+        let runtime = self.runtime.clone();
 
-        Self::runtime().block_on(async move {
-            collection
-                .find_one(doc! { "_id": id })
-                .await
-                .map(|opt| opt.map(Group::from))
-                .map_err(|e| DomainError::Database(e.to_string()))
+        // Use block_in_place to safely call block_on from within tokio runtime.
+        // This prevents deadlock when called from Tauri command handlers.
+        tokio::task::block_in_place(|| {
+            runtime.block_on(async move {
+                collection
+                    .find_one(doc! { "_id": id })
+                    .await
+                    .map(|opt| opt.map(Group::from))
+                    .map_err(|e| DomainError::Database(e.to_string()))
+            })
         })
     }
 
     fn find_all(&self) -> Result<Vec<Group>> {
         let collection = self.collection.clone();
+        let runtime = self.runtime.clone();
 
-        Self::runtime().block_on(async move {
-            use futures::TryStreamExt;
+        tokio::task::block_in_place(|| {
+            runtime.block_on(async move {
+                use futures::TryStreamExt;
 
-            let options = FindOptions::builder()
-                .sort(doc! { "ranking": 1, "name": 1 })
-                .build();
+                let options = FindOptions::builder()
+                    .sort(doc! { "ranking": 1, "name": 1 })
+                    .build();
 
-            let cursor = collection
-                .find(doc! {})
-                .with_options(options)
-                .await
-                .map_err(|e| DomainError::Database(e.to_string()))?;
+                let cursor = collection
+                    .find(doc! {})
+                    .with_options(options)
+                    .await
+                    .map_err(|e| DomainError::Database(e.to_string()))?;
 
-            let docs: Vec<GroupDocument> = cursor
-                .try_collect()
-                .await
-                .map_err(|e| DomainError::Database(e.to_string()))?;
+                let docs: Vec<GroupDocument> = cursor
+                    .try_collect()
+                    .await
+                    .map_err(|e| DomainError::Database(e.to_string()))?;
 
-            Ok(docs.into_iter().map(Group::from).collect())
+                Ok(docs.into_iter().map(Group::from).collect())
+            })
         })
     }
 
     fn save(&self, group: &Group) -> Result<()> {
         let collection = self.collection.clone();
         let doc = GroupDocument::from(group.clone());
+        let runtime = self.runtime.clone();
 
-        Self::runtime().block_on(async move {
-            let options = mongodb::options::ReplaceOptions::builder()
-                .upsert(true)
-                .build();
+        tokio::task::block_in_place(|| {
+            runtime.block_on(async move {
+                let options = mongodb::options::ReplaceOptions::builder()
+                    .upsert(true)
+                    .build();
 
-            collection
-                .replace_one(doc! { "_id": &doc.id }, &doc)
-                .with_options(options)
-                .await
-                .map_err(|e| DomainError::Database(e.to_string()))?;
+                collection
+                    .replace_one(doc! { "_id": &doc.id }, &doc)
+                    .with_options(options)
+                    .await
+                    .map_err(|e| DomainError::Database(e.to_string()))?;
 
-            Ok(())
+                Ok(())
+            })
         })
     }
 
     fn delete(&self, id: &str) -> Result<()> {
         let collection = self.collection.clone();
         let id = id.to_string();
+        let runtime = self.runtime.clone();
 
-        Self::runtime().block_on(async move {
-            collection
-                .delete_one(doc! { "_id": id })
-                .await
-                .map_err(|e| DomainError::Database(e.to_string()))?;
+        tokio::task::block_in_place(|| {
+            runtime.block_on(async move {
+                collection
+                    .delete_one(doc! { "_id": id })
+                    .await
+                    .map_err(|e| DomainError::Database(e.to_string()))?;
 
-            Ok(())
+                Ok(())
+            })
         })
     }
 }
+
 

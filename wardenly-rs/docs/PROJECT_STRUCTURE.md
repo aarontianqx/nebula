@@ -293,6 +293,15 @@ storage:
 
 Repository 使用 trait objects (`dyn AccountRepository`) 实现运行时多态。
 
+**MongoDB 连接机制**：
+
+| 场景 | 行为 |
+|------|------|
+| 设置页面测试/保存 | 验证连接，3 秒超时，失败则阻止保存 |
+| 应用启动 | 尝试连接，失败则回退到 SQLite 并显示警告 |
+
+技术实现：MongoDB Repository 使用 `tokio::task::block_in_place` 封装异步操作，确保同步 API 在 Tauri 命令线程中不会死锁。
+
 ### 主题系统
 
 主题预设由官方在 `themes.yaml` 中定义并嵌入应用程序，用户通过 Settings UI 或 `settings.yaml` 选择使用哪个主题。
@@ -333,6 +342,7 @@ Repository 使用 trait objects (`dyn AccountRepository`) 实现运行时多态�
 | `ThemeConfig` | `infrastructure/config/theme_config.rs` | Rust 结构体，主题预设 |
 | `get_settings` | `adapter/tauri/commands.rs` | Tauri 命令，返回当前设置 |
 | `save_settings` | `adapter/tauri/commands.rs` | Tauri 命令，保存设置 |
+| `test_mongodb_connection` | `adapter/tauri/commands.rs` | Tauri 命令，测试 MongoDB 连接 |
 | `get_theme_config` | `adapter/tauri/commands.rs` | Tauri 命令，返回当前主题 CSS 变量 |
 | `ThemeProvider` | `src/providers/ThemeProvider.tsx` | React 组件，注入 CSS 变量 |
 | `SettingsDialog` | `src/components/dialogs/SettingsDialog.tsx` | 设置对话框 UI |
@@ -348,4 +358,7 @@ Repository 使用 trait objects (`dyn AccountRepository`) 实现运行时多态�
 1. 打开应用，点击 **Settings** 按钮
 2. 在 Storage 区域选择 SQLite 或 MongoDB
 3. 如果选择 MongoDB，填写连接信息
-4. 点击 Save，重启应用生效
+4. 可点击 **Test Connection** 验证连接
+5. 点击 Save（会自动验证 MongoDB 连接）
+6. 重启应用生效
+
