@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 use crate::domain::model::{Action, ActionType, LoopConfig, Scene, SceneMatcher, Script, Step};
-use crate::infrastructure::browser::BrowserDriver;
+use crate::infrastructure::browser::{BrowserDriver, BrowserPoint};
 use crate::infrastructure::config::resources;
 
 /// Command to control script execution
@@ -265,11 +265,22 @@ impl ScriptRunner {
             }
 
             ActionType::Drag => {
-                if action.points.len() >= 2 {
+                if action.points.len() == 2 {
+                    // Two-point drag: use interpolated drag
                     let from = action.points[0];
-                    let to = action.points[action.points.len() - 1];
+                    let to = action.points[1];
                     if let Err(e) = self.browser.drag((from.x, from.y), (to.x, to.y)).await {
                         tracing::warn!("Drag failed: {}", e);
+                    }
+                } else if action.points.len() > 2 {
+                    // Multi-point path: use drag_path for precise path following
+                    let browser_points: Vec<BrowserPoint> = action
+                        .points
+                        .iter()
+                        .map(|p| BrowserPoint::new(p.x, p.y))
+                        .collect();
+                    if let Err(e) = self.browser.drag_path(&browser_points).await {
+                        tracing::warn!("Drag path failed: {}", e);
                     }
                 }
             }

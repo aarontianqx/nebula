@@ -1,4 +1,4 @@
-use super::driver::BrowserDriver;
+use super::driver::{BrowserDriver, BrowserPoint};
 use crate::domain::model::Cookie;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -190,6 +190,10 @@ impl BrowserDriver for ChromiumDriver {
     }
 
     async fn drag(&self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
+        // Frame interval for 60 FPS (~16.67ms)
+        const FRAME_INTERVAL_NS: u64 = 16_666_667;
+        const INTERPOLATION_STEPS: usize = 10;
+
         let page = self.page().await?;
         let page = page.lock().await;
 
@@ -205,10 +209,21 @@ impl BrowserDriver for ChromiumDriver {
         down_params.click_count = Some(1);
         page.execute(down_params).await?;
 
-        // Move to end position
-        let move_params =
-            DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, to.0, to.1);
-        page.execute(move_params).await?;
+        // Interpolate movement in steps for smooth, realistic dragging
+        let delta_x = (to.0 - from.0) / INTERPOLATION_STEPS as f64;
+        let delta_y = (to.1 - from.1) / INTERPOLATION_STEPS as f64;
+
+        for i in 1..=INTERPOLATION_STEPS {
+            let x = from.0 + delta_x * i as f64;
+            let y = from.1 + delta_y * i as f64;
+            
+            let move_params =
+                DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, x, y);
+            page.execute(move_params).await?;
+
+            // Frame-based timing for smooth movement
+            tokio::time::sleep(std::time::Duration::from_nanos(FRAME_INTERVAL_NS)).await;
+        }
 
         // Mouse up at end
         let mut up_params =
@@ -217,7 +232,54 @@ impl BrowserDriver for ChromiumDriver {
         up_params.click_count = Some(1);
         page.execute(up_params).await?;
 
-        tracing::trace!("Dragged from {:?} to {:?}", from, to);
+        tracing::trace!("Dragged from {:?} to {:?} with {} steps", from, to, INTERPOLATION_STEPS);
+        Ok(())
+    }
+
+    async fn drag_path(&self, points: &[BrowserPoint]) -> Result<()> {
+        if points.len() < 2 {
+            return Err(anyhow!("drag_path requires at least 2 points"));
+        }
+
+        // Frame interval for 60 FPS (~16.67ms)
+        const FRAME_INTERVAL_NS: u64 = 16_666_667;
+
+        let page = self.page().await?;
+        let page = page.lock().await;
+
+        let start = &points[0];
+
+        // Move to start position
+        let move_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, start.x, start.y);
+        page.execute(move_params).await?;
+
+        // Mouse down at start
+        let mut down_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, start.x, start.y);
+        down_params.button = Some(MouseButton::Left);
+        down_params.click_count = Some(1);
+        page.execute(down_params).await?;
+
+        // Move through all intermediate points with frame-based timing
+        for point in points.iter().skip(1) {
+            let move_params =
+                DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, point.x, point.y);
+            page.execute(move_params).await?;
+
+            // Frame delay between moves for smooth, realistic dragging
+            tokio::time::sleep(std::time::Duration::from_nanos(FRAME_INTERVAL_NS)).await;
+        }
+
+        // Mouse up at end position
+        let end = &points[points.len() - 1];
+        let mut up_params =
+            DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, end.x, end.y);
+        up_params.button = Some(MouseButton::Left);
+        up_params.click_count = Some(1);
+        page.execute(up_params).await?;
+
+        tracing::trace!("Dragged path with {} points", points.len());
         Ok(())
     }
 
