@@ -4,6 +4,20 @@ use std::time::Duration;
 
 use crate::domain::model::Cookie;
 
+/// Point for browser coordinate operations.
+/// Separate from domain::model::Point to maintain layer separation.
+#[derive(Debug, Clone, Copy)]
+pub struct BrowserPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl BrowserPoint {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+}
+
 /// Browser driver trait for abstracting browser automation
 #[async_trait]
 pub trait BrowserDriver: Send + Sync {
@@ -19,8 +33,12 @@ pub trait BrowserDriver: Send + Sync {
     /// Click at coordinates
     async fn click(&self, x: f64, y: f64) -> anyhow::Result<()>;
 
-    /// Drag from one point to another
+    /// Drag from one point to another with smooth interpolation (10 steps, 60fps timing)
     async fn drag(&self, from: (f64, f64), to: (f64, f64)) -> anyhow::Result<()>;
+
+    /// Drag along a path of points with frame-based timing.
+    /// Requires at least 2 points. Each segment uses 60fps timing for smooth movement.
+    async fn drag_path(&self, points: &[BrowserPoint]) -> anyhow::Result<()>;
 
     /// Start screencast streaming
     async fn start_screencast(&self) -> anyhow::Result<()>;

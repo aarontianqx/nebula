@@ -254,7 +254,7 @@ steps:
 |------|------|------|
 | click | 点击坐标 | points: [{x, y}] |
 | wait | 等待时间 | duration: 1s |
-| drag | 拖拽 | points: [{x1, y1}, {x2, y2}] |
+| drag | 平滑拖拽 | points: [{x, y}, ...] 支持多点路径 |
 | incr/decr | 计数器操作 | key: counter_name |
 | quit | 退出脚本 | condition: {op, key, value} |
 
