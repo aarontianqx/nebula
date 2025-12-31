@@ -265,6 +265,18 @@ pub async fn click_all_sessions(state: State<'_, AppState>, x: f64, y: f64) -> R
 }
 
 #[tauri::command]
+pub async fn drag_all_sessions(
+    state: State<'_, AppState>,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+) -> Result<(), String> {
+    state.coordinator.drag_all((from_x, from_y), (to_x, to_y)).await;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn refresh_session(
     state: State<'_, AppState>,
     session_id: String,

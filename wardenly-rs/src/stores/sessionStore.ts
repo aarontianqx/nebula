@@ -6,8 +6,12 @@ export type { SessionInfo, SessionState };
 
 interface SessionStore {
   sessions: SessionInfo[];
-  frames: Record<string, string>; // session_id -> base64 frame
+  // Single frame for the currently selected session's display
+  // Only updated when receiving frames for the selected session
+  currentFrame: string | null;
   selectedSessionId: string | null;
+  // Track how the current session was activated
+  activationSource: 'account' | 'group' | 'manual' | null;
   loading: boolean;
   error: string | null;
 
@@ -28,16 +32,18 @@ interface SessionStore {
   selectSession: (sessionId: string | null) => void;
 
   // Event handlers (called from useTauriEvents)
-  addSession: (session: SessionInfo) => void;
+  addSession: (session: SessionInfo, shouldSelect?: boolean) => void;
   updateSessionState: (sessionId: string, state: SessionState) => void;
   removeSession: (sessionId: string) => void;
   setFrame: (sessionId: string, frame: string) => void;
+  clearCurrentFrame: () => void;
 }
 
-export const useSessionStore = create<SessionStore>((set) => ({
+export const useSessionStore = create<SessionStore>((set, get) => ({
   sessions: [],
-  frames: {},
+  currentFrame: null,
   selectedSessionId: null,
+  activationSource: null,
   loading: false,
   error: null,
 
@@ -57,7 +63,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
       const sessionId = await invoke<string>("start_session", {
         accountId,
       });
-      set({ loading: false, selectedSessionId: sessionId });
+      set({ loading: false, selectedSessionId: sessionId, activationSource: 'account' });
       return sessionId;
     } catch (error) {
       set({ error: String(error), loading: false });
@@ -112,17 +118,25 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
 
   selectSession: (sessionId: string | null) => {
-    set({ selectedSessionId: sessionId });
+    set({ selectedSessionId: sessionId, activationSource: sessionId ? 'manual' : null });
   },
 
   // Event handlers
-  addSession: (session: SessionInfo) => {
+  addSession: (session: SessionInfo, shouldSelect: boolean = false) => {
     set((state) => {
       // Prevent duplicate sessions (can happen with React StrictMode or race conditions)
       if (state.sessions.some((s) => s.id === session.id)) {
         return state;
       }
-      return { sessions: [...state.sessions, session] };
+      const newState: Partial<SessionStore> = { sessions: [...state.sessions, session] };
+
+      // Auto-select if requested or if no session is currently selected
+      if (shouldSelect || state.selectedSessionId === null) {
+        newState.selectedSessionId = session.id;
+        newState.activationSource = shouldSelect ? 'group' : 'manual';
+      }
+
+      return newState;
     });
   },
 
@@ -135,20 +149,48 @@ export const useSessionStore = create<SessionStore>((set) => ({
   },
 
   removeSession: (sessionId: string) => {
-    set((state) => ({
-      sessions: state.sessions.filter((s) => s.id !== sessionId),
-      frames: Object.fromEntries(
-        Object.entries(state.frames).filter(([id]) => id !== sessionId)
-      ),
-      selectedSessionId:
-        state.selectedSessionId === sessionId ? null : state.selectedSessionId,
-    }));
+    set((state) => {
+      const newSessions = state.sessions.filter((s) => s.id !== sessionId);
+      let newSelectedId = state.selectedSessionId;
+      let newActivationSource = state.activationSource;
+      let newCurrentFrame = state.currentFrame;
+
+      // If the removed session was selected, auto-select next session
+      if (state.selectedSessionId === sessionId) {
+        if (newSessions.length > 0) {
+          // Find the index of the removed session
+          const oldIndex = state.sessions.findIndex((s) => s.id === sessionId);
+          // Select the session at the same index, or the last one if out of bounds
+          const nextIndex = Math.min(oldIndex, newSessions.length - 1);
+          newSelectedId = newSessions[nextIndex].id;
+          newActivationSource = 'manual';
+          // Don't clear frame - let the new session's frame overwrite it
+        } else {
+          newSelectedId = null;
+          newActivationSource = null;
+          newCurrentFrame = null; // Clear frame only when no sessions left
+        }
+      }
+
+      return {
+        sessions: newSessions,
+        selectedSessionId: newSelectedId,
+        activationSource: newActivationSource,
+        currentFrame: newCurrentFrame,
+      };
+    });
   },
 
+  // Only update currentFrame if this frame is for the currently selected session
   setFrame: (sessionId: string, frame: string) => {
-    set((state) => ({
-      frames: { ...state.frames, [sessionId]: frame },
-    }));
+    const state = get();
+    if (state.selectedSessionId === sessionId) {
+      set({ currentFrame: frame });
+    }
+  },
+
+  clearCurrentFrame: () => {
+    set({ currentFrame: null });
   },
 }));
 

@@ -216,6 +216,7 @@ pub fn run() {
             commands::click_session,
             commands::drag_session,
             commands::click_all_sessions,
+            commands::drag_all_sessions,
             commands::refresh_session,
             commands::start_screencast,
             commands::stop_screencast,
