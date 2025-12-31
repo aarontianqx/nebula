@@ -18,7 +18,7 @@ function MainWindow() {
     startSession,
     stopAllSessions,
     loading,
-    frames,
+    currentFrame,
   } = useSessionStore();
   const [showManagement, setShowManagement] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -104,19 +104,27 @@ function MainWindow() {
   };
 
 
-  // Capture immediate screenshot when switching sessions
-  // This ensures the canvas shows the current session's latest frame immediately,
-  // regardless of screencast state. The invoke is non-blocking (async).
+  // Handle session switch: capture screenshot or clear frame
+  // When switching TO a new session: don't clear old frame, let new frame overwrite it
+  // When session becomes null: clear all frames to prevent stale display
   const prevSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (selectedSessionId && selectedSessionId !== prevSessionIdRef.current) {
-      // Session changed - capture a screenshot to update canvas immediately
-      invoke("capture_screenshot", { sessionId: selectedSessionId }).catch(() => {
-        // Ignore errors (session might not be ready yet)
-      });
+    if (selectedSessionId !== prevSessionIdRef.current) {
+      if (selectedSessionId) {
+        // Switching to a new session - capture screenshot if screencast is OFF
+        // Don't clear the old frame - let the new frame overwrite it naturally
+        if (!screencastEnabled) {
+          invoke("capture_screenshot", { sessionId: selectedSessionId }).catch(() => {
+            // Ignore errors (session might not be ready yet)
+          });
+        }
+      } else {
+        // No session selected - clear the current frame
+        useSessionStore.getState().clearCurrentFrame();
+      }
     }
     prevSessionIdRef.current = selectedSessionId;
-  }, [selectedSessionId]);
+  }, [selectedSessionId, screencastEnabled]);
 
   // Manage screencast: only ONE session at a time, strictly controlled
   // When screencast is enabled: stream the selected session
@@ -202,9 +210,7 @@ function MainWindow() {
 
   // Inspector: fetch color at X/Y from current frame
   const fetchColorAtCoordinates = useCallback(() => {
-    if (!selectedSessionId) return;
-    const frame = frames[selectedSessionId];
-    if (!frame) return;
+    if (!selectedSessionId || !currentFrame) return;
 
     const x = parseInt(inspectorX) || 0;
     const y = parseInt(inspectorY) || 0;
@@ -228,8 +234,8 @@ function MainWindow() {
       setInspectorRgb([r, g, b]);
       setInspectorColor(`RGB(${r}, ${g}, ${b})`);
     };
-    img.src = `data:image/jpeg;base64,${frame}`;
-  }, [selectedSessionId, frames, inspectorX, inspectorY]);
+    img.src = `data:image/jpeg;base64,${currentFrame}`;
+  }, [selectedSessionId, currentFrame, inspectorX, inspectorY]);
 
   // Update inspector when coordinates change via keyboard input
   const handleInspectorKeyDown = (e: React.KeyboardEvent) => {
@@ -263,8 +269,7 @@ function MainWindow() {
       setInspectorY(Math.round(y).toString());
 
       // Fetch color at clicked position
-      if (selectedSessionId && frames[selectedSessionId]) {
-        const frame = frames[selectedSessionId];
+      if (selectedSessionId && currentFrame) {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement("canvas");
@@ -282,10 +287,10 @@ function MainWindow() {
           setInspectorRgb([r, g, b]);
           setInspectorColor(`RGB(${r}, ${g}, ${b})`);
         };
-        img.src = `data:image/jpeg;base64,${frame}`;
+        img.src = `data:image/jpeg;base64,${currentFrame}`;
       }
     },
-    [selectedSessionId, frames]
+    [selectedSessionId, currentFrame]
   );
 
   // Handle canvas mouse up: forward click to browser only if screencast enabled
@@ -302,13 +307,17 @@ function MainWindow() {
             await invoke("click_session", { sessionId: selectedSessionId, x, y });
           }
         } else if (action === "drag" && endX !== undefined && endY !== undefined) {
-          await invoke("drag_session", {
-            sessionId: selectedSessionId,
-            fromX: x,
-            fromY: y,
-            toX: endX,
-            toY: endY,
-          });
+          if (spreadToAll) {
+            await invoke("drag_all_sessions", { fromX: x, fromY: y, toX: endX, toY: endY });
+          } else {
+            await invoke("drag_session", {
+              sessionId: selectedSessionId,
+              fromX: x,
+              fromY: y,
+              toX: endX,
+              toY: endY,
+            });
+          }
         }
       } else {
         // Screencast OFF: capture a single screenshot to update the canvas

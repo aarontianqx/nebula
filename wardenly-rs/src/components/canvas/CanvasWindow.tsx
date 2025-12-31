@@ -12,7 +12,8 @@ interface Props {
 
 export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, keyboardPassthrough, spreadToAll }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frame = useSessionStore((s) => s.frames[sessionId]);
+  // Use the single currentFrame instead of looking up by sessionId
+  const frame = useSessionStore((s) => s.currentFrame);
 
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
@@ -44,12 +45,18 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
       });
   }, []);
 
-  // Draw frame to canvas
+  // Draw frame to canvas, or clear it when frame is undefined
   useEffect(() => {
-    if (!frame || !canvasRef.current) return;
+    if (!canvasRef.current) return;
 
     const ctx = canvasRef.current.getContext("2d");
     if (!ctx) return;
+
+    if (!frame) {
+      // Clear canvas when no frame (prevents stale content)
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      return;
+    }
 
     const img = new Image();
     img.onload = () => {
