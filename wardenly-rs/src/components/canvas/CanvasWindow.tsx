@@ -6,14 +6,43 @@ interface Props {
   sessionId: string;
   onCanvasClick?: (x: number, y: number) => void;
   onMouseAction?: (action: "click" | "drag", x: number, y: number, endX?: number, endY?: number) => void;
+  keyboardPassthrough?: boolean;
+  spreadToAll?: boolean;
 }
 
-export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction }: Props) {
+export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, keyboardPassthrough, spreadToAll }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frame = useSessionStore((s) => s.frames[sessionId]);
 
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+
+  // Keyboard passthrough state
+  const [cursorInBounds, setCursorInBounds] = useState(false);
+  const [currentCursorPos, setCurrentCursorPos] = useState<{ x: number; y: number } | null>(null);
+  const activeKeyRef = useRef<string | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Keyboard gesture configuration
+  const [keyboardConfig, setKeyboardConfig] = useState({
+    longPressThresholdMs: 300,
+    repeatIntervalMs: 100,
+  });
+
+  // Load keyboard configuration on mount
+  useEffect(() => {
+    invoke<{ long_press_threshold_ms: number; repeat_interval_ms: number }>("get_keyboard_config")
+      .then((config) => {
+        setKeyboardConfig({
+          longPressThresholdMs: config.long_press_threshold_ms,
+          repeatIntervalMs: config.repeat_interval_ms,
+        });
+      })
+      .catch((err) => {
+        console.warn("Failed to load keyboard config, using defaults:", err);
+      });
+  }, []);
 
   // Draw frame to canvas
   useEffect(() => {
@@ -87,29 +116,128 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction }
   const handleMouseLeave = useCallback(() => {
     setIsDragging(false);
     setDragStart(null);
-    // Notify backend that cursor left canvas
-    invoke("update_cursor_position", { x: 0, y: 0, inBounds: false });
+    setCursorInBounds(false);
+    setCurrentCursorPos(null);
   }, []);
 
-  // Throttled cursor position update for keyboard passthrough
-  const lastUpdateRef = useRef<number>(0);
+  // Track cursor position for keyboard passthrough
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const now = Date.now();
-      if (now - lastUpdateRef.current < 50) return; // Throttle to 50ms
-      lastUpdateRef.current = now;
-
       const coords = getCanvasCoordinates(e);
       if (coords) {
-        invoke("update_cursor_position", {
-          x: Math.round(coords.x),
-          y: Math.round(coords.y),
-          inBounds: true,
-        });
+        setCursorInBounds(true);
+        setCurrentCursorPos(coords);
       }
     },
     [getCanvasCoordinates]
   );
+
+  // Auto-focus canvas when mouse enters (if keyboard passthrough is enabled)
+  const handleMouseEnter = useCallback(() => {
+    if (keyboardPassthrough && canvasRef.current) {
+      canvasRef.current.focus();
+    }
+  }, [keyboardPassthrough]);
+
+  // Helper function to check if key is A-Z
+  const isAZKey = useCallback((key: string): boolean => {
+    return key.length === 1 && /^[a-zA-Z]$/.test(key);
+  }, []);
+
+  // Helper function to trigger click
+  const triggerClick = useCallback(
+    async (x: number, y: number) => {
+      try {
+        if (spreadToAll) {
+          await invoke("click_all_sessions", { x, y });
+        } else {
+          await invoke("click_session", { sessionId, x, y });
+        }
+      } catch (error) {
+        console.error("Failed to trigger keyboard click:", error);
+      }
+    },
+    [sessionId, spreadToAll]
+  );
+
+  // Cleanup function for timers
+  const cleanupTimers = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (repeatIntervalRef.current) {
+      clearInterval(repeatIntervalRef.current);
+      repeatIntervalRef.current = null;
+    }
+  }, []);
+
+  // Keyboard event handlers
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+      // Only process if keyboard passthrough is enabled
+      if (!keyboardPassthrough) return;
+
+      // Only process A-Z keys
+      if (!isAZKey(e.key)) return;
+
+      // Ignore if cursor is not in canvas bounds
+      if (!cursorInBounds || !currentCursorPos) return;
+
+      // Ignore if key is already pressed (prevent repeat from OS)
+      if (activeKeyRef.current === e.key) return;
+
+      // Prevent default to avoid any browser shortcuts
+      e.preventDefault();
+
+      // Mark key as active
+      activeKeyRef.current = e.key;
+
+      // Trigger immediate click (Tap gesture start)
+      triggerClick(currentCursorPos.x, currentCursorPos.y);
+
+      // Set up long press timer (configurable threshold)
+      longPressTimerRef.current = setTimeout(() => {
+        // Start repeating clicks (configurable interval)
+        repeatIntervalRef.current = setInterval(() => {
+          if (currentCursorPos) {
+            triggerClick(currentCursorPos.x, currentCursorPos.y);
+          }
+        }, keyboardConfig.repeatIntervalMs);
+      }, keyboardConfig.longPressThresholdMs);
+    },
+    [keyboardPassthrough, isAZKey, cursorInBounds, currentCursorPos, triggerClick, keyboardConfig]
+  );
+
+  const handleKeyUp = useCallback(
+    (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+      // Only process if this was the active key
+      if (activeKeyRef.current !== e.key) return;
+
+      // Prevent default
+      e.preventDefault();
+
+      // Clear active key and timers
+      activeKeyRef.current = null;
+      cleanupTimers();
+    },
+    [cleanupTimers]
+  );
+
+  // Cleanup on unmount or when keyboard passthrough is disabled
+  useEffect(() => {
+    return () => {
+      cleanupTimers();
+      activeKeyRef.current = null;
+    };
+  }, [cleanupTimers]);
+
+  useEffect(() => {
+    if (!keyboardPassthrough) {
+      cleanupTimers();
+      activeKeyRef.current = null;
+    }
+  }, [keyboardPassthrough, cleanupTimers]);
 
   return (
     <div className="relative">
@@ -117,11 +245,15 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction }
         ref={canvasRef}
         width={1080}
         height={720}
+        tabIndex={0}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseMove={handleMouseMove}
+        onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="w-full max-w-[1080px] border border-[var(--color-border)] rounded cursor-crosshair bg-black"
+        onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
+        className="w-full max-w-[1080px] border border-[var(--color-border)] rounded cursor-crosshair bg-black outline-none"
         style={{ aspectRatio: "1080 / 720" }}
       />
       {!frame && (

@@ -1,29 +1,29 @@
-mod gesture_config;
+mod keyboard_config;
 pub mod loader;
 pub mod paths;
 pub mod resources;
 pub mod settings;
 mod theme_config;
 
-pub use gesture_config::*;
+pub use keyboard_config::*;
 pub use settings::*;
 pub use theme_config::*;
 
 use std::sync::OnceLock;
 
-static GESTURE_CONFIG: OnceLock<GestureConfig> = OnceLock::new();
+static KEYBOARD_CONFIG: OnceLock<KeyboardConfig> = OnceLock::new();
 static THEME_CONFIG: OnceLock<ThemeConfig> = OnceLock::new();
 
 /// Initialize configuration system (called at app startup)
 pub fn init() {
-    GESTURE_CONFIG.get_or_init(|| loader::load_embedded_config("gesture"));
+    KEYBOARD_CONFIG.get_or_init(|| loader::load_embedded_config("keyboard"));
     THEME_CONFIG.get_or_init(|| loader::load_embedded_config("themes"));
     tracing::info!("Configuration initialized");
 }
 
-/// Get gesture configuration (embedded)
-pub fn gesture() -> &'static GestureConfig {
-    GESTURE_CONFIG.get().expect("Config not initialized")
+/// Get keyboard configuration (embedded)
+pub fn keyboard() -> &'static KeyboardConfig {
+    KEYBOARD_CONFIG.get().expect("Config not initialized")
 }
 
 /// Get theme configuration (embedded official presets)

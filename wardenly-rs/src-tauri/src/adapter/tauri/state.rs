@@ -1,10 +1,9 @@
 use crate::application::coordinator::Coordinator;
 use crate::application::eventbus::SharedEventBus;
-use crate::application::input::{ClickEvent, InputEventProcessor};
+use crate::application::input::InputEventProcessor;
 use crate::application::service::{AccountService, GroupService};
 use crate::domain::repository::{AccountRepository, GroupRepository};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
 
 /// Type aliases for dynamic repository types
 pub type DynAccountRepository = Box<dyn AccountRepository>;
@@ -16,7 +15,6 @@ pub struct AppState {
     pub coordinator: Arc<Coordinator>,
     pub event_bus: SharedEventBus,
     pub input_processor: Arc<InputEventProcessor>,
-    pub click_rx: Arc<Mutex<mpsc::UnboundedReceiver<ClickEvent>>>,
 }
 
 impl AppState {
@@ -31,7 +29,7 @@ impl AppState {
             coordinator_account_repo,
         ));
 
-        let (input_processor, click_rx) = InputEventProcessor::new();
+        let input_processor = InputEventProcessor::new();
 
         Self {
             account_service: AccountService::new(account_repo),
@@ -39,7 +37,6 @@ impl AppState {
             coordinator,
             event_bus,
             input_processor: Arc::new(input_processor),
-            click_rx: Arc::new(Mutex::new(click_rx)),
         }
     }
 }

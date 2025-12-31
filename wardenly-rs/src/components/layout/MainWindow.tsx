@@ -103,10 +103,6 @@ function MainWindow() {
     }
   };
 
-  // Update active session for input processor when selection changes
-  useEffect(() => {
-    invoke("set_active_session_for_input", { sessionId: selectedSessionId });
-  }, [selectedSessionId]);
 
   // Capture immediate screenshot when switching sessions
   // This ensures the canvas shows the current session's latest frame immediately,
@@ -510,6 +506,8 @@ function MainWindow() {
                 sessionId={selectedSessionId}
                 onCanvasClick={handleCanvasClick}
                 onMouseAction={handleCanvasMouseAction}
+                keyboardPassthrough={keyboardPassthrough}
+                spreadToAll={spreadToAll}
               />
               {/* Inspector Panel - HUD style below canvas */}
               <div className="mt-4 flex items-center gap-4 px-5 py-3 bg-[var(--color-bg-panel)] rounded-lg border border-[var(--color-border)] shadow-sm">

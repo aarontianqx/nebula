@@ -376,36 +376,10 @@ pub async fn get_keyboard_passthrough_status(state: State<'_, AppState>) -> Resu
     Ok(state.input_processor.is_enabled().await)
 }
 
-#[tauri::command]
-pub async fn update_cursor_position(
-    state: State<'_, AppState>,
-    x: i32,
-    y: i32,
-    in_bounds: bool,
-) -> Result<(), String> {
-    state
-        .input_processor
-        .update_cursor(x, y, in_bounds)
-        .await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn set_active_session_for_input(
-    state: State<'_, AppState>,
-    session_id: Option<String>,
-) -> Result<(), String> {
-    state
-        .input_processor
-        .set_active_session(session_id)
-        .await;
-    Ok(())
-}
-
 // ====== Settings & Theme Commands ======
 
 use crate::infrastructure::config::{
-    themes, user_settings, ThemeResponse, UserSettings, SettingsResponse,
+    keyboard, themes, user_settings, ThemeResponse, UserSettings, SettingsResponse,
     loader::{save_user_settings, settings_file_path},
 };
 
@@ -455,6 +429,21 @@ pub fn get_theme_config() -> Result<ThemeResponse, String> {
         active_theme: active_theme_name,
         css_vars: theme.to_css_vars(),
         available_themes: theme_config.available_themes(),
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct KeyboardConfigResponse {
+    pub long_press_threshold_ms: u64,
+    pub repeat_interval_ms: u64,
+}
+
+#[tauri::command]
+pub fn get_keyboard_config() -> Result<KeyboardConfigResponse, String> {
+    let config = keyboard();
+    Ok(KeyboardConfigResponse {
+        long_press_threshold_ms: config.long_press_threshold_ms,
+        repeat_interval_ms: config.repeat_interval_ms,
     })
 }
 
