@@ -11,7 +11,6 @@
 | 浏览器自动化 | chromiumoxide | CDP 协议，纯 Rust |
 | 异步运行时 | tokio | 高性能异步 I/O |
 | 数据库 | rusqlite / MongoDB | 本地/远程存储 |
-| 键盘监听 | rdev | 跨平台系统输入 |
 | 日志 | tracing | 结构化日志 |
 
 ## 架构原则
@@ -103,19 +102,16 @@ Idle → Starting → LoggingIn → Ready ⇄ ScriptRunning
 
 ### InputEventProcessor
 
-处理键盘透传：
+管理键盘透传状态（前端实现）：
 
 ```
-系统键盘 → KeyboardListener → GestureRecognizer → InputEventProcessor → Coordinator
-                                    │
-                            识别 Tap/LongPress
+Canvas Element → onKeyDown/onKeyUp → 前端手势识别 → click_session Command → Coordinator
 ```
 
-**GestureRecognizer 状态机**:
-- **Tap**: 按下后 <300ms 释放
-- **LongPressStart**: 按下超过 300ms
-- **LongPressRepeat**: 按住期间每 100ms 触发
-- **LongPressEnd**: 释放
+**前端手势识别**:
+- **Tap**: 按下后 <300ms 释放 → 触发一次点击
+- **LongPress**: 按住超过 300ms → 每 100ms 触发一次点击
+- 仅 A-Z 字母键生效，仅当鼠标在画布内时触发
 
 ### ScriptRunner
 
@@ -179,8 +175,7 @@ wardenly-rs/
 │   │   │   │   ├── group_service.rs    # 分组服务
 │   │   │   │   └── script_runner.rs    # 脚本执行器
 │   │   │   ├── input/
-│   │   │   │   ├── processor.rs    # InputEventProcessor
-│   │   │   │   └── gesture.rs      # GestureRecognizer
+│   │   │   │   └── processor.rs    # InputEventProcessor (状态管理)
 │   │   │   ├── command.rs          # 命令定义
 │   │   │   ├── coordinator.rs      # 多会话协调器
 │   │   │   └── eventbus.rs         # 事件总线
@@ -192,11 +187,6 @@ wardenly-rs/
 │   │   │   ├── browser/
 │   │   │   │   ├── driver.rs       # BrowserDriver trait
 │   │   │   │   └── chromium.rs     # chromiumoxide 实现
-│   │   │   ├── input/
-│   │   │   │   ├── keyboard.rs     # KeyboardListener trait
-│   │   │   │   ├── macos.rs        # macOS 实现
-│   │   │   │   ├── windows.rs      # Windows 实现
-│   │   │   │   └── linux.rs        # Linux 实现
 │   │   │   ├── config/
 │   │   │   │   ├── loader.rs       # YAML 加载器
 │   │   │   │   ├── paths.rs        # 平台路径
@@ -246,7 +236,7 @@ wardenly-rs/
 | **Tauri v2** | Web UI 灵活，体积小 |
 | **运行时存储切换** | 通过配置文件选择 SQLite 或 MongoDB，无需编译时指定 |
 | **chromiumoxide** | CDP 功能丰富，纯 Rust |
-| **rdev** | 跨平台键盘监听，API 统一 |
+| **前端键盘监听** | React 事件处理，无需系统权限，避免 rdev 焦点问题 |
 | **仅 A-Z 透传** | 避免与系统快捷键冲突 |
 | **事件驱动状态同步** | Coordinator 监听 SessionStateChanged 事件保持 SessionInfo 状态同步 |
 | **ULID 作为 ID** | 时间有序的唯一标识符，便于排序和索引 |

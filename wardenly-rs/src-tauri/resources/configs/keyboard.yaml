@@ -1,0 +1,10 @@
+# 键盘透传手势配置
+# Keyboard passthrough gesture configuration
+
+# 长按判定阈值（毫秒）
+# Long press detection threshold (milliseconds)
+long_press_threshold_ms: 300
+
+# 长按重复点击间隔（毫秒）
+# Long press repeat click interval (milliseconds)
+repeat_interval_ms: 100
