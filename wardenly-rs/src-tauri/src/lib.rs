@@ -181,8 +181,6 @@ pub fn run() {
     );
 
     // Get references before moving state
-    let input_processor = state.input_processor.clone();
-    let click_rx = state.click_rx.clone();
     let coordinator = state.coordinator.clone();
 
     // Start coordinator event listener for auto-cleanup of stopped sessions
@@ -195,26 +193,6 @@ pub fn run() {
         .setup(move |app| {
             // Start event forwarder to push events to frontend
             events::start_event_forwarder(app.handle().clone(), event_bus);
-
-            // Start input processing
-            let input_proc = input_processor.clone();
-            tauri::async_runtime::spawn(async move {
-                input_proc.start_processing().await;
-            });
-
-            // Start click event forwarder from keyboard passthrough to coordinator
-            let coord = coordinator.clone();
-            tauri::async_runtime::spawn(async move {
-                let mut rx = click_rx.lock().await;
-                while let Some(click_event) = rx.recv().await {
-                    if let Err(e) = coord
-                        .click_session(&click_event.session_id, click_event.x, click_event.y)
-                        .await
-                    {
-                        tracing::warn!("Failed to forward keyboard click: {}", e);
-                    }
-                }
-            });
 
             Ok(())
         })
@@ -251,13 +229,12 @@ pub fn run() {
             // Input commands
             commands::set_keyboard_passthrough,
             commands::get_keyboard_passthrough_status,
-            commands::update_cursor_position,
-            commands::set_active_session_for_input,
             // Settings & Theme commands
             commands::get_settings,
             commands::save_settings,
             commands::test_mongodb_connection,
             commands::get_theme_config,
+            commands::get_keyboard_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
