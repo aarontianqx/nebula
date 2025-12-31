@@ -188,12 +188,24 @@ impl Coordinator {
         Ok(())
     }
 
-    /// Click on all active sessions
+    /// Click on all active sessions (concurrent execution)
     pub async fn click_all(&self, x: f64, y: f64) {
         let sessions = self.sessions.read().await;
-        for handle in sessions.values() {
-            let _ = handle.cmd_tx.send(SessionCommand::Click { x, y }).await;
-        }
+        let futures: Vec<_> = sessions
+            .values()
+            .map(|h| h.cmd_tx.send(SessionCommand::Click { x, y }))
+            .collect();
+        futures::future::join_all(futures).await;
+    }
+
+    /// Drag on all active sessions (concurrent execution)
+    pub async fn drag_all(&self, from: (f64, f64), to: (f64, f64)) {
+        let sessions = self.sessions.read().await;
+        let futures: Vec<_> = sessions
+            .values()
+            .map(|h| h.cmd_tx.send(SessionCommand::Drag { from, to }))
+            .collect();
+        futures::future::join_all(futures).await;
     }
 
     /// Get all session infos (states are kept in sync via event listener)
