@@ -135,7 +135,8 @@ function MainWindow() {
       const currentScreencast = screencastSessionRef.current;
       const sessionIds = sessions.map((s) => s.id);
 
-      // Stop screencast if the session no longer exists
+      // Stop screencast if the session no longer exists (session was closed)
+      // Don't return early - continue to process the new selected session
       if (currentScreencast && !sessionIds.includes(currentScreencast)) {
         try {
           await invoke("stop_screencast", { sessionId: currentScreencast });
@@ -143,14 +144,14 @@ function MainWindow() {
           // Session already gone, ignore
         }
         screencastSessionRef.current = null;
-        return;
+        // Continue processing - don't return, we may need to start screencast for new session
       }
 
       // If screencast disabled, stop any active screencast
       if (!screencastEnabled) {
-        if (currentScreencast) {
+        if (screencastSessionRef.current) {
           try {
-            await invoke("stop_screencast", { sessionId: currentScreencast });
+            await invoke("stop_screencast", { sessionId: screencastSessionRef.current });
           } catch {
             // Ignore errors
           }
@@ -162,9 +163,9 @@ function MainWindow() {
       // Screencast enabled - need a valid selected session
       if (!selectedSessionId || !sessionIds.includes(selectedSessionId)) {
         // No valid session selected, stop any active screencast
-        if (currentScreencast) {
+        if (screencastSessionRef.current) {
           try {
-            await invoke("stop_screencast", { sessionId: currentScreencast });
+            await invoke("stop_screencast", { sessionId: screencastSessionRef.current });
           } catch {
             // Ignore
           }
@@ -174,14 +175,14 @@ function MainWindow() {
       }
 
       // If already streaming the selected session, nothing to do
-      if (currentScreencast === selectedSessionId) {
+      if (screencastSessionRef.current === selectedSessionId) {
         return;
       }
 
-      // Need to switch: stop old, start new
-      if (currentScreencast) {
+      // Need to switch: stop old (if any), start new
+      if (screencastSessionRef.current) {
         try {
-          await invoke("stop_screencast", { sessionId: currentScreencast });
+          await invoke("stop_screencast", { sessionId: screencastSessionRef.current });
         } catch {
           // Ignore
         }
@@ -507,8 +508,8 @@ function MainWindow() {
           <SessionList />
         </div>
 
-        {/* Canvas Panel */}
-        <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-auto">
+        {/* Canvas Panel - fills available space without scroll */}
+        <div className="flex-1 flex flex-col items-center justify-center p-4 min-h-0">
           {selectedSessionId ? (
             <>
               <CanvasWindow

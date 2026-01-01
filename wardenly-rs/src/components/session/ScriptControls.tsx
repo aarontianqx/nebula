@@ -21,9 +21,7 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
     try {
       const result = await invoke<ScriptInfo[]>('get_scripts');
       setScripts(result);
-      if (result.length > 0 && !selectedScript) {
-        setSelectedScript(result[0].name);
-      }
+      // Don't auto-select first script - let user choose
     } catch (e) {
       console.error('Failed to load scripts:', e);
     }
