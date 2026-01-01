@@ -1,15 +1,18 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use image::DynamicImage;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-use crate::domain::model::{Action, ActionType, LoopConfig, Scene, SceneMatcher, Script, Step};
+use crate::application::eventbus::SharedEventBus;
+use crate::domain::event::DomainEvent;
+use crate::domain::model::{Action, ActionType, LoopConfig, OcrRule, Scene, SceneMatcher, Script, Step};
 use crate::infrastructure::browser::{BrowserDriver, BrowserPoint};
 use crate::infrastructure::config::resources;
+use crate::infrastructure::ocr::{OcrClientHandle, Roi};
 
 /// Command to control script execution
 #[derive(Debug)]
@@ -38,26 +41,38 @@ enum StepResult {
 
 /// ScriptRunner executes automation scripts
 pub struct ScriptRunner {
+    session_id: String,
     script: Script,
     scenes: Vec<Scene>,
     browser: Arc<dyn BrowserDriver>,
+    ocr_client: OcrClientHandle,
+    event_bus: SharedEventBus,
     scene_matcher: SceneMatcher,
     counters: HashMap<String, i32>,
     running: Arc<AtomicBool>,
     cmd_rx: mpsc::Receiver<ScriptCommand>,
 }
 
+/// Maximum consecutive capture failures before stopping
+const MAX_CAPTURE_FAILURES: u32 = 10;
+
 impl ScriptRunner {
     pub fn new(
+        session_id: String,
         script: Script,
         scenes: Vec<Scene>,
         browser: Arc<dyn BrowserDriver>,
+        ocr_client: OcrClientHandle,
+        event_bus: SharedEventBus,
         cmd_rx: mpsc::Receiver<ScriptCommand>,
     ) -> Self {
         Self {
+            session_id,
             script,
             scenes,
             browser,
+            ocr_client,
+            event_bus,
             scene_matcher: SceneMatcher::default(),
             counters: HashMap::new(),
             running: Arc::new(AtomicBool::new(true)),
@@ -70,6 +85,7 @@ impl ScriptRunner {
         tracing::info!(script = %self.script.name, "Script started");
 
         let default_wait = Duration::from_millis(500);
+        let mut capture_failures: u32 = 0;
 
         while self.running.load(Ordering::Relaxed) {
             // Check for stop command
@@ -80,9 +96,19 @@ impl ScriptRunner {
 
             // Capture current screen
             let image = match self.browser.capture_screen().await {
-                Ok(img) => img,
+                Ok(img) => {
+                    capture_failures = 0; // Reset on success
+                    img
+                }
                 Err(e) => {
-                    tracing::warn!("Failed to capture screen: {}", e);
+                    capture_failures += 1;
+                    tracing::warn!(attempt = capture_failures, "Failed to capture screen: {}", e);
+                    
+                    if capture_failures >= MAX_CAPTURE_FAILURES {
+                        tracing::error!("Too many capture failures, browser may have stopped");
+                        return StopReason::BrowserStopped;
+                    }
+                    
                     if self.running.load(Ordering::Relaxed) {
                         sleep(default_wait).await;
                     }
@@ -138,13 +164,28 @@ impl ScriptRunner {
     }
 
     /// Execute a step by index
-    async fn execute_step_by_index(&mut self, step_idx: usize, _image: &DynamicImage) -> StepResult {
+    async fn execute_step_by_index(&mut self, step_idx: usize, image: &DynamicImage) -> StepResult {
         if !self.running.load(Ordering::Relaxed) {
             return StepResult::Quit;
         }
 
         // Clone step data to avoid borrow issues
         let step = self.script.steps[step_idx].clone();
+        let scene_name = step.expected_scene.clone();
+
+        // Publish step executed event for progress tracking
+        self.event_bus.publish(DomainEvent::ScriptStepExecuted {
+            session_id: self.session_id.clone(),
+            step_index: step_idx,
+            scene_name: scene_name.clone(),
+        });
+
+        // Check OCR rule before executing actions
+        if let Some(ref ocr_rule) = step.ocr_rule {
+            if let Some(result) = self.check_ocr_rule(ocr_rule, image).await {
+                return result;
+            }
+        }
 
         // Handle looped actions
         if let Some(loop_config) = &step.loop_config {
@@ -176,7 +217,6 @@ impl ScriptRunner {
 
         // Execute loop
         let mut iteration = 0;
-        let start_time = Instant::now();
 
         while self.running.load(Ordering::Relaxed) {
             // Check for stop command
@@ -217,11 +257,7 @@ impl ScriptRunner {
                 sleep(Duration::from_millis(300)).await;
             }
 
-            // Safety timeout (5 minutes max)
-            if start_time.elapsed() > Duration::from_secs(300) {
-                tracing::warn!("Loop timeout reached");
-                break;
-            }
+            // (5-minute safety timeout removed per user request - loops can run indefinitely)
         }
 
         // Execute post-loop actions
@@ -308,12 +344,58 @@ impl ScriptRunner {
             }
 
             ActionType::CheckScene => {
-                // OCR check would go here
-                // For now, just continue
+                // OCR check handled at step level in execute_step_by_index
             }
         }
 
         StepResult::Continue
+    }
+
+    /// Check OCR rule and return StepResult if should stop
+    async fn check_ocr_rule(&self, ocr_rule: &OcrRule, image: &DynamicImage) -> Option<StepResult> {
+        // Only handle "quit_when_exhausted" rule
+        if ocr_rule.name != "quit_when_exhausted" {
+            tracing::warn!(rule = %ocr_rule.name, "Unknown OCR rule, skipping");
+            return None;
+        }
+
+        // Check if OCR service is healthy
+        if !self.ocr_client.is_healthy() {
+            tracing::debug!("OCR service unavailable, skipping rule check");
+            return None;
+        }
+
+        // Perform OCR recognition
+        let roi = Roi {
+            x: ocr_rule.roi.x,
+            y: ocr_rule.roi.y,
+            width: ocr_rule.roi.width,
+            height: ocr_rule.roi.height,
+        };
+
+        match self.ocr_client.recognize_usage_ratio(image, Some(&roi)).await {
+            Ok(result) => {
+                tracing::info!(
+                    rule = %ocr_rule.name,
+                    numerator = result.numerator,
+                    denominator = result.denominator,
+                    threshold = ocr_rule.threshold,
+                    "OCR result"
+                );
+
+                // quit_when_exhausted: stop if denominator exceeds threshold or denominator > numerator
+                if result.denominator > ocr_rule.threshold || result.denominator > result.numerator {
+                    tracing::info!("Resource exhausted detected, stopping script");
+                    return Some(StepResult::ResourceExhausted);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("OCR recognition failed: {}", e);
+                // Don't stop on OCR failure - continue execution
+            }
+        }
+
+        None
     }
 
     /// Stop the script runner

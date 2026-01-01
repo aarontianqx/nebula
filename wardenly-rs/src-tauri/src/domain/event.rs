@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::model::SessionState;
+use serde::{Deserialize, Serialize};
 
 /// Domain events that represent state changes in the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +46,13 @@ pub enum DomainEvent {
         session_id: String,
         script_name: String,
     },
+
+    /// Script step executed
+    ScriptStepExecuted {
+        session_id: String,
+        step_index: usize,
+        scene_name: String,
+    },
 }
 
 impl DomainEvent {
@@ -60,7 +67,7 @@ impl DomainEvent {
             Self::LoginFailed { .. } => "login_failed",
             Self::ScriptStarted { .. } => "script_started",
             Self::ScriptStopped { .. } => "script_stopped",
+            Self::ScriptStepExecuted { .. } => "script_step_executed",
         }
     }
 }
-
