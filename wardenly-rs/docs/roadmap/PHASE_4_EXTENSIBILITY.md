@@ -17,168 +17,42 @@
 
 ## 1. Keyboard Passthrough
 
-### 1.1 Infrastructure 层
+### 1.1 前端键盘事件监听
 
-**`infrastructure/input/keyboard.rs`**:
-```rust
-use async_trait::async_trait;
-use tokio::sync::mpsc;
-use std::time::Instant;
+键盘透传在前端 React 组件中实现，通过 Canvas 元素直接监听键盘事件：
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum KeyCode {
-    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
-    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Space, Enter, Escape,
-    Other(u32),
-}
+```tsx
+// components/canvas/CanvasWindow.tsx
+const handleKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+  if (!keyboardPassthrough) return;
+  
+  // 仅处理 A-Z 键
+  const key = e.key.toUpperCase();
+  if (!/^[A-Z]$/.test(key)) return;
+  
+  // 记录按下时间，用于判断长按
+  keyPressTime.current[key] = Date.now();
+  triggerClick(); // 立即触发一次点击
+  
+  // 启动长按定时器
+  longPressTimer.current[key] = setInterval(() => {
+    triggerClick();
+  }, repeatIntervalMs);
+};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum KeyEventType {
-    Press,
-    Release,
-}
-
-#[derive(Debug, Clone)]
-pub struct RawKeyEvent {
-    pub key: KeyCode,
-    pub event_type: KeyEventType,
-    pub timestamp: Instant,
-}
-
-#[async_trait]
-pub trait KeyboardListener: Send + Sync {
-    async fn start(&mut self) -> anyhow::Result<()>;
-    fn stop(&mut self);
-    fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<RawKeyEvent>>;
-    fn is_listening(&self) -> bool;
-}
+const handleKeyUp = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+  const key = e.key.toUpperCase();
+  if (longPressTimer.current[key]) {
+    clearInterval(longPressTimer.current[key]);
+    delete longPressTimer.current[key];
+  }
+};
 ```
 
-**`infrastructure/input/mod.rs`**:
-```rust
-mod keyboard;
-
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "linux")]
-mod linux;
-
-pub use keyboard::*;
-
-pub fn create_keyboard_listener() -> Box<dyn KeyboardListener> {
-    #[cfg(target_os = "macos")]
-    { Box::new(macos::MacOSKeyboardListener::new()) }
-    
-    #[cfg(target_os = "windows")]
-    { Box::new(windows::WindowsKeyboardListener::new()) }
-    
-    #[cfg(target_os = "linux")]
-    { Box::new(linux::LinuxKeyboardListener::new()) }
-}
-```
-
-**`infrastructure/input/macos.rs`** (使用 rdev):
-```rust
-use rdev::{listen, Event, EventType, Key};
-use tokio::sync::mpsc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use super::{KeyboardListener, RawKeyEvent, KeyCode, KeyEventType};
-
-pub struct MacOSKeyboardListener {
-    tx: mpsc::UnboundedSender<RawKeyEvent>,
-    rx: Option<mpsc::UnboundedReceiver<RawKeyEvent>>,
-    listening: Arc<AtomicBool>,
-}
-
-impl MacOSKeyboardListener {
-    pub fn new() -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
-        Self {
-            tx,
-            rx: Some(rx),
-            listening: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl KeyboardListener for MacOSKeyboardListener {
-    async fn start(&mut self) -> anyhow::Result<()> {
-        if self.listening.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        
-        let tx = self.tx.clone();
-        let listening = self.listening.clone();
-        listening.store(true, Ordering::SeqCst);
-        
-        std::thread::spawn(move || {
-            let _ = listen(move |event| {
-                if !listening.load(Ordering::SeqCst) {
-                    return;
-                }
-                
-                let raw_event = match event.event_type {
-                    EventType::KeyPress(key) => Some(RawKeyEvent {
-                        key: convert_key(key),
-                        event_type: KeyEventType::Press,
-                        timestamp: std::time::Instant::now(),
-                    }),
-                    EventType::KeyRelease(key) => Some(RawKeyEvent {
-                        key: convert_key(key),
-                        event_type: KeyEventType::Release,
-                        timestamp: std::time::Instant::now(),
-                    }),
-                    _ => None,
-                };
-                
-                if let Some(e) = raw_event {
-                    let _ = tx.send(e);
-                }
-            });
-        });
-        
-        Ok(())
-    }
-    
-    fn stop(&mut self) {
-        self.listening.store(false, Ordering::SeqCst);
-    }
-    
-    fn take_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<RawKeyEvent>> {
-        self.rx.take()
-    }
-    
-    fn is_listening(&self) -> bool {
-        self.listening.load(Ordering::SeqCst)
-    }
-}
-
-fn convert_key(key: Key) -> KeyCode {
-    match key {
-        Key::Num0 | Key::Kp0 => KeyCode::Num0,
-        Key::Num1 | Key::Kp1 => KeyCode::Num1,
-        Key::Num2 | Key::Kp2 => KeyCode::Num2,
-        Key::Num3 | Key::Kp3 => KeyCode::Num3,
-        Key::Num4 | Key::Kp4 => KeyCode::Num4,
-        Key::Num5 | Key::Kp5 => KeyCode::Num5,
-        Key::Num6 | Key::Kp6 => KeyCode::Num6,
-        Key::Num7 | Key::Kp7 => KeyCode::Num7,
-        Key::Num8 | Key::Kp8 => KeyCode::Num8,
-        Key::Num9 | Key::Kp9 => KeyCode::Num9,
-        Key::KeyA => KeyCode::A,
-        Key::KeyB => KeyCode::B,
-        // ... 其他键位
-        Key::Space => KeyCode::Space,
-        Key::Return => KeyCode::Enter,
-        Key::Escape => KeyCode::Escape,
-        _ => KeyCode::Other(0),
-    }
-}
+**优势**:
+- 无需系统级权限（如 macOS 辅助功能权限）
+- 事件与画布焦点绑定，避免误触发
+- 配置从后端加载 (`gesture.yaml`)
 ```
 
 ### 1.2 Application 层
