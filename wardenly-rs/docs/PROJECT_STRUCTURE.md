@@ -236,7 +236,7 @@ wardenly-rs/
 | **Tauri v2** | Web UI 灵活，体积小 |
 | **运行时存储切换** | 通过配置文件选择 SQLite 或 MongoDB，无需编译时指定 |
 | **chromiumoxide** | CDP 功能丰富，纯 Rust |
-| **前端键盘监听** | React 事件处理，无需系统权限，避免 rdev 焦点问题 |
+| **前端键盘监听** | React 事件处理，Canvas 直接监听键盘事件，无需系统权限 |
 | **仅 A-Z 透传** | 避免与系统快捷键冲突 |
 | **事件驱动状态同步** | Coordinator 监听 SessionStateChanged 事件保持 SessionInfo 状态同步 |
 | **ULID 作为 ID** | 时间有序的唯一标识符，便于排序和索引 |
