@@ -203,6 +203,9 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
       // Trigger immediate click (Tap gesture start)
       triggerClick(currentCursorPos.x, currentCursorPos.y);
 
+      // Also update Inspector with color at this position (only for tap, not long-press repeats)
+      onCanvasClick?.(currentCursorPos.x, currentCursorPos.y);
+
       // Set up long press timer (configurable threshold)
       longPressTimerRef.current = setTimeout(() => {
         // Start repeating clicks (configurable interval)
@@ -213,7 +216,7 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
         }, keyboardConfig.repeatIntervalMs);
       }, keyboardConfig.longPressThresholdMs);
     },
-    [keyboardPassthrough, isAZKey, cursorInBounds, currentCursorPos, triggerClick, keyboardConfig]
+    [keyboardPassthrough, isAZKey, cursorInBounds, currentCursorPos, triggerClick, onCanvasClick, keyboardConfig]
   );
 
   const handleKeyUp = useCallback(
@@ -247,7 +250,7 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
   }, [keyboardPassthrough, cleanupTimers]);
 
   return (
-    <div className="relative">
+    <div className="relative flex-1 flex items-center justify-center max-h-full min-h-0">
       <canvas
         ref={canvasRef}
         width={1080}
@@ -260,7 +263,7 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
         onMouseLeave={handleMouseLeave}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
-        className="w-full max-w-[1080px] border border-[var(--color-border)] rounded cursor-crosshair bg-black outline-none"
+        className="max-w-full max-h-full border border-[var(--color-border)] rounded cursor-crosshair bg-black outline-none"
         style={{ aspectRatio: "1080 / 720" }}
       />
       {!frame && (
