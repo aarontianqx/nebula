@@ -69,19 +69,27 @@ Settings can be changed via the in-app Settings dialog. When using MongoDB:
 
 ### Embedded Configs
 
-Embedded configuration files in `src-tauri/resources/configs/`:
+Default configuration files shipped with the app, located in `src-tauri/resources/configs/`:
 
-- `themes.yaml` - Theme definitions
-- `gesture.yaml` - Keyboard passthrough settings
+| File | Description |
+|------|-------------|
+| `themes.yaml` | Theme definitions (colors, fonts) |
+| `keyboard.yaml` | Keyboard passthrough timing (long press threshold, repeat interval) |
 
-```yaml
-# gesture.yaml
-keyboard_passthrough:
-  long_press_threshold_ms: 300
-  repeat_interval_ms: 100
-  debounce_window_ms: 50
-```
+### User Configs
 
+User-specific configuration stored in the app's config directory:
+
+| Platform | Config Directory |
+|----------|------------------|
+| macOS | `~/Library/Application Support/wardenly/` |
+| Windows | `%APPDATA%\wardenly\` |
+| Linux | `~/.config/wardenly/` |
+
+**`settings.yaml`** - User settings file (created on first save):
+- `theme` - Selected theme name
+- `storage` - Storage backend settings (SQLite/MongoDB)
+- `keyboard` - Optional overrides for keyboard timing (overrides embedded defaults)
 
 ## macOS Permissions
 

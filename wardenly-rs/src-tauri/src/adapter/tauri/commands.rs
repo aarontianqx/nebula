@@ -438,3 +438,32 @@ pub fn get_theme_config() -> Result<ThemeResponse, String> {
         available_themes: theme_config.available_themes(),
     })
 }
+
+// ====== Keyboard Config ======
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct KeyboardConfigResponse {
+    pub long_press_threshold_ms: u64,
+    pub repeat_interval_ms: u64,
+}
+
+/// Get keyboard configuration (merged: user settings override > embedded default)
+#[tauri::command]
+pub fn get_keyboard_config() -> Result<KeyboardConfigResponse, String> {
+    let embedded = keyboard();
+    let user = user_settings();
+
+    Ok(KeyboardConfigResponse {
+        long_press_threshold_ms: user
+            .keyboard
+            .as_ref()
+            .and_then(|k| k.long_press_threshold_ms)
+            .unwrap_or(embedded.long_press_threshold_ms),
+        repeat_interval_ms: user
+            .keyboard
+            .as_ref()
+            .and_then(|k| k.repeat_interval_ms)
+            .unwrap_or(embedded.repeat_interval_ms),
+    })
+}

@@ -11,6 +11,20 @@ pub struct UserSettings {
 
     /// Storage configuration
     pub storage: StorageSettings,
+
+    /// Keyboard passthrough configuration (optional override)
+    /// Values here override embedded keyboard.yaml defaults
+    pub keyboard: Option<KeyboardOverride>,
+}
+
+/// Optional keyboard passthrough config overrides
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct KeyboardOverride {
+    /// Long press detection threshold in milliseconds
+    pub long_press_threshold_ms: Option<u64>,
+    /// Long press repeat click interval in milliseconds
+    pub repeat_interval_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,4 +82,3 @@ pub struct SettingsResponse {
     /// Default theme name from embedded themes.yaml
     pub default_theme: String,
 }
-

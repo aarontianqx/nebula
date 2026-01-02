@@ -8,7 +8,7 @@ mod config;
 
 use std::sync::OnceLock;
 
-pub use client::{HttpOcrClient, NoOpOcrClient, OcrClient, OcrClientHandle, Roi, UsageRatioResult};
+pub use client::{HttpOcrClient, OcrClient, OcrClientHandle, Roi, UsageRatioResult};
 pub use config::OcrConfig;
 
 /// Global OCR client singleton
