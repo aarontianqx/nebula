@@ -225,6 +225,14 @@ impl OcrClient for HttpOcrClient {
     }
 }
 
+/// Ensure background health check thread is stopped when client is dropped
+impl Drop for HttpOcrClient {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
+        tracing::debug!("HttpOcrClient dropped, health check loop signaled to stop");
+    }
+}
+
 /// No-operation OCR client for when OCR is disabled.
 pub struct NoOpOcrClient;
 

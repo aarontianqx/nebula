@@ -119,6 +119,8 @@ Canvas Element → onKeyDown/onKeyUp → 前端手势识别 → click_session Co
 - 截取画面并匹配场景
 - 执行动作序列
 - 支持循环和条件控制
+- OCR 资源耗尽检测（全局单例，后台健康检查）
+- 发布 `ScriptStepExecuted` 进度事件
 
 ## 目录结构
 
@@ -194,6 +196,9 @@ wardenly-rs/
 │   │   │   │   ├── theme_config.rs # 主题配置
 │   │   │   │   ├── gesture_config.rs # 手势配置
 │   │   │   │   └── resources.rs    # 资源加载
+│   │   │   ├── ocr/
+│   │   │   │   ├── client.rs       # HttpOcrClient (全局单例)
+│   │   │   │   └── config.rs       # OCR 配置
 │   │   │   └── logging/            # 日志模块
 │   │   │
 │   │   └── adapter/                # 适配器层
