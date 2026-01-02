@@ -250,15 +250,23 @@ impl Coordinator {
         Ok(())
     }
 
-    /// Start script on all sessions
-    pub async fn start_all_scripts(&self, script_name: &str) {
+    /// Start scripts on all sessions with per-session script selection
+    /// Only starts on sessions that have a script selected
+    pub async fn start_all_scripts(
+        &self,
+        session_scripts: std::collections::HashMap<String, String>,
+    ) {
         let sessions = self.sessions.read().await;
         for (session_id, handle) in sessions.iter() {
+            // Get script for this session, skip if none selected
+            let script_name = match session_scripts.get(session_id) {
+                Some(name) if !name.is_empty() => name.clone(),
+                _ => continue, // No script selected for this session
+            };
+
             if handle
                 .cmd_tx
-                .send(SessionCommand::StartScript {
-                    script_name: script_name.to_string(),
-                })
+                .send(SessionCommand::StartScript { script_name: script_name.clone() })
                 .await
                 .is_ok()
             {

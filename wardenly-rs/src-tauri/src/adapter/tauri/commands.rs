@@ -357,9 +357,9 @@ pub async fn stop_script(state: State<'_, AppState>, session_id: String) -> Resu
 #[tauri::command]
 pub async fn start_all_scripts(
     state: State<'_, AppState>,
-    script_name: String,
+    session_scripts: std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
-    state.coordinator.start_all_scripts(&script_name).await;
+    state.coordinator.start_all_scripts(session_scripts).await;
     Ok(())
 }
 
@@ -381,11 +381,6 @@ pub async fn set_keyboard_passthrough(
         .set_enabled(enabled)
         .await
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn get_keyboard_passthrough_status(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.input_processor.is_enabled().await)
 }
 
 // ====== Settings & Theme Commands ======
@@ -443,19 +438,3 @@ pub fn get_theme_config() -> Result<ThemeResponse, String> {
         available_themes: theme_config.available_themes(),
     })
 }
-
-#[derive(serde::Serialize)]
-pub struct KeyboardConfigResponse {
-    pub long_press_threshold_ms: u64,
-    pub repeat_interval_ms: u64,
-}
-
-#[tauri::command]
-pub fn get_keyboard_config() -> Result<KeyboardConfigResponse, String> {
-    let config = keyboard();
-    Ok(KeyboardConfigResponse {
-        long_press_threshold_ms: config.long_press_threshold_ms,
-        repeat_interval_ms: config.repeat_interval_ms,
-    })
-}
-

@@ -229,13 +229,11 @@ pub fn run() {
             commands::stop_all_scripts,
             // Input commands
             commands::set_keyboard_passthrough,
-            commands::get_keyboard_passthrough_status,
             // Settings & Theme commands
             commands::get_settings,
             commands::save_settings,
             commands::test_mongodb_connection,
             commands::get_theme_config,
-            commands::get_keyboard_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,6 +12,8 @@ interface SessionStore {
   selectedSessionId: string | null;
   // Track how the current session was activated
   activationSource: 'account' | 'group' | 'manual' | null;
+  // Per-session script selection (sessionId -> scriptName)
+  sessionScripts: Record<string, string>;
   loading: boolean;
   error: string | null;
 
@@ -30,6 +32,7 @@ interface SessionStore {
     toY: number
   ) => Promise<void>;
   selectSession: (sessionId: string | null) => void;
+  setSessionScript: (sessionId: string, scriptName: string) => void;
 
   // Event handlers (called from useTauriEvents)
   addSession: (session: SessionInfo, shouldSelect?: boolean) => void;
@@ -44,6 +47,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   currentFrame: null,
   selectedSessionId: null,
   activationSource: null,
+  sessionScripts: {},
   loading: false,
   error: null,
 
@@ -121,6 +125,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set({ selectedSessionId: sessionId, activationSource: sessionId ? 'manual' : null });
   },
 
+  setSessionScript: (sessionId: string, scriptName: string) => {
+    set((state) => ({
+      sessionScripts: { ...state.sessionScripts, [sessionId]: scriptName }
+    }));
+  },
+
   // Event handlers
   addSession: (session: SessionInfo, shouldSelect: boolean = false) => {
     set((state) => {
@@ -155,6 +165,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       let newActivationSource = state.activationSource;
       let newCurrentFrame = state.currentFrame;
 
+      // Clean up sessionScripts for removed session
+      const { [sessionId]: _, ...remainingScripts } = state.sessionScripts;
+
       // If the removed session was selected, auto-select next session
       if (state.selectedSessionId === sessionId) {
         if (newSessions.length > 0) {
@@ -177,6 +190,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         selectedSessionId: newSelectedId,
         activationSource: newActivationSource,
         currentFrame: newCurrentFrame,
+        sessionScripts: remainingScripts,
       };
     });
   },

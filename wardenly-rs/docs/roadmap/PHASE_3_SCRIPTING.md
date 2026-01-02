@@ -10,7 +10,7 @@
 - [x] 颜色点匹配算法
 - [x] 脚本引擎核心逻辑
 - [x] 循环与条件控制
-- [ ] OCR 检测集成 (可选，移至 Phase 4)
+- [x] OCR 资源耗尽检测
 - [x] 脚本控制 UI
 
 ---
@@ -577,11 +577,11 @@ pub async fn stop_script(
 
 #[tauri::command]
 pub async fn start_all_scripts(
-    script_name: String,
+    session_scripts: HashMap<String, String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     state.coordinator
-        .dispatch(CoordinatorCommand::StartAllScripts { script_name })
+        .dispatch(CoordinatorCommand::StartAllScripts { session_scripts })
         .await
         .map_err(|e| e.to_string())
 }
@@ -626,7 +626,7 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
   const handleStart = () => invoke('start_script', { sessionId, scriptName: selectedScript });
   const handleStop = () => invoke('stop_script', { sessionId });
   const handleSync = () => invoke('sync_script_selection', { scriptName: selectedScript });
-  const handleRunAll = () => invoke('start_all_scripts', { scriptName: selectedScript });
+  const handleRunAll = () => invoke('start_all_scripts', { sessionScripts });
   
   return (
     <div className="flex items-center gap-2">
