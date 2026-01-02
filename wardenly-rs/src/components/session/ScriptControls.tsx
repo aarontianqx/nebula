@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Play, Square, RefreshCw, PlayCircle, StopCircle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { ScriptInfo, SessionState, SessionStateEnum } from '../../types';
+import { useSessionStore } from '../../stores/sessionStore';
 
 interface Props {
   sessionId: string | null;
@@ -10,8 +11,11 @@ interface Props {
 
 export default function ScriptControls({ sessionId, sessionState }: Props) {
   const [scripts, setScripts] = useState<ScriptInfo[]>([]);
-  const [selectedScript, setSelectedScript] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Per-session script selection from store
+  const { sessions, sessionScripts, setSessionScript } = useSessionStore();
+  const selectedScript = sessionId ? (sessionScripts[sessionId] || '') : '';
 
   useEffect(() => {
     loadScripts();
@@ -21,9 +25,14 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
     try {
       const result = await invoke<ScriptInfo[]>('get_scripts');
       setScripts(result);
-      // Don't auto-select first script - let user choose
     } catch (e) {
       console.error('Failed to load scripts:', e);
+    }
+  };
+
+  const handleScriptChange = (scriptName: string) => {
+    if (sessionId) {
+      setSessionScript(sessionId, scriptName);
     }
   };
 
@@ -52,16 +61,11 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
     setLoading(false);
   };
 
-  const handleSync = () => {
-    // Sync script selection to all sessions (future feature)
-    console.log('Sync script selection:', selectedScript);
-  };
-
   const handleRunAll = async () => {
-    if (!selectedScript) return;
     setLoading(true);
     try {
-      await invoke('start_all_scripts', { scriptName: selectedScript });
+      // Pass sessionScripts map to backend - each session uses its own selected script
+      await invoke('start_all_scripts', { sessionScripts });
     } catch (e) {
       console.error('Failed to start all scripts:', e);
     }
@@ -78,14 +82,24 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
     setLoading(false);
   };
 
+  // Sync current session's script to all other sessions
+  const handleSync = () => {
+    if (!selectedScript) return;
+    sessions.forEach((s) => {
+      if (s.id !== sessionId) {
+        setSessionScript(s.id, selectedScript);
+      }
+    });
+  };
+
   return (
     <div className="flex items-center gap-2">
       {/* Script Selection */}
       <select
         value={selectedScript}
-        onChange={(e) => setSelectedScript(e.target.value)}
+        onChange={(e) => handleScriptChange(e.target.value)}
         className="border rounded px-3 py-2 bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] text-sm min-w-[140px] focus:outline-none focus:border-[var(--color-accent)]"
-        disabled={isRunning || loading}
+        disabled={isRunning || loading || !sessionId}
       >
         <option value="">Select Script</option>
         {scripts.map((s) => (
@@ -116,34 +130,35 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
         </button>
       )}
 
-      {/* Sync Button */}
+      {/* Start All / Stop All Scripts Toggle Button */}
+      {isRunning ? (
+        <button
+          onClick={handleStopAll}
+          disabled={loading}
+          className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
+          title="Stop All Scripts"
+        >
+          <StopCircle className="w-4 h-4" />
+        </button>
+      ) : (
+        <button
+          onClick={handleRunAll}
+          disabled={loading}
+          className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
+          title="Start All Scripts"
+        >
+          <PlayCircle className="w-4 h-4" />
+        </button>
+      )}
+
+      {/* Sync Button - copy current script to all sessions */}
       <button
         onClick={handleSync}
-        disabled={loading}
+        disabled={loading || !selectedScript}
         className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
-        title="Sync Script Selection"
+        title="Sync Script to All Sessions"
       >
         <RefreshCw className="w-4 h-4" />
-      </button>
-
-      {/* Start All Scripts Button */}
-      <button
-        onClick={handleRunAll}
-        disabled={!selectedScript || loading}
-        className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
-        title="Start All Scripts"
-      >
-        <PlayCircle className="w-4 h-4" />
-      </button>
-
-      {/* Stop All Scripts Button */}
-      <button
-        onClick={handleStopAll}
-        disabled={loading}
-        className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
-        title="Stop All Scripts"
-      >
-        <StopCircle className="w-4 h-4" />
       </button>
     </div>
   );
