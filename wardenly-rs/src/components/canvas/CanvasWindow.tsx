@@ -25,11 +25,11 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const repeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Keyboard gesture configuration
-  const [keyboardConfig, setKeyboardConfig] = useState({
-    longPressThresholdMs: 300,
-    repeatIntervalMs: 100,
-  });
+  // Keyboard gesture configuration (loaded from backend)
+  const [keyboardConfig, setKeyboardConfig] = useState<{
+    longPressThresholdMs: number;
+    repeatIntervalMs: number;
+  } | null>(null);
 
   // Load keyboard configuration on mount
   useEffect(() => {
@@ -41,7 +41,7 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
         });
       })
       .catch((err) => {
-        console.warn("Failed to load keyboard config, using defaults:", err);
+        console.error("Failed to load keyboard config:", err);
       });
   }, []);
 
@@ -182,8 +182,8 @@ export default function CanvasWindow({ sessionId, onCanvasClick, onMouseAction, 
   // Keyboard event handlers
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLCanvasElement>) => {
-      // Only process if keyboard passthrough is enabled
-      if (!keyboardPassthrough) return;
+      // Only process if keyboard passthrough is enabled and config loaded
+      if (!keyboardPassthrough || !keyboardConfig) return;
 
       // Only process A-Z keys
       if (!isAZKey(e.key)) return;

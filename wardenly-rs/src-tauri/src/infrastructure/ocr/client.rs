@@ -232,37 +232,3 @@ impl Drop for HttpOcrClient {
         tracing::debug!("HttpOcrClient dropped, health check loop signaled to stop");
     }
 }
-
-/// No-operation OCR client for when OCR is disabled.
-pub struct NoOpOcrClient;
-
-impl NoOpOcrClient {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for NoOpOcrClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl OcrClient for NoOpOcrClient {
-    fn is_healthy(&self) -> bool {
-        false
-    }
-
-    async fn recognize_usage_ratio(
-        &self,
-        _image: &DynamicImage,
-        _roi: Option<&Roi>,
-    ) -> anyhow::Result<UsageRatioResult> {
-        anyhow::bail!("OCR is disabled")
-    }
-
-    fn close(&self) {
-        // No-op
-    }
-}
