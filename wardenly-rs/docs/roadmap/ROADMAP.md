@@ -67,7 +67,7 @@
 - 场景定义与匹配
 - 脚本引擎
 - 循环与条件控制
-- OCR 集成 (可选)
+- OCR 资源耗尽检测
 
 **详细规划**: [PHASE_3_SCRIPTING.md](./PHASE_3_SCRIPTING.md)
 
