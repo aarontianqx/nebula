@@ -5,7 +5,7 @@ use crate::domain::event::DomainEvent;
 use crate::domain::model::{Account, SessionInfo, SessionState};
 use crate::infrastructure::browser::{BrowserDriver, ChromiumDriver};
 use crate::infrastructure::config::resources;
-use crate::infrastructure::ocr::{HttpOcrClient, OcrConfig};
+use crate::infrastructure::ocr::global_ocr_client;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -435,17 +435,14 @@ impl SessionActor {
         // Load scenes
         let scenes = resources::load_scenes().unwrap_or_default();
 
-        // Create OCR client for script runner
-        let ocr_client: Arc<dyn crate::infrastructure::ocr::OcrClient> = Arc::new(HttpOcrClient::new(OcrConfig::default()));
-
-        // Create script runner
+        // Create script runner (uses global OCR client singleton)
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
         let mut runner = ScriptRunner::new(
             self.id.clone(),
             script.clone(),
             scenes,
             self.browser.clone(),
-            ocr_client,
+            global_ocr_client(),
             self.event_bus.clone(),
             cmd_rx,
         );

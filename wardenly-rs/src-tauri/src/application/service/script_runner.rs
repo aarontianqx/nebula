@@ -87,30 +87,45 @@ impl ScriptRunner {
         let default_wait = Duration::from_millis(500);
         let mut capture_failures: u32 = 0;
 
-        while self.running.load(Ordering::Relaxed) {
-            // Check for stop command
-            if let Ok(ScriptCommand::Stop) = self.cmd_rx.try_recv() {
-                tracing::info!("Script stop command received");
-                return StopReason::Manual;
+        loop {
+            // Check for stop command (non-blocking)
+            match self.cmd_rx.try_recv() {
+                Ok(ScriptCommand::Stop) => {
+                    tracing::info!("Script stop command received");
+                    return StopReason::Manual;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel closed, exit gracefully
+                    tracing::info!("Script command channel closed");
+                    return StopReason::Manual;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No command, continue
+                }
             }
 
             // Capture current screen
             let image = match self.browser.capture_screen().await {
                 Ok(img) => {
-                    capture_failures = 0; // Reset on success
+                    capture_failures = 0;
                     img
                 }
                 Err(e) => {
                     capture_failures += 1;
                     tracing::warn!(attempt = capture_failures, "Failed to capture screen: {}", e);
-                    
+
                     if capture_failures >= MAX_CAPTURE_FAILURES {
                         tracing::error!("Too many capture failures, browser may have stopped");
                         return StopReason::BrowserStopped;
                     }
-                    
-                    if self.running.load(Ordering::Relaxed) {
-                        sleep(default_wait).await;
+
+                    // Wait before retry, but allow stop command to interrupt
+                    tokio::select! {
+                        _ = sleep(default_wait) => {}
+                        _ = self.cmd_rx.recv() => {
+                            tracing::info!("Script stop command received during retry wait");
+                            return StopReason::Manual;
+                        }
                     }
                     continue;
                 }
@@ -142,13 +157,15 @@ impl ScriptRunner {
                 }
             }
 
-            // Wait before next iteration
-            if self.running.load(Ordering::Relaxed) {
-                sleep(default_wait).await;
+            // Wait before next iteration, but allow stop command to interrupt
+            tokio::select! {
+                _ = sleep(default_wait) => {}
+                _ = self.cmd_rx.recv() => {
+                    tracing::info!("Script stop command received during wait");
+                    return StopReason::Manual;
+                }
             }
         }
-
-        StopReason::Manual
     }
 
     /// Find the index of the first matching step
