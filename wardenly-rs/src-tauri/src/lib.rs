@@ -234,6 +234,7 @@ pub fn run() {
             commands::save_settings,
             commands::test_mongodb_connection,
             commands::get_theme_config,
+            commands::get_keyboard_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
