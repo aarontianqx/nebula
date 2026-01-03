@@ -165,7 +165,8 @@ wardenly-rs/
 │   │   │   │   ├── group.rs        # Group 聚合根
 │   │   │   │   ├── session.rs      # Session 实体 + 状态机
 │   │   │   │   ├── scene.rs        # Scene 值对象
-│   │   │   │   └── script.rs       # Script 值对象
+│   │   │   │   ├── script.rs       # Script 值对象 + Action enum
+│   │   │   │   └── expr.rs         # 表达式求值器
 │   │   │   ├── repository.rs       # Repository trait
 │   │   │   ├── event.rs            # 领域事件
 │   │   │   └── error.rs            # 领域错误

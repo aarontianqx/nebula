@@ -22,17 +22,17 @@ steps:
     actions:
       - type: click
         points:
-          - { x: 998, y: 244 }
+          - {x: 998, y: 244}
       - type: wait
         duration: 500ms
       - type: click
         points:
-          - { x: 998, y: 244 }
+          - {x: 998, y: 244}
       - type: wait
         duration: 1s
       - type: click
         points:
-          - { x: 355, y: 532 }
+          - {x: 355, y: 532}
       - type: wait
         duration: 1s
 
@@ -41,17 +41,17 @@ steps:
     actions:
       - type: click
         points:
-          - { x: 790, y: 180}
+          - {x: 790, y: 180}
       - type: wait
         duration: 1s
       - type: click
         points:
-          - { x: 370, y: 574 }
+          - {x: 370, y: 574}
       - type: wait
         duration: 500ms
       - type: click
         points:
-          - { x: 714, y: 577 }
+          - {x: 714, y: 577}
       - type: wait
         duration: 1s
 
@@ -60,7 +60,7 @@ steps:
     actions:
       - type: click
         points:
-          - { x: 398, y: 618 }
+          - {x: 398, y: 618}
       - type: wait
         duration: 1s
 
@@ -69,19 +69,10 @@ steps:
     actions:
       - type: click
         points:
-          - { x: 78, y: 27 }
+          - {x: 78, y: 27}
       - type: wait
         duration: 1s
       - type: click
         points:
-          - { x: 874, y: 166 }
+          - {x: 874, y: 166}
       - type: quit
-
-# todo
-#  - scene: military_government_empty
-#    timeout: 5s
-#    actions:
-#      - type: click
-#        points:
-#          - { x: 78, y: 27 }
-#      - type: quit

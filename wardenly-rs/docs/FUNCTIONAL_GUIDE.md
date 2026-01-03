@@ -260,15 +260,42 @@ steps:
 
 ### 循环控制
 
+循环使用 `loop` 类型的 Action 实现，动作嵌套在内部：
+
 ```yaml
 actions:
-  - type: click
-    points: [{x: 100, y: 200}]
-loop:
-  count: -1           # -1 表示无限循环
-  until: target_scene # 匹配到此场景时退出
-  interval: 800ms
+  - type: loop
+    count: -1           # -1 表示无限循环
+    interval: 800ms     # 循环间隔
+    until: target_scene # 匹配到此场景时退出（可选）
+    actions:            # 嵌套的动作列表
+      - type: click
+        points: [{x: 100, y: 200}]
+      - type: wait
+        duration: 1s
 ```
+
+### OCR 资源检测
+
+使用 `ocrRule` 检测屏幕上的资源数值：
+
+```yaml
+- scene: tower_entrance
+  ocrRule:
+    mode: ratio              # 识别 "数字/数字" 格式
+    roi: {x: 510, y: 602, width: 90, height: 50}
+    condition: "used > 7 || used > total"  # 表达式求值
+    action: quit_exhausted   # 条件满足时退出
+  actions:
+    - type: loop
+      ...
+```
+
+**变量映射**：
+- `used`: 分母值（已使用）
+- `total`: 分子值（总量）
+
+**支持操作符**：`>`, `>=`, `<`, `<=`, `==`, `!=`, `&&`, `||`
 
 ## 常见问题
 

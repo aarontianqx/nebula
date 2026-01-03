@@ -22,106 +22,102 @@ steps:
     actions:
       - type: click
         points:
-          - { x: 674, y: 15 }
+          - {x: 674, y: 15}
       - type: wait
         duration: 500ms
       - type: click
         points:
-          - { x: 674, y: 15 }
+          - {x: 674, y: 15}
       - type: wait
         duration: 1s
       - type: click
         points:
-          - { x: 818, y: 394 }
+          - {x: 818, y: 394}
       - type: wait
         duration: 1s
 
   - scene: tower_entrance_1
     timeout: 5s
-    continueOnFailure: false
     ocrRule:
-      name: quit_when_exhausted
+      mode: ratio
       roi:
         x: 510
         y: 602
         width: 90
         height: 50
-      threshold: 7
+      condition: "used > 7 || used > total"
+      action: quit_exhausted
     actions:
-      - type: click
-        points:
-          - {x: 546, y: 679}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 726, y: 194}
-      - type: wait
-        duration: 300ms
-      - type: click
-        points:
-          - {x: 726, y: 314}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 394, y: 447}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 538, y: 420}
-      - type: wait
-        duration: 1s
-      - type: check_scene  # Check scene and OCR rule before next loop iteration
-    loop:
-      startIndex: 0    # Start from action 0
-      endIndex: 10     # End at action 10 (including check_scene at index 10)
-      count: -1        # Loop infinitely
-#      until: battle    # Until battle scene is detected, no need in this script
-      interval: 800ms  # Wait 800ms between loops
+      - type: loop
+        count: -1
+        interval: 800ms
+        actions:
+          - type: click
+            points:
+              - {x: 546, y: 679}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 726, y: 194}
+          - type: wait
+            duration: 300ms
+          - type: click
+            points:
+              - {x: 726, y: 314}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 394, y: 447}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 538, y: 420}
+          - type: wait
+            duration: 1s
+          - type: check_scene
 
   - scene: tower_entrance_2
     timeout: 5s
-    continueOnFailure: false
     ocrRule:
-      name: quit_when_exhausted
+      mode: ratio
       roi:
         x: 510
         y: 602
         width: 90
         height: 50
-      threshold: 10
+      condition: "used > 10 || used > total"
+      action: quit_exhausted
     actions:
-      - type: click
-        points:
-          - {x: 546, y: 679}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 726, y: 194}
-      - type: wait
-        duration: 300ms
-      - type: click
-        points:
-          - {x: 726, y: 314}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 394, y: 447}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 538, y: 420}
-      - type: wait
-        duration: 1s
-      - type: check_scene  # Check scene and OCR rule before next loop iteration
-    loop:
-      startIndex: 0    # Start from action 0
-      endIndex: 10     # End at action 10 (including check_scene at index 10)
-      count: -1        # Loop infinitely
-      #      until: battle    # Until battle scene is detected, no need in this script
-      interval: 800ms  # Wait 800ms between loops
+      - type: loop
+        count: -1
+        interval: 800ms
+        actions:
+          - type: click
+            points:
+              - {x: 546, y: 679}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 726, y: 194}
+          - type: wait
+            duration: 300ms
+          - type: click
+            points:
+              - {x: 726, y: 314}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 394, y: 447}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 538, y: 420}
+          - type: wait
+            duration: 1s
+          - type: check_scene

@@ -15,21 +15,20 @@ steps:
   - scene: battle_group_prepare
     timeout: 5s
     actions:
-      - type: click
-        points:
-          - {x: 700, y: 255}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 1005, y: 667}
-      - type: wait
-        duration: 1s
-      - type: click
-        points:
-          - {x: 1005, y: 667}
-    loop:
-      startIndex: 0
-      endIndex: 4
-      count: -1
-      interval: 800ms 
+      - type: loop
+        count: -1
+        interval: 800ms
+        actions:
+          - type: click
+            points:
+              - {x: 700, y: 255}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 1005, y: 667}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 1005, y: 667}
