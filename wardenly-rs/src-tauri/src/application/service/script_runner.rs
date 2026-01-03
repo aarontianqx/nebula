@@ -9,7 +9,9 @@ use tokio::time::sleep;
 
 use crate::application::eventbus::SharedEventBus;
 use crate::domain::event::DomainEvent;
-use crate::domain::model::{Action, ActionType, LoopConfig, OcrRule, Scene, SceneMatcher, Script, Step};
+use crate::domain::model::{
+    Action, ExprContext, OcrAction, OcrMode, OcrRule, Point, Scene, SceneMatcher, Script,
+};
 use crate::infrastructure::browser::{BrowserDriver, BrowserPoint};
 use crate::infrastructure::config::resources;
 use crate::infrastructure::ocr::{OcrClientHandle, Roi};
@@ -204,85 +206,8 @@ impl ScriptRunner {
             }
         }
 
-        // Handle looped actions
-        if let Some(loop_config) = &step.loop_config {
-            return self.execute_loop_cloned(&step, loop_config.clone()).await;
-        }
-
-        // Execute actions sequentially
+        // Execute actions sequentially (Loop actions are handled recursively)
         self.execute_actions(&step.actions).await
-    }
-
-    /// Execute actions in a loop (with cloned data)
-    async fn execute_loop_cloned(&mut self, step: &Step, loop_config: LoopConfig) -> StepResult {
-        // Validate loop indices
-        if let Err(e) = loop_config.validate_indices(step.actions.len()) {
-            tracing::error!("Invalid loop configuration: {}", e);
-            return StepResult::Error;
-        }
-
-        let start_idx = loop_config.start_index;
-        let end_idx = loop_config.end_index;
-
-        // Execute pre-loop actions
-        if start_idx > 0 {
-            let result = self.execute_actions(&step.actions[..start_idx]).await;
-            if result != StepResult::Continue {
-                return result;
-            }
-        }
-
-        // Execute loop
-        let mut iteration = 0;
-
-        while self.running.load(Ordering::Relaxed) {
-            // Check for stop command
-            if let Ok(ScriptCommand::Stop) = self.cmd_rx.try_recv() {
-                return StepResult::Quit;
-            }
-
-            // Execute loop actions
-            let loop_actions = &step.actions[start_idx..=end_idx];
-            let result = self.execute_actions(loop_actions).await;
-            if result != StepResult::Continue {
-                return result;
-            }
-
-            // Check until condition
-            if let Some(until_scene) = &loop_config.until {
-                if let Ok(image) = self.browser.capture_screen().await {
-                    if let Some(scene) = resources::find_scene(&self.scenes, until_scene) {
-                        if self.scene_matcher.matches(scene, &image) {
-                            tracing::debug!(scene = %until_scene, "Until scene matched, exiting loop");
-                            break;
-                        }
-                    }
-                }
-            }
-
-            iteration += 1;
-
-            // Check count limit
-            if !loop_config.is_infinite() && iteration >= loop_config.count as usize {
-                break;
-            }
-
-            // Loop interval
-            if let Some(interval) = loop_config.interval {
-                sleep(interval).await;
-            } else {
-                sleep(Duration::from_millis(300)).await;
-            }
-
-            // (5-minute safety timeout removed per user request - loops can run indefinitely)
-        }
-
-        // Execute post-loop actions
-        if end_idx + 1 < step.actions.len() {
-            return self.execute_actions(&step.actions[end_idx + 1..]).await;
-        }
-
-        StepResult::Continue
     }
 
     /// Execute a list of actions
@@ -300,59 +225,38 @@ impl ScriptRunner {
         StepResult::Continue
     }
 
-    /// Execute a single action
+    /// Execute a single action (now using pattern matching on Action enum)
     async fn execute_action(&mut self, action: &Action) -> StepResult {
-        match action.action_type {
-            ActionType::Click => {
-                if let Some(point) = action.points.first() {
+        match action {
+            Action::Click { points } => {
+                if let Some(point) = points.first() {
                     if let Err(e) = self.browser.click(point.x, point.y).await {
                         tracing::warn!("Click failed: {}", e);
                     }
                 }
             }
 
-            ActionType::Wait => {
-                if let Some(duration) = action.duration {
-                    sleep(duration).await;
+            Action::Wait { duration } => {
+                if let Some(d) = duration {
+                    sleep(*d).await;
                 }
             }
 
-            ActionType::Drag => {
-                if action.points.len() == 2 {
-                    // Two-point drag: use interpolated drag
-                    let from = action.points[0];
-                    let to = action.points[1];
-                    if let Err(e) = self.browser.drag((from.x, from.y), (to.x, to.y)).await {
-                        tracing::warn!("Drag failed: {}", e);
-                    }
-                } else if action.points.len() > 2 {
-                    // Multi-point path: use drag_path for precise path following
-                    let browser_points: Vec<BrowserPoint> = action
-                        .points
-                        .iter()
-                        .map(|p| BrowserPoint::new(p.x, p.y))
-                        .collect();
-                    if let Err(e) = self.browser.drag_path(&browser_points).await {
-                        tracing::warn!("Drag path failed: {}", e);
-                    }
-                }
+            Action::Drag { points } => {
+                self.execute_drag(points).await;
             }
 
-            ActionType::Incr => {
-                if let Some(key) = &action.key {
-                    *self.counters.entry(key.clone()).or_insert(0) += 1;
-                }
+            Action::Incr { key } => {
+                *self.counters.entry(key.clone()).or_insert(0) += 1;
             }
 
-            ActionType::Decr => {
-                if let Some(key) = &action.key {
-                    *self.counters.entry(key.clone()).or_insert(0) -= 1;
-                }
+            Action::Decr { key } => {
+                *self.counters.entry(key.clone()).or_insert(0) -= 1;
             }
 
-            ActionType::Quit => {
-                if let Some(condition) = &action.condition {
-                    if condition.evaluate(&self.counters) {
+            Action::Quit { condition } => {
+                if let Some(cond) = condition {
+                    if cond.evaluate(&self.counters) {
                         return StepResult::Quit;
                     }
                 } else {
@@ -360,28 +264,177 @@ impl ScriptRunner {
                 }
             }
 
-            ActionType::CheckScene => {
+            Action::CheckScene => {
                 // OCR check handled at step level in execute_step_by_index
+                // This action serves as a marker for when to re-check scene/OCR in loops
+            }
+
+            Action::Loop {
+                count,
+                interval,
+                until,
+                actions,
+            } => {
+                return self
+                    .execute_loop(*count, interval.as_ref(), until.as_ref(), actions)
+                    .await;
             }
         }
 
         StepResult::Continue
     }
 
-    /// Check OCR rule and return StepResult if should stop
-    async fn check_ocr_rule(&self, ocr_rule: &OcrRule, image: &DynamicImage) -> Option<StepResult> {
-        // Only handle "quit_when_exhausted" rule
-        if ocr_rule.name != "quit_when_exhausted" {
-            tracing::warn!(rule = %ocr_rule.name, "Unknown OCR rule, skipping");
-            return None;
+    /// Execute drag action with points
+    async fn execute_drag(&self, points: &[Point]) {
+        if points.len() == 2 {
+            // Two-point drag: use interpolated drag
+            let from = points[0];
+            let to = points[1];
+            if let Err(e) = self.browser.drag((from.x, from.y), (to.x, to.y)).await {
+                tracing::warn!("Drag failed: {}", e);
+            }
+        } else if points.len() > 2 {
+            // Multi-point path: use drag_path for precise path following
+            let browser_points: Vec<BrowserPoint> = points
+                .iter()
+                .map(|p| BrowserPoint::new(p.x, p.y))
+                .collect();
+            if let Err(e) = self.browser.drag_path(&browser_points).await {
+                tracing::warn!("Drag path failed: {}", e);
+            }
+        }
+    }
+
+    /// Execute a loop action with nested actions
+    async fn execute_loop(
+        &mut self,
+        count: i32,
+        interval: Option<&Duration>,
+        until: Option<&String>,
+        actions: &[Action],
+    ) -> StepResult {
+        let is_infinite = count < 0;
+        let mut iteration = 0;
+
+        while self.running.load(Ordering::Relaxed) {
+            // Check for stop command
+            if let Ok(ScriptCommand::Stop) = self.cmd_rx.try_recv() {
+                return StepResult::Quit;
+            }
+
+            // Execute loop body inline (avoiding recursive async call)
+            for action in actions {
+                if !self.running.load(Ordering::Relaxed) {
+                    return StepResult::Quit;
+                }
+
+                let result = self.execute_action_non_recursive(action).await;
+                if result != StepResult::Continue {
+                    return result;
+                }
+            }
+
+            // Check until condition (scene-based exit)
+            if let Some(until_scene) = until {
+                if let Ok(image) = self.browser.capture_screen().await {
+                    if let Some(scene) = resources::find_scene(&self.scenes, until_scene) {
+                        if self.scene_matcher.matches(scene, &image) {
+                            tracing::debug!(scene = %until_scene, "Until scene matched, exiting loop");
+                            break;
+                        }
+                    }
+                }
+            }
+
+            iteration += 1;
+
+            // Check count limit
+            if !is_infinite && iteration >= count as usize {
+                break;
+            }
+
+            // Loop interval
+            if let Some(interval_duration) = interval {
+                sleep(*interval_duration).await;
+            } else {
+                sleep(Duration::from_millis(300)).await;
+            }
         }
 
+        StepResult::Continue
+    }
+
+    /// Execute a single action without Loop support (used inside loops to avoid recursion)
+    async fn execute_action_non_recursive(&mut self, action: &Action) -> StepResult {
+        match action {
+            Action::Click { points } => {
+                if let Some(point) = points.first() {
+                    if let Err(e) = self.browser.click(point.x, point.y).await {
+                        tracing::warn!("Click failed: {}", e);
+                    }
+                }
+            }
+
+            Action::Wait { duration } => {
+                if let Some(d) = duration {
+                    sleep(*d).await;
+                }
+            }
+
+            Action::Drag { points } => {
+                self.execute_drag(points).await;
+            }
+
+            Action::Incr { key } => {
+                *self.counters.entry(key.clone()).or_insert(0) += 1;
+            }
+
+            Action::Decr { key } => {
+                *self.counters.entry(key.clone()).or_insert(0) -= 1;
+            }
+
+            Action::Quit { condition } => {
+                if let Some(cond) = condition {
+                    if cond.evaluate(&self.counters) {
+                        return StepResult::Quit;
+                    }
+                } else {
+                    return StepResult::Quit;
+                }
+            }
+
+            Action::CheckScene => {
+                // OCR check handled at step level
+            }
+
+            Action::Loop { .. } => {
+                // Nested loops not supported (single level only)
+                tracing::warn!("Nested loops are not supported, skipping");
+            }
+        }
+
+        StepResult::Continue
+    }
+
+    /// Check OCR rule and return StepResult if condition is met
+    async fn check_ocr_rule(&self, ocr_rule: &OcrRule, image: &DynamicImage) -> Option<StepResult> {
         // Check if OCR service is healthy
         if !self.ocr_client.is_healthy() {
             tracing::debug!("OCR service unavailable, skipping rule check");
             return None;
         }
 
+        match ocr_rule.mode {
+            OcrMode::Ratio => self.check_ocr_ratio_rule(ocr_rule, image).await,
+        }
+    }
+
+    /// Check ratio-based OCR rule using expression evaluation
+    async fn check_ocr_ratio_rule(
+        &self,
+        ocr_rule: &OcrRule,
+        image: &DynamicImage,
+    ) -> Option<StepResult> {
         // Perform OCR recognition
         let roi = Roi {
             x: ocr_rule.roi.x,
@@ -390,29 +443,55 @@ impl ScriptRunner {
             height: ocr_rule.roi.height,
         };
 
-        match self.ocr_client.recognize_usage_ratio(image, Some(&roi)).await {
+        match self
+            .ocr_client
+            .recognize_usage_ratio(image, Some(&roi))
+            .await
+        {
             Ok(result) => {
                 tracing::info!(
-                    rule = %ocr_rule.name,
                     numerator = result.numerator,
                     denominator = result.denominator,
-                    threshold = ocr_rule.threshold,
+                    condition = %ocr_rule.condition,
                     "OCR result"
                 );
 
-                // quit_when_exhausted: stop if denominator exceeds threshold or denominator > numerator
-                if result.denominator > ocr_rule.threshold || result.denominator > result.numerator {
-                    tracing::info!("Resource exhausted detected, stopping script");
-                    return Some(StepResult::ResourceExhausted);
+                // Build expression context with OCR result
+                let mut ctx = ExprContext::new();
+                ctx.set("used", result.denominator as i64);
+                ctx.set("total", result.numerator as i64);
+
+                // Evaluate condition expression
+                match ctx.evaluate(&ocr_rule.condition) {
+                    Ok(true) => {
+                        tracing::info!(
+                            condition = %ocr_rule.condition,
+                            action = ?ocr_rule.action,
+                            "OCR condition met"
+                        );
+                        match ocr_rule.action {
+                            OcrAction::QuitExhausted => Some(StepResult::ResourceExhausted),
+                            OcrAction::Quit => Some(StepResult::Quit),
+                            OcrAction::Skip => None, // Skip means continue to next step
+                        }
+                    }
+                    Ok(false) => None, // Condition not met, continue execution
+                    Err(e) => {
+                        tracing::warn!(
+                            condition = %ocr_rule.condition,
+                            error = %e,
+                            "OCR condition evaluation failed"
+                        );
+                        None
+                    }
                 }
             }
             Err(e) => {
                 tracing::warn!("OCR recognition failed: {}", e);
                 // Don't stop on OCR failure - continue execution
+                None
             }
         }
-
-        None
     }
 
     /// Stop the script runner
@@ -437,4 +516,3 @@ impl ScriptHandle {
         let _ = self.cmd_tx.send(ScriptCommand::Stop).await;
     }
 }
-

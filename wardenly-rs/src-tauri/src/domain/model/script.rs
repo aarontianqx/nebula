@@ -39,50 +39,74 @@ pub struct Step {
     #[serde(default)]
     pub actions: Vec<Action>,
 
-    /// Optional loop behavior for this step
-    #[serde(rename = "loop")]
-    pub loop_config: Option<LoopConfig>,
-
     /// Optional OCR-based resource checking
-    #[serde(default)]
+    #[serde(default, rename = "ocrRule")]
     pub ocr_rule: Option<OcrRule>,
 }
 
 /// Action represents a single action within a step.
+/// Now implemented as a tagged enum to support nested Loop actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Action {
-    /// Action type (click, wait, drag, etc.)
-    #[serde(rename = "type")]
-    pub action_type: ActionType,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Action {
+    /// Click at specified coordinates
+    Click {
+        #[serde(default)]
+        points: Vec<Point>,
+    },
 
-    /// Coordinates for the action
-    #[serde(default)]
-    pub points: Vec<Point>,
+    /// Wait for a duration
+    Wait {
+        #[serde(default, with = "humantime_serde")]
+        duration: Option<Duration>,
+    },
 
-    /// Time for the action (e.g., wait duration)
-    #[serde(default, with = "humantime_serde")]
-    pub duration: Option<Duration>,
+    /// Drag between points or along a path
+    Drag {
+        #[serde(default)]
+        points: Vec<Point>,
+    },
 
-    /// Key for counter operations (incr/decr)
-    #[serde(default)]
-    pub key: Option<String>,
+    /// Quit the script, optionally with a condition
+    Quit {
+        #[serde(default)]
+        condition: Option<Condition>,
+    },
 
-    /// Condition for conditional actions (quit)
-    #[serde(default)]
-    pub condition: Option<Condition>,
+    /// Increment a counter
+    Incr {
+        key: String,
+    },
+
+    /// Decrement a counter
+    Decr {
+        key: String,
+    },
+
+    /// Check scene (trigger OCR rule evaluation at this point)
+    CheckScene,
+
+    /// Loop action - contains nested actions to repeat
+    Loop {
+        /// Number of iterations (-1 for infinite)
+        #[serde(default = "default_infinite")]
+        count: i32,
+
+        /// Time between loop iterations
+        #[serde(default, with = "humantime_serde")]
+        interval: Option<Duration>,
+
+        /// Scene name that stops the loop when matched
+        #[serde(default)]
+        until: Option<String>,
+
+        /// Nested actions to execute in the loop
+        actions: Vec<Action>,
+    },
 }
 
-/// ActionType represents the type of action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionType {
-    Click,
-    Wait,
-    Drag,
-    Quit,
-    Incr,
-    Decr,
-    CheckScene,
+fn default_infinite() -> i32 {
+    -1
 }
 
 /// Point represents coordinates for actions.
@@ -122,75 +146,55 @@ impl Condition {
     }
 }
 
-/// Loop defines how a sequence of actions should be repeated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoopConfig {
-    /// Index of the first action in the loop (0-based)
-    #[serde(rename = "startIndex", default)]
-    pub start_index: usize,
-
-    /// Index of the last action in the loop (0-based)
-    #[serde(rename = "endIndex", default)]
-    pub end_index: usize,
-
-    /// Number of iterations (-1 for infinite)
-    #[serde(default = "default_loop_count")]
-    pub count: i32,
-
-    /// Scene name that stops the loop when matched
-    #[serde(default)]
-    pub until: Option<String>,
-
-    /// Time between loop iterations
-    #[serde(default, with = "humantime_serde")]
-    pub interval: Option<Duration>,
+/// OCR mode for different recognition types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OcrMode {
+    /// Recognize usage ratio (e.g., "1/10")
+    Ratio,
 }
 
-fn default_loop_count() -> i32 {
-    -1
+impl Default for OcrMode {
+    fn default() -> Self {
+        OcrMode::Ratio
+    }
 }
 
-impl LoopConfig {
-    /// Returns true if the loop runs indefinitely
-    pub fn is_infinite(&self) -> bool {
-        self.count < 0
-    }
+/// Action to take when OCR condition is met
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OcrAction {
+    /// Quit with ResourceExhausted status
+    QuitExhausted,
+    /// Quit with Completed status
+    Quit,
+    /// Skip current step
+    Skip,
+}
 
-    /// Returns true if the loop has a scene-based stop condition
-    pub fn has_until_condition(&self) -> bool {
-        self.until.is_some()
-    }
-
-    /// Validate loop indices for the given number of actions
-    pub fn validate_indices(&self, action_count: usize) -> Result<(), String> {
-        if self.start_index > self.end_index {
-            return Err(format!(
-                "loop startIndex ({}) cannot be greater than endIndex ({})",
-                self.start_index, self.end_index
-            ));
-        }
-        if self.end_index >= action_count {
-            return Err(format!(
-                "loop endIndex ({}) exceeds action count ({})",
-                self.end_index, action_count
-            ));
-        }
-        Ok(())
+impl Default for OcrAction {
+    fn default() -> Self {
+        OcrAction::QuitExhausted
     }
 }
 
 /// OCR rule for resource-based script control
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrRule {
-    /// Rule name (e.g., "quit_when_exhausted")
-    pub name: String,
+    /// OCR recognition mode
+    #[serde(default)]
+    pub mode: OcrMode,
 
     /// Region of interest for OCR
     pub roi: OcrRegion,
 
-    /// Threshold for the quit condition
+    /// Condition expression (e.g., "used > 7 || used > total")
+    /// Variables: used = denominator, total = numerator
+    pub condition: String,
+
+    /// Action to take when condition is met
     #[serde(default)]
-    pub threshold: i32,
+    pub action: OcrAction,
 }
 
 /// Region of interest for OCR
@@ -250,4 +254,3 @@ impl From<&Script> for ScriptInfo {
         }
     }
 }
-
