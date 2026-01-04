@@ -120,14 +120,22 @@ impl HttpOcrClient {
         let result: Result<reqwest::Response, reqwest::Error> = client.get(url).send().await;
         match result {
             Ok(resp) if resp.status().is_success() => {
+                // Consume response body to properly close the connection
+                // Without this, dropping the Response causes a TCP RST which the server
+                // sees as "remote host forcibly closed connection"
+                let _ = resp.bytes().await;
                 if !healthy.load(Ordering::Relaxed) {
                     tracing::info!("OCR service is now healthy");
                 }
                 healthy.store(true, Ordering::Relaxed);
             }
             Ok(resp) => {
+                // Capture status before consuming response body
+                let status = resp.status();
+                // Consume response body to properly close the connection
+                let _ = resp.bytes().await;
                 if healthy.load(Ordering::Relaxed) {
-                    tracing::warn!("OCR service returned non-success status: {}", resp.status());
+                    tracing::warn!("OCR service returned non-success status: {}", status);
                 }
                 healthy.store(false, Ordering::Relaxed);
             }
