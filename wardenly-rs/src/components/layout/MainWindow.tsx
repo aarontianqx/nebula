@@ -27,6 +27,7 @@ function MainWindow() {
   const [runningGroup, setRunningGroup] = useState(false);
   const [keyboardPassthrough, setKeyboardPassthrough] = useState(false);
   const [spreadToAll, setSpreadToAll] = useState(false);
+  const [runDropdownOpen, setRunDropdownOpen] = useState(false);
   // Screencast controls streaming (true = streaming mode, false = stopped)
   // Default: false - streaming must be explicitly enabled
   const [screencastEnabled, setScreencastEnabled] = useState(false);
@@ -358,16 +359,67 @@ function MainWindow() {
               ))}
             </select>
 
-            {/* Run button */}
-            <button
-              onClick={handleRun}
-              disabled={!selectedAccountId || hasSessionForAccount || loading}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Run selected account"
-            >
-              <Play size={14} />
-              Run
-            </button>
+            {/* Run button with dropdown */}
+            <div className="relative flex items-center">
+              <button
+                onClick={handleRun}
+                disabled={!selectedAccountId || hasSessionForAccount || loading}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-l-md bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors h-[30px]"
+                title="Run selected account"
+              >
+                <Play size={14} />
+                Run
+              </button>
+              <button
+                onClick={() => setRunDropdownOpen(!runDropdownOpen)}
+                disabled={!selectedAccountId || loading}
+                className="px-2 text-sm rounded-r-md bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border-l border-white/20 h-[30px] flex items-center"
+                title="More options"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              {/* Dropdown menu - click based */}
+              {runDropdownOpen && (
+                <>
+                  {/* Click outside overlay */}
+                  <div className="fixed inset-0 z-40" onClick={() => setRunDropdownOpen(false)} />
+                  <div className="absolute left-0 top-full mt-1 w-48 py-1 bg-[var(--color-bg-panel)] border border-[var(--color-border)] rounded-md shadow-lg z-50">
+                    <button
+                      onClick={async () => {
+                        setRunDropdownOpen(false);
+                        if (!selectedAccountId || hasSessionForAccount) return;
+                        try {
+                          await startSession(selectedAccountId, { cleanStart: true });
+                        } catch (error) {
+                          console.error("Failed to start session:", error);
+                        }
+                      }}
+                      disabled={!selectedAccountId || hasSessionForAccount || loading}
+                      className="w-full px-3 py-2 text-sm text-left text-[var(--color-text-primary)] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                    >
+                      <RefreshCw size={14} />
+                      Force Clean Start
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setRunDropdownOpen(false);
+                        if (!selectedAccountId) return;
+                        try {
+                          await invoke("clear_account_cache", { accountId: selectedAccountId });
+                        } catch (error) {
+                          console.error("Failed to clear cache:", error);
+                        }
+                      }}
+                      disabled={!selectedAccountId || loading}
+                      className="w-full px-3 py-2 text-sm text-left text-[var(--color-text-primary)] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                      Clear Account Cache
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* Divider */}
             <div className="w-px h-5 bg-[var(--color-border)]" />

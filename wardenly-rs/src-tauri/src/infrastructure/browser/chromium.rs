@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 /// Chromium browser driver using chromiumoxide
 pub struct ChromiumDriver {
     session_id: String,
+    account_id: String,
     browser: RwLock<Option<Browser>>,
     page: RwLock<Option<Arc<Mutex<Page>>>>,
     handler_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
@@ -27,15 +28,16 @@ pub struct ChromiumDriver {
 }
 
 impl ChromiumDriver {
-    /// Create a new ChromiumDriver with a unique user data directory per session
-    pub fn new(session_id: &str, frame_tx: mpsc::UnboundedSender<String>) -> Self {
-        // Create unique user data directory for this session to avoid SingletonLock conflicts
-        let user_data_dir = std::env::temp_dir()
-            .join("wardenly-browsers")
-            .join(session_id);
+    /// Create a new ChromiumDriver with a persistent user data directory per account.
+    /// Profile data (cache, cookies, localStorage) is preserved across sessions.
+    pub fn new(session_id: &str, account_id: &str, frame_tx: mpsc::UnboundedSender<String>) -> Self {
+        // Use centralized path utility for consistency with delete_profile()
+        use crate::infrastructure::config::paths;
+        let user_data_dir = paths::profile_dir(account_id);
         
         Self {
             session_id: session_id.to_string(),
+            account_id: account_id.to_string(),
             browser: RwLock::new(None),
             page: RwLock::new(None),
             handler_handle: RwLock::new(None),
@@ -54,44 +56,20 @@ impl ChromiumDriver {
             .clone()
             .ok_or_else(|| anyhow!("Browser not started"))
     }
-    
-    /// Cleanup user data directory after browser stops
-    /// Cleanup user data directory after browser stops.
-    /// Retries for up to 2 seconds to allow the browser process to fully exit and release file locks (Windows fix).
-    async fn cleanup_user_data_dir(&self) {
-        if !self.user_data_dir.exists() {
-             return;
-        }
 
-        const MAX_ATTEMPTS: usize = 20;
-        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
-
-        for i in 0..MAX_ATTEMPTS {
-            if let Err(e) = std::fs::remove_dir_all(&self.user_data_dir) {
-                // If on last attempt, or if error is NOT a locking issue (e.g. permissions), log warning
-                // Windows lock errors: 32 (Sharing violation), 5 (Access denied - sometimes)
-                let is_lock_error =  match e.raw_os_error() {
-                    Some(32) | Some(5) => true, // Windows specific
-                    _ => false,
-                };
-
-                if i == MAX_ATTEMPTS - 1 {
-                     tracing::warn!(
-                        "Failed to cleanup user data dir {:?} after {} attempts: {}",
-                        self.user_data_dir,
-                        MAX_ATTEMPTS,
-                        e
-                    );
-                } else if is_lock_error {
-                     // Locked, wait and retry
-                     tokio::time::sleep(RETRY_DELAY).await;
+    /// Clean stale lockfiles left by crashed browser instances.
+    /// Chrome creates "SingletonLock" and "SingletonSocket" files that prevent
+    /// multiple processes from using the same profile directory.
+    fn clean_stale_lockfiles(&self) {
+        let lockfile_names = ["SingletonLock", "SingletonSocket", "SingletonCookie"];
+        for name in lockfile_names {
+            let lockfile = self.user_data_dir.join(name);
+            if lockfile.exists() {
+                if let Err(e) = std::fs::remove_file(&lockfile) {
+                    tracing::warn!("Failed to remove stale lockfile {:?}: {}", lockfile, e);
                 } else {
-                    // Non-lock error (e.g. read-only fs), logging and retrying might help if it's transient
-                    tokio::time::sleep(RETRY_DELAY).await;
+                    tracing::debug!("Removed stale lockfile: {:?}", lockfile);
                 }
-            } else {
-                tracing::debug!("Successfully cleaned up user data dir: {:?}", self.user_data_dir);
-                return;
             }
         }
     }
@@ -105,9 +83,13 @@ impl BrowserDriver for ChromiumDriver {
             return Err(anyhow!("Failed to create user data dir: {}", e));
         }
         
+        // Clean stale lockfiles from previous crashed sessions
+        self.clean_stale_lockfiles();
+        
         tracing::info!(
-            "Starting browser for session {} with user data dir: {:?}",
+            "Starting browser for session {} (account {}) with profile: {:?}",
             self.session_id,
+            self.account_id,
             self.user_data_dir
         );
         
@@ -176,10 +158,10 @@ impl BrowserDriver for ChromiumDriver {
 
         *self.page.write().await = None;
         
-        // Cleanup user data directory with retry
-        self.cleanup_user_data_dir().await;
+        // NOTE: Profile directory is NOT cleaned up to preserve cache for faster startup next time.
+        // See docs/roadmap/BROWSER_PERSISTENCE_RFC.md for rationale.
 
-        tracing::info!("Browser stopped for session {}", self.session_id);
+        tracing::info!("Browser stopped for session {} (profile preserved at {:?})", self.session_id, self.user_data_dir);
         Ok(())
     }
 

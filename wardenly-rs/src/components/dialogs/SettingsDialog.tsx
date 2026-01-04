@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Palette, Database, RefreshCw, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { X, Palette, Database, RefreshCw, CheckCircle, AlertCircle, Loader2, HardDrive, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface UserSettings {
@@ -25,6 +25,11 @@ interface ThemeResponse {
   availableThemes: string[];
 }
 
+interface CacheSizeResponse {
+  total_bytes: number;
+  total_readable: string;
+}
+
 // Apply theme by injecting CSS variables into document root
 const applyTheme = (cssVars: Record<string, string>) => {
   for (const [key, value] of Object.entries(cssVars)) {
@@ -46,13 +51,18 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // MongoDB connection test state
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionTestResult, setConnectionTestResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
+
+  // Cache management state
+  const [cacheSize, setCacheSize] = useState<CacheSizeResponse | null>(null);
+  const [cacheSizeLoading, setCacheSizeLoading] = useState(true);
+  const [clearingCache, setClearingCache] = useState(false);
 
   // Load settings on mount and capture original theme for rollback
   useEffect(() => {
@@ -80,6 +90,35 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
       setError(`Failed to load settings: ${e}`);
     } finally {
       setLoading(false);
+    }
+
+    // Load cache size in background (non-blocking)
+    loadCacheSize();
+  };
+
+  const loadCacheSize = async () => {
+    setCacheSizeLoading(true);
+    try {
+      const size: CacheSizeResponse = await invoke("get_cache_size");
+      setCacheSize(size);
+    } catch (e) {
+      console.error("Failed to load cache size:", e);
+    } finally {
+      setCacheSizeLoading(false);
+    }
+  };
+
+  const handleClearAllCache = async () => {
+    setClearingCache(true);
+    try {
+      const count: number = await invoke("clear_all_cache");
+      await loadCacheSize();
+      // Brief success indication (cache size will show 0)
+      console.log(`Cleared ${count} browser profiles`);
+    } catch (e) {
+      setError(`Failed to clear cache: ${e}`);
+    } finally {
+      setClearingCache(false);
     }
   };
 
@@ -367,11 +406,10 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
 
                         {/* Connection Test Result - full width for better readability */}
                         {connectionTestResult && (
-                          <div className={`flex items-start gap-1.5 text-xs p-2 rounded ${
-                            connectionTestResult.success 
-                              ? "text-[var(--color-success)] bg-[var(--color-success)]/10" 
-                              : "text-[var(--color-error)] bg-[var(--color-error)]/10"
-                          }`}>
+                          <div className={`flex items-start gap-1.5 text-xs p-2 rounded ${connectionTestResult.success
+                            ? "text-[var(--color-success)] bg-[var(--color-success)]/10"
+                            : "text-[var(--color-error)] bg-[var(--color-error)]/10"
+                            }`}>
                             {connectionTestResult.success ? (
                               <CheckCircle size={14} className="flex-shrink-0 mt-0.5" />
                             ) : (
@@ -387,11 +425,61 @@ function SettingsDialog({ onClose, onThemeChange }: Props) {
                   )}
 
                   <p className="text-xs text-[var(--color-text-muted)]">
-                    {settings?.storage.type === "mongodb" 
+                    {settings?.storage.type === "mongodb"
                       ? "Connection will be verified before saving. Restart required to apply."
                       : "Storage changes require restarting the application."}
                   </p>
                 </div>
+              </section>
+
+              {/* Cache Management Section */}
+              <section>
+                <div className="flex items-center gap-2 mb-3">
+                  <HardDrive size={18} className="text-[var(--color-accent)]" />
+                  <h3 className="font-medium">Browser Cache</h3>
+                </div>
+
+                <div className="space-y-3 p-3 bg-[var(--color-bg-surface)] rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm">Total Cache Size</p>
+                      <p className="text-xs text-[var(--color-text-muted)]">
+                        Cached resources from browser sessions
+                      </p>
+                    </div>
+                    <span className="text-lg font-medium">
+                      {cacheSizeLoading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        cacheSize?.total_readable || "0 B"
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleClearAllCache}
+                      disabled={clearingCache || cacheSizeLoading || (cacheSize?.total_bytes ?? 0) === 0}
+                      className="flex-1 px-3 py-2 text-sm bg-[var(--color-error)]/10 text-[var(--color-error)] rounded-lg hover:bg-[var(--color-error)]/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {clearingCache ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Clearing...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 size={14} />
+                          Clear All Cache
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                  Clear browser cache if you experience display issues or to free disk space.
+                </p>
               </section>
             </>
           )}

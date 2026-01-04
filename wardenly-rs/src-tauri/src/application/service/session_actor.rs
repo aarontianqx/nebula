@@ -38,8 +38,8 @@ impl SessionActor {
         frame_tx: mpsc::UnboundedSender<String>,
         frame_rx: mpsc::UnboundedReceiver<String>,
     ) -> Self {
-        // Pass session ID to browser driver for unique user data directory
-        let browser = Arc::new(ChromiumDriver::new(&id, frame_tx));
+        // Pass session ID and account ID to browser driver for persistent profile directory
+        let browser = Arc::new(ChromiumDriver::new(&id, &account.id, frame_tx));
 
         Self {
             id,
