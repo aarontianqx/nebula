@@ -201,23 +201,28 @@ impl ScriptRunner {
 
         // Check OCR rule before executing actions
         if let Some(ref ocr_rule) = step.ocr_rule {
-            if let Some(result) = self.check_ocr_rule(ocr_rule, image).await {
+            if let Some(result) = self.check_ocr_rule(ocr_rule, image, &scene_name).await {
                 return result;
             }
         }
 
-        // Execute actions sequentially (Loop actions are handled recursively)
-        self.execute_actions(&step.actions).await
+        // Execute actions sequentially, passing OCR rule for loop iteration checks
+        self.execute_actions(&step.actions, step.ocr_rule.as_ref(), &scene_name).await
     }
 
     /// Execute a list of actions
-    async fn execute_actions(&mut self, actions: &[Action]) -> StepResult {
+    async fn execute_actions(
+        &mut self,
+        actions: &[Action],
+        ocr_rule: Option<&OcrRule>,
+        scene_name: &str,
+    ) -> StepResult {
         for action in actions {
             if !self.running.load(Ordering::Relaxed) {
                 return StepResult::Quit;
             }
 
-            let result = self.execute_action(action).await;
+            let result = self.execute_action(action, ocr_rule, scene_name).await;
             if result != StepResult::Continue {
                 return result;
             }
@@ -226,7 +231,12 @@ impl ScriptRunner {
     }
 
     /// Execute a single action (now using pattern matching on Action enum)
-    async fn execute_action(&mut self, action: &Action) -> StepResult {
+    async fn execute_action(
+        &mut self,
+        action: &Action,
+        ocr_rule: Option<&OcrRule>,
+        scene_name: &str,
+    ) -> StepResult {
         match action {
             Action::Click { points } => {
                 if let Some(point) = points.first() {
@@ -265,8 +275,7 @@ impl ScriptRunner {
             }
 
             Action::CheckScene => {
-                // OCR check handled at step level in execute_step_by_index
-                // This action serves as a marker for when to re-check scene/OCR in loops
+                // CheckScene is now handled inside execute_loop for OCR checks
             }
 
             Action::Loop {
@@ -276,7 +285,7 @@ impl ScriptRunner {
                 actions,
             } => {
                 return self
-                    .execute_loop(*count, interval.as_ref(), until.as_ref(), actions)
+                    .execute_loop(*count, interval.as_ref(), until.as_ref(), actions, ocr_rule, scene_name)
                     .await;
             }
         }
@@ -312,6 +321,8 @@ impl ScriptRunner {
         interval: Option<&Duration>,
         until: Option<&String>,
         actions: &[Action],
+        ocr_rule: Option<&OcrRule>,
+        scene_name: &str,
     ) -> StepResult {
         let is_infinite = count < 0;
         let mut iteration = 0;
@@ -320,6 +331,16 @@ impl ScriptRunner {
             // Check for stop command
             if let Ok(ScriptCommand::Stop) = self.cmd_rx.try_recv() {
                 return StepResult::Quit;
+            }
+
+            // Check OCR rule at the start of each iteration (captures fresh screen)
+            if let Some(rule) = ocr_rule {
+                if let Ok(image) = self.browser.capture_screen().await {
+                    if let Some(result) = self.check_ocr_rule(rule, &image, scene_name).await {
+                        tracing::info!(iteration, "OCR condition triggered loop exit");
+                        return result;
+                    }
+                }
             }
 
             // Execute loop body inline (avoiding recursive async call)
@@ -417,7 +438,12 @@ impl ScriptRunner {
     }
 
     /// Check OCR rule and return StepResult if condition is met
-    async fn check_ocr_rule(&self, ocr_rule: &OcrRule, image: &DynamicImage) -> Option<StepResult> {
+    async fn check_ocr_rule(
+        &self,
+        ocr_rule: &OcrRule,
+        image: &DynamicImage,
+        scene_name: &str,
+    ) -> Option<StepResult> {
         // Check if OCR service is healthy
         if !self.ocr_client.is_healthy() {
             tracing::debug!("OCR service unavailable, skipping rule check");
@@ -425,7 +451,7 @@ impl ScriptRunner {
         }
 
         match ocr_rule.mode {
-            OcrMode::Ratio => self.check_ocr_ratio_rule(ocr_rule, image).await,
+            OcrMode::Ratio => self.check_ocr_ratio_rule(ocr_rule, image, scene_name).await,
         }
     }
 
@@ -434,6 +460,7 @@ impl ScriptRunner {
         &self,
         ocr_rule: &OcrRule,
         image: &DynamicImage,
+        scene_name: &str,
     ) -> Option<StepResult> {
         // Perform OCR recognition
         let roi = Roi {
@@ -450,10 +477,12 @@ impl ScriptRunner {
         {
             Ok(result) => {
                 tracing::info!(
+                    scene = %scene_name,
                     numerator = result.numerator,
                     denominator = result.denominator,
+                    roi = %format!("({},{} {}x{})", roi.x, roi.y, roi.width, roi.height),
                     condition = %ocr_rule.condition,
-                    "OCR result"
+                    "OCR recognition result"
                 );
 
                 // Build expression context with OCR result
@@ -463,21 +492,27 @@ impl ScriptRunner {
 
                 // Evaluate condition expression
                 match ctx.evaluate(&ocr_rule.condition) {
-                    Ok(true) => {
+                    Ok(condition_met) => {
                         tracing::info!(
+                            scene = %scene_name,
                             condition = %ocr_rule.condition,
+                            condition_met,
                             action = ?ocr_rule.action,
-                            "OCR condition met"
+                            "OCR condition evaluated"
                         );
-                        match ocr_rule.action {
-                            OcrAction::QuitExhausted => Some(StepResult::ResourceExhausted),
-                            OcrAction::Quit => Some(StepResult::Quit),
-                            OcrAction::Skip => None, // Skip means continue to next step
+                        if condition_met {
+                            match ocr_rule.action {
+                                OcrAction::QuitExhausted => Some(StepResult::ResourceExhausted),
+                                OcrAction::Quit => Some(StepResult::Quit),
+                                OcrAction::Skip => None, // Skip means continue to next step
+                            }
+                        } else {
+                            None
                         }
                     }
-                    Ok(false) => None, // Condition not met, continue execution
                     Err(e) => {
                         tracing::warn!(
+                            scene = %scene_name,
                             condition = %ocr_rule.condition,
                             error = %e,
                             "OCR condition evaluation failed"
@@ -487,7 +522,7 @@ impl ScriptRunner {
                 }
             }
             Err(e) => {
-                tracing::warn!("OCR recognition failed: {}", e);
+                tracing::warn!(scene = %scene_name, "OCR recognition failed: {}", e);
                 // Don't stop on OCR failure - continue execution
                 None
             }

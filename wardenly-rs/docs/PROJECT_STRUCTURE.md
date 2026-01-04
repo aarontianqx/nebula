@@ -120,6 +120,8 @@ Canvas Element → onKeyDown/onKeyUp → 前端手势识别 → click_session Co
 - 执行动作序列
 - 支持循环和条件控制
 - OCR 资源耗尽检测（全局单例，后台健康检查）
+- **在 Loop 的每次迭代中检查 OCR 规则**
+- 完成时发布 `ScriptStopped` 事件触发状态同步
 - 发布 `ScriptStepExecuted` 进度事件
 
 ## 目录结构
@@ -250,31 +252,43 @@ wardenly-rs/
 
 ## 配置系统
 
-Wardenly 采用 **"官方预设 + 用户设置"** 分离的配置架构：
+Wardenly 采用 **"嵌入资源 + 用户数据"** 分离的架构：
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                   Embedded Resources (官方预设，只读)                 │
-│  themes.yaml, gesture.yaml, scenes/*.yaml, scripts/*.yaml            │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                   User Config Directory (用户设置)                   │
-│  settings.yaml - 存储用户偏好 (theme, storage)                       │
-│  路径: ~/.config/wardenly/ (Linux/macOS) 或 %APPDATA%\wardenly\ (Win)│
-└─────────────────────────────────────────────────────────────────────┘
-```
+### 嵌入资源 (只读)
 
-### settings.yaml (用户设置)
+编译时嵌入 `src-tauri/resources/`：
 
-用户设置存储在用户配置目录的 `settings.yaml` 文件中。如果文件不存在或字段缺失，使用默认值。
+| 目录/文件 | 说明 |
+|-----------|------|
+| `configs/themes.yaml` | 主题预设定义 |
+| `configs/gesture.yaml` | 手势/键盘配置 |
+| `scenes/*.yaml` | 场景定义 |
+| `scripts/*.yaml` | 自动化脚本 |
+
+### 用户数据目录
+
+运行时数据存储在平台特定目录：
+
+| 平台 | 路径 |
+|------|------|
+| macOS | `~/Library/Application Support/wardenly/` |
+| Windows | `%APPDATA%\wardenly\` |
+| Linux | `~/.config/wardenly/` |
+
+**目录内容**：
+
+| 文件/目录 | 说明 |
+|-----------|------|
+| `settings.yaml` | 用户设置 (主题、存储后端) |
+| `data.db` | SQLite 数据库 (本地存储模式) |
+| `logs/` | 应用日志 (Release 版本自动写入) |
+
+### settings.yaml
+
+用户设置文件，不存在时使用默认值：
 
 ```yaml
-# 主题选择 (必须是 themes.yaml 中定义的主题名)
 theme: "ocean-dark"
-
-# 存储后端配置
 storage:
   type: sqlite  # 或 "mongodb"
   mongodb:

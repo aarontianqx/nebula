@@ -149,8 +149,8 @@ fn show_warning_dialog(title: &str, message: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging
-    logging::setup(false);
+    // Initialize logging (file logging enabled in release builds)
+    logging::setup(cfg!(not(debug_assertions)));
 
     // Initialize embedded configuration (themes, gestures)
     config::init();

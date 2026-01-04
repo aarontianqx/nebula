@@ -53,7 +53,7 @@ pub type OcrClientHandle = Arc<dyn OcrClient>;
 /// HTTP-based OCR client that calls a FastAPI backend.
 pub struct HttpOcrClient {
     config: OcrConfig,
-    client: Client,
+    client: Arc<Client>,
     healthy: Arc<AtomicBool>,
     shutdown_tx: watch::Sender<bool>,
 }
@@ -61,19 +61,25 @@ pub struct HttpOcrClient {
 impl HttpOcrClient {
     /// Create a new HTTP OCR client with background health checking.
     pub fn new(config: OcrConfig) -> Self {
-        let client = Client::builder()
-            .timeout(config.timeout())
-            .build()
-            .expect("Failed to create HTTP client");
+        // Use a shorter timeout for health checks, but share the same connection pool
+        let client = Arc::new(
+            Client::builder()
+                .timeout(config.timeout())
+                .pool_max_idle_per_host(2)
+                .pool_idle_timeout(Some(std::time::Duration::from_secs(4))) // Close idle connections before server kills them (default ~5s)
+                .build()
+                .expect("Failed to create HTTP client"),
+        );
 
         let healthy = Arc::new(AtomicBool::new(false));
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        // Start background health check loop
+        // Start background health check loop with shared client
+        let health_client = client.clone();
         let health_config = config.clone();
         let health_healthy = healthy.clone();
         tokio::spawn(async move {
-            Self::health_check_loop(health_config, health_healthy, shutdown_rx).await;
+            Self::health_check_loop(health_client, health_config, health_healthy, shutdown_rx).await;
         });
 
         Self {
@@ -86,24 +92,21 @@ impl HttpOcrClient {
 
     /// Background health check loop.
     async fn health_check_loop(
+        client: Arc<Client>,
         config: OcrConfig,
         healthy: Arc<AtomicBool>,
         mut shutdown_rx: watch::Receiver<bool>,
     ) {
-        let client = Client::builder()
-            .timeout(config.health_timeout())
-            .build()
-            .expect("Failed to create health check client");
-
         let health_url = format!("{}/health", config.base_url);
+        let health_timeout = config.health_timeout();
 
         // Perform initial health check
-        Self::perform_health_check(&client, &health_url, &healthy).await;
+        Self::perform_health_check(&client, &health_url, health_timeout, &healthy).await;
 
         loop {
             tokio::select! {
                 _ = sleep(config.health_interval()) => {
-                    Self::perform_health_check(&client, &health_url, &healthy).await;
+                    Self::perform_health_check(&client, &health_url, health_timeout, &healthy).await;
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
@@ -115,27 +118,51 @@ impl HttpOcrClient {
         }
     }
 
-    /// Perform a single health check.
-    async fn perform_health_check(client: &Client, url: &str, healthy: &AtomicBool) {
-        let result: Result<reqwest::Response, reqwest::Error> = client.get(url).send().await;
+    /// Perform a single health check with custom timeout.
+    async fn perform_health_check(
+        client: &Client,
+        url: &str,
+        timeout: std::time::Duration,
+        healthy: &AtomicBool,
+    ) {
+        // Use tokio::time::timeout to enforce health check timeout
+        let result = tokio::time::timeout(timeout, client.get(url).send()).await;
         match result {
-            Ok(resp) if resp.status().is_success() => {
+            Ok(Ok(resp)) if resp.status().is_success() => {
+                // Consume response body to properly close the connection
+                let _ = resp.bytes().await;
                 if !healthy.load(Ordering::Relaxed) {
                     tracing::info!("OCR service is now healthy");
                 }
                 healthy.store(true, Ordering::Relaxed);
             }
-            Ok(resp) => {
+            Ok(Ok(resp)) => {
+                let status = resp.status();
+                let _ = resp.bytes().await;
                 if healthy.load(Ordering::Relaxed) {
-                    tracing::warn!("OCR service returned non-success status: {}", resp.status());
+                    tracing::warn!("OCR service returned non-success status: {}", status);
                 }
                 healthy.store(false, Ordering::Relaxed);
             }
-            Err(e) => {
-                if healthy.load(Ordering::Relaxed) {
-                    tracing::warn!("OCR health check failed: {}", e);
-                }
+            Ok(Err(e)) => {
+                // Request failed
+                let was_healthy = healthy.load(Ordering::Relaxed);
                 healthy.store(false, Ordering::Relaxed);
+                if was_healthy {
+                    if e.is_connect() {
+                        tracing::warn!("OCR health check: connection refused (service may be down)");
+                    } else {
+                        tracing::warn!("OCR health check failed: {}", e);
+                    }
+                }
+            }
+            Err(_) => {
+                // Timeout
+                let was_healthy = healthy.load(Ordering::Relaxed);
+                healthy.store(false, Ordering::Relaxed);
+                if was_healthy {
+                    tracing::warn!("OCR health check: timeout");
+                }
             }
         }
     }
