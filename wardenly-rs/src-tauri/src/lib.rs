@@ -235,6 +235,10 @@ pub fn run() {
             commands::test_mongodb_connection,
             commands::get_theme_config,
             commands::get_keyboard_config,
+            // Cache management commands
+            commands::clear_account_cache,
+            commands::get_cache_size,
+            commands::clear_all_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

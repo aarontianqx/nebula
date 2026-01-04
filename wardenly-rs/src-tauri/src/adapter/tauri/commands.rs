@@ -57,10 +57,16 @@ pub fn update_account(
 
 #[tauri::command]
 pub fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    // Delete from database first
     state
         .account_service
         .delete(&id)
-        .map_err(|e| ApiError::from(e).into())
+        .map_err(|e| -> String { ApiError::from(e).into() })?;
+    
+    // Clean up browser profile directory for this account
+    crate::infrastructure::config::paths::delete_profile(&id);
+    
+    Ok(())
 }
 
 // ====== Group Commands ======
@@ -196,7 +202,25 @@ pub async fn get_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>
 pub async fn start_session(
     state: State<'_, AppState>,
     account_id: String,
+    clean_start: Option<bool>,
 ) -> Result<String, String> {
+    let clean_start = clean_start.unwrap_or(false);
+    // Check if this account already has a running session (single-session limit)
+    // This prevents Chrome profile lock conflicts when using persistent profiles
+    let existing_sessions = state.coordinator.get_sessions().await;
+    if existing_sessions.iter().any(|s| s.account_id == account_id) {
+        return Err(format!(
+            "Account {} already has a running session. Stop it first before starting a new one.",
+            account_id
+        ));
+    }
+
+    // If clean_start is requested, delete the profile cache first
+    if clean_start {
+        paths::delete_profile(&account_id);
+        tracing::info!("Clean start: cleared cache for account {}", account_id);
+    }
+
     // Create and start session
     let session_id = state
         .coordinator
@@ -467,3 +491,58 @@ pub fn get_keyboard_config() -> Result<KeyboardConfigResponse, String> {
             .unwrap_or(embedded.repeat_interval_ms),
     })
 }
+
+// ====== Cache Management Commands ======
+
+use crate::infrastructure::config::paths;
+
+/// Clear browser cache for a specific account.
+/// This deletes the profile directory for the account.
+#[tauri::command]
+pub fn clear_account_cache(account_id: String) -> Result<(), String> {
+    paths::delete_profile(&account_id);
+    Ok(())
+}
+
+/// Get cache size information.
+#[derive(serde::Serialize)]
+pub struct CacheSizeResponse {
+    /// Total size of all profiles in bytes
+    pub total_bytes: u64,
+    /// Human-readable size string (e.g., "125.5 MB")
+    pub total_readable: String,
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Get total cache size of all browser profiles.
+#[tauri::command]
+pub fn get_cache_size() -> Result<CacheSizeResponse, String> {
+    let total = paths::get_all_profiles_size();
+    Ok(CacheSizeResponse {
+        total_bytes: total,
+        total_readable: format_bytes(total),
+    })
+}
+
+/// Clear all browser profile caches.
+/// Returns the number of profiles deleted.
+#[tauri::command]
+pub fn clear_all_cache() -> Result<usize, String> {
+    Ok(paths::clear_all_profiles())
+}
+
