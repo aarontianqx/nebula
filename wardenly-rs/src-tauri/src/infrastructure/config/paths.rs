@@ -28,3 +28,10 @@ pub fn default_sqlite_path() -> PathBuf {
     config_dir().join("data.db")
 }
 
+/// Get platform-specific log directory
+/// - macOS: ~/Library/Application Support/wardenly/logs/
+/// - Windows: %APPDATA%\wardenly\logs\
+/// - Linux: ~/.config/wardenly/logs/
+pub fn log_dir() -> PathBuf {
+    config_dir().join("logs")
+}

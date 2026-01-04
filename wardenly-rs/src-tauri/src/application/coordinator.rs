@@ -57,6 +57,19 @@ impl Coordinator {
                                     );
                                 }
                             }
+                            DomainEvent::ScriptStopped { session_id, script_name } => {
+                                // Script finished autonomously (e.g., OCR condition met)
+                                // Send StopScript command to trigger state transition back to Ready
+                                let sessions_guard = sessions.read().await;
+                                if let Some(handle) = sessions_guard.get(&session_id) {
+                                    if handle.cmd_tx.send(SessionCommand::StopScript).await.is_ok() {
+                                        tracing::info!(
+                                            "Script '{}' finished on session {}, triggered state sync",
+                                            script_name, session_id
+                                        );
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
