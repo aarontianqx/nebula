@@ -19,7 +19,7 @@ interface SessionStore {
 
   // Actions
   fetchSessions: () => Promise<void>;
-  startSession: (accountId: string) => Promise<string>;
+  startSession: (accountId: string, options?: { cleanStart?: boolean }) => Promise<string>;
   stopSession: (sessionId: string) => Promise<void>;
   stopAllSessions: () => Promise<void>;
   clickSession: (sessionId: string, x: number, y: number) => Promise<void>;
@@ -61,11 +61,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  startSession: async (accountId: string) => {
+  startSession: async (accountId: string, options?: { cleanStart?: boolean }) => {
     set({ loading: true, error: null });
     try {
       const sessionId = await invoke<string>("start_session", {
         accountId,
+        cleanStart: options?.cleanStart ?? null,
       });
       set({ loading: false, selectedSessionId: sessionId, activationSource: 'account' });
       return sessionId;
