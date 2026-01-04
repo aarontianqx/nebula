@@ -56,14 +56,42 @@ impl ChromiumDriver {
     }
     
     /// Cleanup user data directory after browser stops
-    fn cleanup_user_data_dir(&self) {
-        if self.user_data_dir.exists() {
+    /// Cleanup user data directory after browser stops.
+    /// Retries for up to 2 seconds to allow the browser process to fully exit and release file locks (Windows fix).
+    async fn cleanup_user_data_dir(&self) {
+        if !self.user_data_dir.exists() {
+             return;
+        }
+
+        const MAX_ATTEMPTS: usize = 20;
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+        for i in 0..MAX_ATTEMPTS {
             if let Err(e) = std::fs::remove_dir_all(&self.user_data_dir) {
-                tracing::warn!(
-                    "Failed to cleanup user data dir {:?}: {}",
-                    self.user_data_dir,
-                    e
-                );
+                // If on last attempt, or if error is NOT a locking issue (e.g. permissions), log warning
+                // Windows lock errors: 32 (Sharing violation), 5 (Access denied - sometimes)
+                let is_lock_error =  match e.raw_os_error() {
+                    Some(32) | Some(5) => true, // Windows specific
+                    _ => false,
+                };
+
+                if i == MAX_ATTEMPTS - 1 {
+                     tracing::warn!(
+                        "Failed to cleanup user data dir {:?} after {} attempts: {}",
+                        self.user_data_dir,
+                        MAX_ATTEMPTS,
+                        e
+                    );
+                } else if is_lock_error {
+                     // Locked, wait and retry
+                     tokio::time::sleep(RETRY_DELAY).await;
+                } else {
+                    // Non-lock error (e.g. read-only fs), logging and retrying might help if it's transient
+                    tokio::time::sleep(RETRY_DELAY).await;
+                }
+            } else {
+                tracing::debug!("Successfully cleaned up user data dir: {:?}", self.user_data_dir);
+                return;
             }
         }
     }
@@ -148,8 +176,8 @@ impl BrowserDriver for ChromiumDriver {
 
         *self.page.write().await = None;
         
-        // Cleanup user data directory
-        self.cleanup_user_data_dir();
+        // Cleanup user data directory with retry
+        self.cleanup_user_data_dir().await;
 
         tracing::info!("Browser stopped for session {}", self.session_id);
         Ok(())
