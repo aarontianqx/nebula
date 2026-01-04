@@ -32,21 +32,32 @@ yarn tauri build
 
 The built application will be in `src-tauri/target/release/`.
 
+## Data Directory
+
+All user data is stored in a platform-specific directory:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/wardenly/` |
+| Windows | `%APPDATA%\wardenly\` |
+| Linux | `~/.config/wardenly/` |
+
+**Directory contents:**
+
+| File/Directory | Description |
+|----------------|-------------|
+| `settings.yaml` | User settings (theme, storage backend) |
+| `data.db` | SQLite database (local storage mode) |
+| `logs/` | Application logs (release build only) |
+
 ## Configuration
 
 ### User Settings
 
-User settings are stored in `settings.yaml` at the platform-specific config directory:
-
-| Platform | Path |
-|----------|------|
-| macOS | `~/Library/Application Support/wardenly/settings.yaml` |
-| Windows | `%APPDATA%\wardenly\settings.yaml` |
-| Linux | `~/.config/wardenly/settings.yaml` |
-
-Example configuration:
+Settings can be changed via the in-app Settings dialog.
 
 ```yaml
+# settings.yaml
 theme: ocean-dark
 storage:
   type: sqlite  # or "mongodb"
@@ -55,17 +66,9 @@ storage:
     database: "wardenly"
 ```
 
-Settings can be changed via the in-app Settings dialog. When using MongoDB:
+When using MongoDB:
 - Connection is verified before saving
 - On startup failure, the app falls back to SQLite with a warning
-
-**Default data paths (SQLite):**
-
-| Platform | Path |
-|----------|------|
-| macOS | `~/Library/Application Support/wardenly/data.db` |
-| Windows | `%APPDATA%\wardenly\data.db` |
-| Linux | `~/.config/wardenly/data.db` |
 
 ### Embedded Configs
 
@@ -75,21 +78,6 @@ Default configuration files shipped with the app, located in `src-tauri/resource
 |------|-------------|
 | `themes.yaml` | Theme definitions (colors, fonts) |
 | `keyboard.yaml` | Keyboard passthrough timing (long press threshold, repeat interval) |
-
-### User Configs
-
-User-specific configuration stored in the app's config directory:
-
-| Platform | Config Directory |
-|----------|------------------|
-| macOS | `~/Library/Application Support/wardenly/` |
-| Windows | `%APPDATA%\wardenly\` |
-| Linux | `~/.config/wardenly/` |
-
-**`settings.yaml`** - User settings file (created on first save):
-- `theme` - Selected theme name
-- `storage` - Storage backend settings (SQLite/MongoDB)
-- `keyboard` - Optional overrides for keyboard timing (overrides embedded defaults)
 
 ## macOS Permissions
 
