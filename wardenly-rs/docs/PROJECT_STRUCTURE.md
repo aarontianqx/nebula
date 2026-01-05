@@ -197,7 +197,7 @@ wardenly-rs/
 │   │   │   │   ├── paths.rs        # 平台路径
 │   │   │   │   ├── settings.rs     # 用户设置 (theme, storage)
 │   │   │   │   ├── theme_config.rs # 主题配置
-│   │   │   │   ├── gesture_config.rs # 手势配置
+│   │   │   │   ├── keyboard.rs      # 键盘配置
 │   │   │   │   └── resources.rs    # 资源加载
 │   │   │   ├── ocr/
 │   │   │   │   ├── client.rs       # HttpOcrClient (全局单例)
@@ -213,7 +213,7 @@ wardenly-rs/
 │   │
 │   ├── resources/                  # 嵌入式资源 (官方预设，只读)
 │   │   ├── configs/
-│   │   │   ├── gesture.yaml        # 手势配置
+│   │   │   ├── keyboard.yaml       # 键盘配置
 │   │   │   └── themes.yaml         # 主题预设 (官方定义)
 │   │   ├── scenes/                 # 场景定义 (*.yaml)
 │   │   └── scripts/                # 脚本定义 (*.yaml)
@@ -261,7 +261,7 @@ Wardenly 采用 **"嵌入资源 + 用户数据"** 分离的架构：
 | 目录/文件 | 说明 |
 |-----------|------|
 | `configs/themes.yaml` | 主题预设定义 |
-| `configs/gesture.yaml` | 手势/键盘配置 |
+| `configs/keyboard.yaml` | 键盘配置 |
 | `scenes/*.yaml` | 场景定义 |
 | `scripts/*.yaml` | 自动化脚本 |
 
