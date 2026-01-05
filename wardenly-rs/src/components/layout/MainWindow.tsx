@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Settings, Play, Square, Keyboard, RefreshCw, Users, MousePointer, Pipette } from "lucide-react";
+import { Settings, Play, Keyboard, RefreshCw, Users, MousePointer, Pipette, Power, StopCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAccountStore } from "../../stores/accountStore";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -454,39 +454,28 @@ function MainWindow() {
               Run Group
             </button>
 
-            {/* Divider */}
-            <div className="w-px h-5 bg-[var(--color-border)]" />
-
-            {/* Stop All button */}
-            {sessions.length > 0 && (
-              <button
-                onClick={handleStopAll}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-error)] text-white hover:opacity-80 transition-opacity"
-              >
-                <Square size={14} />
-                Stop All
-              </button>
-            )}
-
             <span className="text-sm text-[var(--color-text-secondary)]">
               {sessions.length} sessions
             </span>
           </div>
 
-          <button
-            onClick={() => setShowManagement(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
-          >
-            <Users size={16} />
-            Manage
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
-          >
-            <Settings size={16} />
-            Settings
-          </button>
+          {/* Right side: Manage + Settings grouped together */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowManagement(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
+            >
+              <Users size={16} />
+              Manage
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] hover:bg-[var(--color-border)] transition-colors"
+            >
+              <Settings size={16} />
+              Settings
+            </button>
+          </div>
         </div>
 
         {/* Row 2: Script controls and options */}
@@ -503,16 +492,40 @@ function MainWindow() {
             {/* Divider */}
             <div className="w-px h-5 bg-[var(--color-border)]" />
 
-            {/* Session Controls */}
-            <button
-              onClick={handleRefresh}
-              disabled={!selectedSessionId}
-              className="flex items-center gap-1.5 px-2 py-1 text-sm rounded bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
-              title="Refresh current session page"
-            >
-              <RefreshCw size={14} />
-              Refresh
-            </button>
+            {/* Session Controls Group: Refresh, Stop, Stop All */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleRefresh}
+                disabled={!selectedSessionId}
+                className="flex items-center gap-1.5 px-2 py-1.5 text-sm rounded bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                title="Refresh current session page"
+              >
+                <RefreshCw size={14} />
+                Refresh
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedSessionId) {
+                    useSessionStore.getState().stopSession(selectedSessionId);
+                  }
+                }}
+                disabled={!selectedSessionId}
+                className="flex items-center gap-1.5 px-2 py-1.5 text-sm rounded text-[var(--color-text-primary)] hover:bg-[var(--color-error)]/10 hover:text-[var(--color-error)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                title="Stop current session"
+              >
+                <Power size={14} />
+                Stop
+              </button>
+              <button
+                onClick={handleStopAll}
+                disabled={sessions.length === 0}
+                className="flex items-center gap-1.5 px-2 py-1.5 text-sm rounded text-[var(--color-text-primary)] hover:bg-[var(--color-error)]/10 hover:text-[var(--color-error)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                title="Stop all sessions"
+              >
+                <StopCircle size={14} />
+                Stop All
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-4">

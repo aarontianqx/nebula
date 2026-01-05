@@ -94,72 +94,85 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
 
   return (
     <div className="flex items-center gap-2">
-      {/* Script Selection */}
-      <select
-        value={selectedScript}
-        onChange={(e) => handleScriptChange(e.target.value)}
-        className="border rounded px-3 py-2 bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] text-sm min-w-[140px] focus:outline-none focus:border-[var(--color-accent)]"
-        disabled={isRunning || loading || !sessionId}
-      >
-        <option value="">Select Script</option>
-        {scripts.map((s) => (
-          <option key={s.name} value={s.name}>
-            {s.name}
-          </option>
-        ))}
-      </select>
+      {/* Configuration Area: Script Selection + Sync */}
+      <div className="flex items-center gap-1">
+        <select
+          value={selectedScript}
+          onChange={(e) => handleScriptChange(e.target.value)}
+          className="border rounded px-3 py-2 bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] text-sm min-w-[140px] focus:outline-none focus:border-[var(--color-accent)]"
+          disabled={isRunning || loading || !sessionId}
+        >
+          <option value="">Select Script</option>
+          {scripts.map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name}
+            </option>
+          ))}
+        </select>
 
-      {/* Start/Stop Button */}
+        {/* Sync Button */}
+        <button
+          onClick={handleSync}
+          disabled={loading || !selectedScript}
+          className="flex items-center gap-1.5 px-2 py-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors text-sm"
+          title="Sync Script to All Sessions"
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>Sync</span>
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div className="h-6 w-px bg-[var(--color-border)]" />
+
+      {/* Current Session Action */}
       {isRunning ? (
         <button
           onClick={handleStop}
           disabled={loading || !sessionId}
-          className="p-2 bg-[var(--color-error)] text-white rounded hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+          className="flex items-center gap-1.5 px-3 py-2 bg-[var(--color-error)] text-white rounded hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity text-sm font-medium"
           title="Stop Script"
         >
           <Square className="w-4 h-4" />
+          <span>Stop</span>
         </button>
       ) : (
         <button
           onClick={handleStart}
           disabled={!canStart || loading}
-          className="p-2 bg-[var(--color-success)] text-white rounded hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+          className="flex items-center gap-1.5 px-3 py-2 bg-[var(--color-success)] text-white rounded hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity text-sm font-medium"
           title="Start Script"
         >
           <Play className="w-4 h-4" />
+          <span>Start</span>
         </button>
       )}
 
-      {/* Start All / Stop All Scripts Toggle Button */}
+      {/* Divider */}
+      <div className="h-6 w-px bg-[var(--color-border)]" />
+
+      {/* Global Actions */}
       {isRunning ? (
         <button
           onClick={handleStopAll}
           disabled={loading}
-          className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors text-sm"
           title="Stop All Scripts"
         >
           <StopCircle className="w-4 h-4" />
+          <span>Stop All</span>
         </button>
       ) : (
         <button
           onClick={handleRunAll}
           disabled={loading}
-          className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors text-sm"
           title="Start All Scripts"
         >
           <PlayCircle className="w-4 h-4" />
+          <span>Start All</span>
         </button>
       )}
-
-      {/* Sync Button - copy current script to all sessions */}
-      <button
-        onClick={handleSync}
-        disabled={loading || !selectedScript}
-        className="p-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors"
-        title="Sync Script to All Sessions"
-      >
-        <RefreshCw className="w-4 h-4" />
-      </button>
     </div>
   );
 }

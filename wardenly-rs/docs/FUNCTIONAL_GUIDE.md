@@ -146,9 +146,9 @@ Wardenly 是一款用于 WLY 网页游戏自动化的桌面控制工具。通过
 
 | 按钮 | 功能 |
 |------|------|
-| Stop | 停止会话，关闭浏览器 |
-| Refresh Page | 刷新当前页面 |
-| Save Cookies | 手动保存 Cookie |
+| Stop | 停止当前会话，关闭浏览器 |
+| Stop All | 停止所有会话 |
+| Refresh | 刷新当前页面 |
 
 > 登录成功后会自动保存 Cookie，一般无需手动保存。
 
@@ -158,10 +158,10 @@ Wardenly 是一款用于 WLY 网页游戏自动化的桌面控制工具。通过
 
 | 按钮 | 功能 |
 |------|------|
-| Start Script | 启动选中脚本 |
-| Stop Script | 停止当前脚本 |
-| Sync Script | 同步脚本选择到所有会话 |
-| Run All | 启动所有会话的脚本 |
+| Start | 启动选中脚本（当前会话） |
+| Stop | 停止当前脚本 |
+| Sync | 同步脚本选择到所有会话 |
+| Start All | 启动所有会话的脚本 |
 | Stop All | 停止所有会话的脚本 |
 
 ### 执行逻辑

@@ -1,5 +1,5 @@
 import { useSessionStore, SessionState } from "../../stores/sessionStore";
-import { Square, Monitor } from "lucide-react";
+import { Power, Monitor } from "lucide-react";
 
 const stateColors: Record<SessionState, string> = {
   Idle: "bg-gray-500",
@@ -42,7 +42,7 @@ export default function SessionList() {
       {sessions.map((session) => {
         const isSelected = selectedSessionId === session.id;
         const isRunning = session.state === "ScriptRunning" || session.state === "Ready";
-        
+
         return (
           <div
             key={session.id}
@@ -74,14 +74,13 @@ export default function SessionList() {
                   e.stopPropagation();
                   stopSession(session.id);
                 }}
-                className={`p-1.5 rounded transition-colors ${
-                  isSelected 
-                    ? "hover:bg-[var(--color-accent)]/20 text-[var(--color-accent)]" 
-                    : "hover:bg-[var(--color-error)]/20 text-[var(--color-text-secondary)] hover:text-[var(--color-error)]"
-                }`}
+                className={`p-1.5 rounded transition-all ${isSelected
+                  ? "hover:bg-[var(--color-accent)]/20 text-[var(--color-accent)]"
+                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-error)]/20 hover:text-[var(--color-error)]"
+                  }`}
                 title="Stop session"
               >
-                <Square size={14} />
+                <Power size={14} />
               </button>
             </div>
           </div>

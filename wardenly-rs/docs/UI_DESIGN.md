@@ -157,7 +157,7 @@ module.exports = {
 ## 6. UI 改进清单 (Checklist for Next Dev Phase)
 
 - [ ] **重构 Theme Provider**: 实现读取外部 JSON 配置并注入 CSS 变量的逻辑。
-- [ ] **优化 Sidebar**: 实现新的选中态样式（左侧边框高亮）。
-- [ ] **重构 Toolbar**: 对齐所有控件高度，增加竖线分隔符。
+- [x] **优化 Sidebar**: 实现新的选中态样式（左侧边框高亮）。
+- [x] **重构 Toolbar**: 对齐所有控件高度，增加竖线分隔符，按钮采用图标+文字形式。
 - [ ] **美化 Inspector**: 实现 HUD 风格，使用等宽字体。
 - [ ] **字体统一**: 引入 Inter 或确保系统字体栈统一，解决 Windows/Mac 字体渲染差异。
