@@ -39,12 +39,16 @@ pub enum DomainEvent {
     ScriptStarted {
         session_id: String,
         script_name: String,
+        /// Unique identifier for this script run instance
+        run_id: String,
     },
 
     /// Script stopped
     ScriptStopped {
         session_id: String,
         script_name: String,
+        /// Unique identifier for this script run instance
+        run_id: String,
     },
 
     /// Script step executed

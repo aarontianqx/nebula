@@ -232,8 +232,25 @@ impl SessionActor {
             SessionCommand::StartScript { script_name } => {
                 self.start_script(&script_name).await;
             }
-            SessionCommand::StopScript => {
-                self.stop_script().await;
+            SessionCommand::StopScript { run_id } => {
+                // If run_id is provided, only stop if it matches the current script
+                // This prevents stale events from stopping newly started scripts
+                if let Some(expected_run_id) = run_id {
+                    if let Some(handle) = &self.script_handle {
+                        if handle.run_id == expected_run_id {
+                            self.stop_script().await;
+                        } else {
+                            tracing::debug!(
+                                "Ignoring StopScript: run_id mismatch (expected={}, current={})",
+                                expected_run_id, handle.run_id
+                            );
+                        }
+                    }
+                    // If no script is running, ignore silently
+                } else {
+                    // No run_id provided = unconditional stop (user action)
+                    self.stop_script().await;
+                }
             }
             SessionCommand::Refresh => {
                 if self.state.can_accept_interaction() {
@@ -435,7 +452,14 @@ impl SessionActor {
         // Load scenes
         let scenes = resources::load_scenes().unwrap_or_default();
 
+        // Generate unique run_id for this script execution instance
+        let run_id = ulid::Ulid::new().to_string();
+
+        // Create shared running flag - this allows immediate stop signal propagation
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+
         // Create script runner (uses global OCR client singleton)
+        // Pass the shared running flag so runner checks it before operations
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
         let mut runner = ScriptRunner::new(
             self.id.clone(),
@@ -446,14 +470,28 @@ impl SessionActor {
             self.event_bus.clone(),
             cmd_rx,
         );
+        // Replace the internal running flag with our shared one
+        runner.set_running_flag(running.clone());
 
-        self.script_handle = Some(ScriptHandle { cmd_tx });
+        self.script_handle = Some(ScriptHandle {
+            cmd_tx,
+            running,
+            run_id: run_id.clone(),
+        });
         self.transition_to(SessionState::ScriptRunning).await;
+
+        // Publish ScriptStarted event so Coordinator can track the current run_id
+        self.event_bus.publish(DomainEvent::ScriptStarted {
+            session_id: self.id.clone(),
+            script_name: script.name.clone(),
+            run_id: run_id.clone(),
+        });
 
         let session_id = self.id.clone();
         let script_name_for_spawn = script.name.clone();
         let script_name_for_log = script.name.clone();
         let event_bus = self.event_bus.clone();
+        let run_id_for_event = run_id.clone();
 
         // Spawn script runner
         tokio::spawn(async move {
@@ -461,18 +499,20 @@ impl SessionActor {
             tracing::info!(
                 session_id = %session_id,
                 script = %script_name_for_spawn,
+                run_id = %run_id_for_event,
                 reason = ?reason,
                 "Script finished"
             );
 
-            // Publish script stopped event
+            // Publish script stopped event with run_id for precise identification
             event_bus.publish(DomainEvent::ScriptStopped {
                 session_id,
                 script_name: script_name_for_spawn,
+                run_id: run_id_for_event,
             });
         });
 
-        tracing::info!("Started script: {}", script_name_for_log);
+        tracing::info!(run_id = %run_id, "Started script: {}", script_name_for_log);
     }
 
     async fn stop_script(&mut self) {
