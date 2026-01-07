@@ -57,15 +57,18 @@ impl Coordinator {
                                     );
                                 }
                             }
-                            DomainEvent::ScriptStopped { session_id, script_name } => {
-                                // Script finished autonomously (e.g., OCR condition met)
-                                // Send StopScript command to trigger state transition back to Ready
+                            DomainEvent::ScriptStopped { session_id, script_name, run_id } => {
+                                // Forward to SessionActor with run_id for validation.
+                                // SessionActor will verify run_id matches current script,
+                                // preventing stale events from stopping newly started scripts.
                                 let sessions_guard = sessions.read().await;
                                 if let Some(handle) = sessions_guard.get(&session_id) {
-                                    if handle.cmd_tx.send(SessionCommand::StopScript).await.is_ok() {
-                                        tracing::info!(
-                                            "Script '{}' finished on session {}, triggered state sync",
-                                            script_name, session_id
+                                    if handle.cmd_tx.send(SessionCommand::StopScript { 
+                                        run_id: Some(run_id.clone()) 
+                                    }).await.is_ok() {
+                                        tracing::debug!(
+                                            "Forwarded ScriptStopped for '{}' (run_id={}) to session {}",
+                                            script_name, run_id, session_id
                                         );
                                     }
                                 }
@@ -255,7 +258,7 @@ impl Coordinator {
 
         handle
             .cmd_tx
-            .send(SessionCommand::StopScript)
+            .send(SessionCommand::StopScript { run_id: None })
             .await
             .map_err(|_| anyhow::anyhow!("Failed to send stop script command"))?;
 
@@ -292,7 +295,7 @@ impl Coordinator {
     pub async fn stop_all_scripts(&self) {
         let sessions = self.sessions.read().await;
         for (session_id, handle) in sessions.iter() {
-            if handle.cmd_tx.send(SessionCommand::StopScript).await.is_ok() {
+            if handle.cmd_tx.send(SessionCommand::StopScript { run_id: None }).await.is_ok() {
                 tracing::info!("Stopped script on session {}", session_id);
             }
         }

@@ -121,8 +121,13 @@ Canvas Element → onKeyDown/onKeyUp → 前端手势识别 → click_session Co
 - 支持循环和条件控制
 - OCR 资源耗尽检测（全局单例，后台健康检查）
 - **在 Loop 的每次迭代中检查 OCR 规则**
-- 完成时发布 `ScriptStopped` 事件触发状态同步
 - 发布 `ScriptStepExecuted` 进度事件
+
+**生命周期与竞态控制**:
+- 每次启动脚本生成唯一 `run_id`
+- 完成时发布 `ScriptStopped` 事件（携带 run_id）
+- `StopScript` 命令携带可选 run_id，SessionActor 验证匹配后才执行停止
+- 共享 `running` 标志允许外部立即标记停止，减少操作延迟
 
 ## 目录结构
 

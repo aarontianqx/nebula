@@ -82,6 +82,12 @@ impl ScriptRunner {
         }
     }
 
+    /// Replace the internal running flag with an externally shared one.
+    /// This allows the ScriptHandle to directly signal stop to the runner.
+    pub fn set_running_flag(&mut self, running: Arc<AtomicBool>) {
+        self.running = running;
+    }
+
     /// Main execution loop
     pub async fn run(&mut self) -> StopReason {
         tracing::info!(script = %self.script.name, "Script started");
@@ -543,11 +549,20 @@ impl ScriptRunner {
 /// Handle for controlling a running script
 pub struct ScriptHandle {
     pub cmd_tx: mpsc::Sender<ScriptCommand>,
+    /// Shared flag to signal stop to the runner immediately
+    pub running: Arc<AtomicBool>,
+    /// Unique identifier for this script run instance
+    pub run_id: String,
 }
 
 impl ScriptHandle {
-    /// Send stop command to the script
+    /// Send stop command to the script.
+    /// Sets the running flag to false first for immediate effect,
+    /// then sends the Stop command through the channel.
     pub async fn stop(&self) {
+        // Immediately mark as not running - this allows the runner
+        // to detect stop even before processing the channel message
+        self.running.store(false, Ordering::Relaxed);
         let _ = self.cmd_tx.send(ScriptCommand::Stop).await;
     }
 }
