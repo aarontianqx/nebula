@@ -24,8 +24,10 @@ pub enum SessionCommand {
     /// Start executing a script
     StartScript { script_name: String },
 
-    /// Stop the currently running script
-    StopScript,
+    /// Stop the currently running script.
+    /// If run_id is provided, only stop if it matches the current script's run_id.
+    /// This prevents stale stop events from terminating newly started scripts.
+    StopScript { run_id: Option<String> },
 
     /// Refresh/reload the current page
     Refresh,
@@ -33,4 +35,3 @@ pub enum SessionCommand {
     /// Capture a single screenshot (for manual refresh when screencast is off)
     CaptureScreenshot,
 }
-
