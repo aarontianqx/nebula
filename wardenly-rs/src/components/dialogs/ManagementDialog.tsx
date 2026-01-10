@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, Users, User } from "lucide-react";
 import AccountForm from "../forms/AccountForm";
 import GroupForm from "../forms/GroupForm";
@@ -17,7 +17,13 @@ function ManagementDialog({ onClose }: Props) {
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [showGroupForm, setShowGroupForm] = useState(false);
 
-  const { accounts, groups, deleteAccount, deleteGroup } = useAccountStore();
+  const { accounts, groups, deleteAccount, deleteGroup, fetchAccounts, fetchGroups } = useAccountStore();
+
+  // Refresh data when dialog opens (supports cross-instance sync)
+  useEffect(() => {
+    fetchAccounts();
+    fetchGroups();
+  }, [fetchAccounts, fetchGroups]);
 
   const handleEditAccount = (account: Account) => {
     setEditingAccount(account);
@@ -57,22 +63,20 @@ function ManagementDialog({ onClose }: Props) {
         <div className="flex border-b border-[var(--color-border)]">
           <button
             onClick={() => setActiveTab("accounts")}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === "accounts"
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === "accounts"
                 ? "text-[var(--color-accent)] border-b-2 border-[var(--color-accent)]"
                 : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-            }`}
+              }`}
           >
             <User size={16} />
             Accounts ({accounts.length})
           </button>
           <button
             onClick={() => setActiveTab("groups")}
-            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === "groups"
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === "groups"
                 ? "text-[var(--color-accent)] border-b-2 border-[var(--color-accent)]"
                 : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-            }`}
+              }`}
           >
             <Users size={16} />
             Groups ({groups.length})
