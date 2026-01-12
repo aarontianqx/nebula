@@ -24,8 +24,6 @@ struct AccountDocument {
     password: String,
     server_id: i32,
     ranking: i32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cookies: Option<Vec<crate::domain::model::Cookie>>,
 }
 
 impl From<Account> for AccountDocument {
@@ -37,7 +35,6 @@ impl From<Account> for AccountDocument {
             password: account.password,
             server_id: account.server_id,
             ranking: account.ranking,
-            cookies: account.cookies,
         }
     }
 }
@@ -51,7 +48,6 @@ impl From<AccountDocument> for Account {
             password: doc.password,
             server_id: doc.server_id,
             ranking: doc.ranking,
-            cookies: doc.cookies,
         }
     }
 }

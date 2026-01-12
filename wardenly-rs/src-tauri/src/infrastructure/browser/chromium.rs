@@ -1,5 +1,4 @@
 use super::driver::{BrowserDriver, BrowserPoint};
-use crate::domain::model::Cookie;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chromiumoxide::browser::{Browser, BrowserConfig};
@@ -356,54 +355,6 @@ impl BrowserDriver for ChromiumDriver {
         Ok(())
     }
 
-    async fn set_cookies(&self, cookies: &[Cookie]) -> Result<()> {
-        let page = self.page().await?;
-        let page = page.lock().await;
-
-        for cookie in cookies {
-            let mut params = chromiumoxide::cdp::browser_protocol::network::SetCookieParams::new(
-                cookie.name.clone(),
-                cookie.value.clone(),
-            );
-            params.domain = Some(cookie.domain.clone());
-            params.path = Some(cookie.path.clone());
-            params.secure = Some(cookie.secure);
-            params.http_only = Some(cookie.http_only);
-
-            page.execute(params).await?;
-        }
-
-        tracing::debug!("Set {} cookies", cookies.len());
-        Ok(())
-    }
-
-    async fn get_cookies(&self) -> Result<Vec<Cookie>> {
-        let page = self.page().await?;
-        let page = page.lock().await;
-
-        let result = page
-            .execute(
-                chromiumoxide::cdp::browser_protocol::network::GetCookiesParams::default(),
-            )
-            .await?;
-
-        let cookies: Vec<Cookie> = result
-            .result
-            .cookies
-            .into_iter()
-            .map(|c| Cookie {
-                name: c.name,
-                value: c.value,
-                domain: c.domain,
-                path: c.path,
-                http_only: c.http_only,
-                secure: c.secure,
-            })
-            .collect();
-
-        Ok(cookies)
-    }
-
     async fn evaluate(&self, script: &str) -> Result<String> {
         let page = self.page().await?;
         let page = page.lock().await;
@@ -478,15 +429,11 @@ impl BrowserDriver for ChromiumDriver {
     
     async fn login_with_password(
         &self,
-        url: &str,
         username: &str,
         password: &str,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        tracing::info!("Starting login with password for URL: {}", url);
-        
-        // Navigate to game URL
-        self.navigate(url).await?;
+        tracing::info!("Starting password login flow");
         
         // Wait for username field to be visible
         self.wait_visible("#username", timeout).await?;
@@ -500,31 +447,7 @@ impl BrowserDriver for ChromiumDriver {
         // Click login button (selector from wardenly-go)
         self.click_element("#form1 > div.r06 > div.login_box3 > p > input").await?;
         
-        // Wait for game iframe to appear (indicates successful login)
-        self.wait_visible("#S_Iframe", timeout).await?;
-        
-        tracing::info!("Login with password completed successfully");
-        Ok(())
-    }
-    
-    async fn login_with_cookies(
-        &self,
-        url: &str,
-        cookies: &[Cookie],
-        timeout: std::time::Duration,
-    ) -> Result<()> {
-        tracing::info!("Starting login with cookies for URL: {}", url);
-        
-        // Set cookies first
-        self.set_cookies(cookies).await?;
-        
-        // Navigate to game URL
-        self.navigate(url).await?;
-        
-        // Wait for game iframe to appear (indicates cookies are valid)
-        self.wait_visible("#S_Iframe", timeout).await?;
-        
-        tracing::info!("Login with cookies completed successfully");
+        tracing::info!("Password login form submitted");
         Ok(())
     }
     
