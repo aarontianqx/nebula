@@ -5,7 +5,7 @@ mod scene;
 mod script;
 mod session;
 
-pub use account::{Account, Cookie};
+pub use account::Account;
 pub use expr::{ExprContext, ExprError};
 pub use group::Group;
 pub use scene::{ColorPoint, ColorValue, MatchResult, Scene, SceneAction, SceneMatcher};

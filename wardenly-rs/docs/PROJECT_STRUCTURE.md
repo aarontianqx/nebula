@@ -287,7 +287,7 @@ Wardenly 采用 **"嵌入资源 + 用户数据"** 分离的架构：
 | `settings.yaml` | 用户设置 (主题、存储后端) |
 | `data.db` | SQLite 数据库 (本地存储模式) |
 | `logs/` | 应用日志 (Release 版本自动写入) |
-| `profiles/{account_id}/` | 浏览器配置文件（缓存、Cookies、LocalStorage） |
+| `profiles/{account_id}/` | 浏览器配置文件（由 Chrome 自动管理，包含缓存、Cookies、LocalStorage，用于免登录） |
 
 ### settings.yaml
 
