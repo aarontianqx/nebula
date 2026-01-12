@@ -2,8 +2,6 @@ use async_trait::async_trait;
 use image::DynamicImage;
 use std::time::Duration;
 
-use crate::domain::model::Cookie;
-
 /// Point for browser coordinate operations.
 /// Separate from domain::model::Point to maintain layer separation.
 #[derive(Debug, Clone, Copy)]
@@ -46,12 +44,6 @@ pub trait BrowserDriver: Send + Sync {
     /// Stop screencast streaming
     async fn stop_screencast(&self) -> anyhow::Result<()>;
 
-    /// Set cookies for the browser
-    async fn set_cookies(&self, cookies: &[Cookie]) -> anyhow::Result<()>;
-
-    /// Get cookies from the browser
-    async fn get_cookies(&self) -> anyhow::Result<Vec<Cookie>>;
-
     /// Execute JavaScript and return result
     async fn evaluate(&self, script: &str) -> anyhow::Result<String>;
 
@@ -71,18 +63,8 @@ pub trait BrowserDriver: Send + Sync {
     /// This executes all steps atomically like wardenly-go
     async fn login_with_password(
         &self,
-        url: &str,
         username: &str,
         password: &str,
-        timeout: Duration,
-    ) -> anyhow::Result<()>;
-    
-    /// Perform complete login with cookies
-    /// This sets cookies and navigates to the game URL
-    async fn login_with_cookies(
-        &self,
-        url: &str,
-        cookies: &[Cookie],
         timeout: Duration,
     ) -> anyhow::Result<()>;
     

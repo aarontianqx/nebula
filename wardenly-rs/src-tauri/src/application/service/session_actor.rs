@@ -1,13 +1,13 @@
 use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
 use crate::application::service::script_runner::{ScriptHandle, ScriptRunner};
+use crate::domain::model::{Account, Scene, SceneAction, SessionInfo, SessionState};
 use crate::domain::event::DomainEvent;
-use crate::domain::model::{Account, SessionInfo, SessionState};
 use crate::infrastructure::browser::{BrowserDriver, ChromiumDriver};
 use crate::infrastructure::config::resources;
 use crate::infrastructure::ocr::global_ocr_client;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 /// Handle to communicate with a SessionActor
@@ -162,23 +162,13 @@ impl SessionActor {
         // It is controlled by the frontend via StartScreencast/StopScreencast commands.
         // This ensures the UI's screencast checkbox state is respected.
 
-        // Perform login
+        // Perform login using race-based detection
         match self.perform_login().await {
             Ok(()) => {
-                // Wait for game to load
-                match self.wait_for_game_load().await {
-                    Ok(()) => {
-                        self.transition_to(SessionState::Ready).await;
-                        self.event_bus.publish(DomainEvent::LoginSucceeded {
-                            session_id: self.id.clone(),
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!("Wait for game load failed: {}", e);
-                        // Still transition to Ready for manual intervention
-                        self.transition_to(SessionState::Ready).await;
-                    }
-                }
+                self.transition_to(SessionState::Ready).await;
+                self.event_bus.publish(DomainEvent::LoginSucceeded {
+                    session_id: self.id.clone(),
+                });
             }
             Err(e) => {
                 tracing::error!("Login failed for session {}: {}", self.id, e);
@@ -307,105 +297,125 @@ impl SessionActor {
         )
     }
 
+    /// Perform login using race-based detection.
+    /// Simultaneously waits for login form OR game scenes, handling whichever appears first.
+    /// This gracefully handles cached browser profiles that skip login entirely.
     async fn perform_login(&mut self) -> anyhow::Result<()> {
         let game_url = self.game_url();
-        let login_timeout = std::time::Duration::from_secs(20);
-
-        // Check for existing cookies
-        let has_cookies = self.account.cookies.as_ref().map(|c| !c.is_empty()).unwrap_or(false);
+        let timeout = Duration::from_secs(30);
+        let scene_check_interval = Duration::from_millis(500);
+        let login_form_check_interval = Duration::from_millis(300);
         
-        if has_cookies {
-            let cookies = self.account.cookies.clone().unwrap();
-            tracing::info!("Attempting login with cookies for {}", self.account.identity());
+        // Load scenes for detection
+        let scenes = resources::load_scenes().unwrap_or_default();
+        
+        // Navigate to game URL first
+        tracing::info!("Navigating to {} for {}", game_url, self.account.identity());
+        self.browser.navigate(&game_url).await?;
+        
+        let start = Instant::now();
+        let mut login_attempted = false;
+        
+        // Race loop: check for login form OR game scenes
+        loop {
+            if start.elapsed() > timeout {
+                anyhow::bail!("Login timeout after {:?}", timeout);
+            }
             
-            // Use atomic login method from BrowserDriver
-            match self.browser.login_with_cookies(&game_url, &cookies, login_timeout).await {
-                Ok(()) => {
-                    tracing::info!("Cookie login succeeded for {}", self.account.identity());
-                    return Ok(());
+            // Check for game scenes first (higher priority - means we're already logged in)
+            if let Some(matched_scene) = self.check_game_scenes(&scenes).await {
+                match matched_scene.name.as_str() {
+                    "user_agreement" => {
+                        tracing::info!("Detected user_agreement scene, clicking Agree");
+                        self.click_scene_action(&matched_scene, "Agree").await?;
+                        // After clicking agree, wait for main_city scene
+                        return self.wait_for_main_city(&scenes, timeout - start.elapsed()).await;
+                    }
+                    "main_city" | "main_city_shadow" => {
+                        tracing::info!("Detected {} scene, already logged in", matched_scene.name);
+                        return Ok(());
+                    }
+                    _ => {}
                 }
-                Err(e) => {
-                    tracing::warn!("Cookie login failed for {}: {}, falling back to password", self.account.identity(), e);
-                    // Fall through to password login
+            }
+            
+            // Check for login form (only attempt login once)
+            if !login_attempted {
+                if self.browser.wait_visible("#username", login_form_check_interval).await.is_ok() {
+                    tracing::info!("Detected login form, performing password login for {}", self.account.identity());
+                    self.browser.login_with_password(
+                        &self.account.user_name,
+                        &self.account.password,
+                        Duration::from_secs(10),
+                    ).await?;
+                    login_attempted = true;
+                    // After login form submission, continue loop to wait for game scenes
+                    continue;
+                }
+            }
+            
+            // Small delay before next check iteration
+            tokio::time::sleep(scene_check_interval).await;
+        }
+    }
+    
+    /// Check for game scenes that indicate login success.
+    /// Returns the matched scene if found.
+    async fn check_game_scenes(&self, scenes: &[Scene]) -> Option<Scene> {
+        let screen = match self.browser.capture_screen().await {
+            Ok(img) => img,
+            Err(_) => return None,
+        };
+        
+        // Check scenes in priority order
+        for scene_name in &["user_agreement", "main_city_shadow", "main_city"] {
+            if let Some(scene) = resources::find_scene(scenes, scene_name) {
+                if scene.matches(&screen) {
+                    return Some(scene.clone());
                 }
             }
         }
-
-        // Login with username/password using atomic method
-        tracing::info!("Attempting login with password for {}", self.account.identity());
-        self.browser.login_with_password(
-            &game_url,
-            &self.account.user_name,
-            &self.account.password,
-            login_timeout,
-        ).await?;
         
-        // Save cookies after successful password login
-        self.save_cookies_after_login().await;
-        
+        None
+    }
+    
+    /// Click a named action in a scene.
+    async fn click_scene_action(&self, scene: &Scene, action_name: &str) -> anyhow::Result<()> {
+        if let Some(action) = scene.actions.get(action_name) {
+            if let SceneAction::Click { point } = action {
+                self.browser.click(point.x as f64, point.y as f64).await?;
+            }
+        }
         Ok(())
     }
     
-    async fn save_cookies_after_login(&mut self) {
-        match self.browser.get_cookies().await {
-            Ok(cookies) => {
-                tracing::info!("Captured {} cookies after login", cookies.len());
-                self.account.cookies = Some(cookies);
-                // Note: cookies should be persisted to storage here
-                // For now, we just keep them in memory for the session
+    /// Wait for main_city or main_city_shadow scene after user_agreement.
+    async fn wait_for_main_city(&self, scenes: &[Scene], timeout: Duration) -> anyhow::Result<()> {
+        let start = Instant::now();
+        let check_interval = Duration::from_millis(500);
+        
+        loop {
+            if start.elapsed() > timeout {
+                anyhow::bail!("Timeout waiting for main_city scene");
             }
-            Err(e) => {
-                tracing::warn!("Failed to save cookies after login: {}", e);
-            }
-        }
-    }
-
-    async fn wait_for_game_load(&mut self) -> anyhow::Result<()> {
-        const MAX_ATTEMPTS: u32 = 10;
-        const WAIT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
-
-        let scenes = resources::load_scenes().unwrap_or_default();
-
-        for i in 0..MAX_ATTEMPTS {
-            tracing::info!(
-                "Waiting for game to load (attempt {}/{})",
-                i + 1,
-                MAX_ATTEMPTS
-            );
-
-            tokio::time::sleep(WAIT_INTERVAL).await;
-
-            // Capture screen
-            let screen = match self.browser.capture_screen().await {
-                Ok(img) => img,
-                Err(e) => {
-                    tracing::warn!("Failed to capture screen: {}", e);
-                    continue;
-                }
-            };
-
-            // Check for known scenes: user_agreement or main_city
-            if let Some(scene) = resources::find_scene(&scenes, "user_agreement") {
-                if scene.matches(&screen) {
-                    tracing::info!("Detected user_agreement scene, clicking agree");
-                    if let Some(action) = scene.actions.get("Agree") {
-                        if let crate::domain::model::SceneAction::Click { point } = action {
-                            self.browser.click(point.x as f64, point.y as f64).await?;
-                        }
+            
+            if let Some(matched) = self.check_game_scenes(scenes).await {
+                match matched.name.as_str() {
+                    "main_city" | "main_city_shadow" => {
+                        tracing::info!("Detected {} scene, game loaded successfully", matched.name);
+                        return Ok(());
                     }
-                    return Ok(());
+                    "user_agreement" => {
+                        // Still on agreement page, click again
+                        tracing::debug!("Still on user_agreement, clicking Agree again");
+                        self.click_scene_action(&matched, "Agree").await?;
+                    }
+                    _ => {}
                 }
             }
-
-            if let Some(scene) = resources::find_scene(&scenes, "main_city") {
-                if scene.matches(&screen) {
-                    tracing::info!("Detected main_city scene, game loaded successfully");
-                    return Ok(());
-                }
-            }
+            
+            tokio::time::sleep(check_interval).await;
         }
-
-        anyhow::bail!("Timeout waiting for game to load after {} attempts", MAX_ATTEMPTS)
     }
 
     async fn transition_to(&mut self, new_state: SessionState) {

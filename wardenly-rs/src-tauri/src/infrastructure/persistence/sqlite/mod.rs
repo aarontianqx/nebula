@@ -31,8 +31,7 @@ pub fn init_database() -> anyhow::Result<DbConnection> {
             user_name TEXT NOT NULL,
             password TEXT NOT NULL,
             server_id INTEGER NOT NULL,
-            ranking INTEGER DEFAULT 0,
-            cookies TEXT
+            ranking INTEGER DEFAULT 0
         )",
         [],
     )?;
