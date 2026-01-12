@@ -66,4 +66,4 @@ steps:
           - type: click
             points:
               - {x: 78, y: 24}
-          - type: quit
+      - type: quit
