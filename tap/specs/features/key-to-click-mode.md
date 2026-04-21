@@ -147,7 +147,7 @@ DSL 的抽象是 “在时间线上的动作”，而 Key→Click 是：
 - `tap-core`：保持 “Timeline/DSL/条件” 的纯模型与播放器逻辑，不强行新增 event-driven action
 - `tap/src-tauri`：新增一个 **ToolRunner（KeyClickRunner）**，管理线程、stop token、事件上报
 
-这样符合 `docs/PROJECT_STRUCTURE.md` 的分层原则：平台差异留在 platform，核心引擎留在 core，产品级编排留在 application/tauri。
+这样符合分层架构原则（见 `AGENTS.md`）：平台差异留在 platform，核心引擎留在 core，产品级编排留在 application/tauri。
 
 ### 关键实现接口（建议）
 
@@ -187,9 +187,9 @@ Key→Click 需要保证：
 
 ## 文档更新建议（本文件之外）
 
-- `docs/FUNCTIONAL_GUIDE.md`：在 “重复点击/重复按键” 下补充 Key→Click 工具模式
-- `docs/UI_DESIGN.md`：在 Onboarding 与 Safety/Running 状态提示中加入 Key→Click 的可观测要求
-- `docs/DSL_REFERENCE.md`：明确“event-driven 工具模式不属于 DSL”，避免用户误以为可以 YAML 配置实现
-- `docs/roadmap/ROADMAP.md`：把 Key→Click 作为 “跨阶段体验增强 / Quick Tools” 记录，避免散落在 issue/脑内
+- `specs/features/functional-guide.md`：在 “重复点击/重复按键” 下补充 Key→Click 工具模式
+- `specs/features/ui-design.md`：在 Onboarding 与 Safety/Running 状态提示中加入 Key→Click 的可观测要求
+- `specs/features/dsl-reference.md`：明确“event-driven 工具模式不属于 DSL”，避免用户误以为可以 YAML 配置实现
+- `specs/proposals/roadmap.md`：把 Key→Click 作为 “跨阶段体验增强 / Quick Tools” 记录，避免散落在 issue/脑内
 
 

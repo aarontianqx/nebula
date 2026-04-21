@@ -41,7 +41,7 @@
 - SQLite 持久化
 - 账户/分组 CRUD
 
-**详细规划**: [PHASE_1_FOUNDATION.md](./PHASE_1_FOUNDATION.md)
+**详细规划**: [phase-1-foundation.md](./phase-1-foundation.md)
 
 ---
 
@@ -55,7 +55,7 @@
 - Screencast 画布同步
 - 画布点击/拖拽交互
 
-**详细规划**: [PHASE_2_BROWSER.md](./PHASE_2_BROWSER.md)
+**详细规划**: [phase-2-browser.md](./phase-2-browser.md)
 
 ---
 
@@ -69,7 +69,7 @@
 - 循环与条件控制
 - OCR 资源耗尽检测
 
-**详细规划**: [PHASE_3_SCRIPTING.md](./PHASE_3_SCRIPTING.md)
+**详细规划**: [phase-3-scripting.md](./phase-3-scripting.md)
 
 ---
 
@@ -83,7 +83,7 @@
 - MongoDB 支持 (可选)
 - 性能优化
 
-**详细规划**: [PHASE_4_EXTENSIBILITY.md](./PHASE_4_EXTENSIBILITY.md)
+**详细规划**: [phase-4-extensibility.md](./phase-4-extensibility.md)
 
 ---
 

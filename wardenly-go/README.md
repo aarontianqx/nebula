@@ -69,8 +69,9 @@ go build -trimpath -ldflags="-s -w -H windowsgui" -o wardenly-go.exe ./cmd/warde
 
 ## Documentation
 
-- [Project Structure](docs/PROJECT_STRUCTURE.md) - 项目架构设计
-- [Functional Guide](docs/FUNCTIONAL_GUIDE.md) - 功能说明手册
+- [AGENTS.md](AGENTS.md) -- Architecture design and conventions
+- [specs/features/](specs/features/) -- Feature specifications
+- [specs/proposals/](specs/proposals/) -- Design proposals
 
 ## Contributing
 
