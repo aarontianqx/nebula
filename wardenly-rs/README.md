@@ -86,9 +86,9 @@ When using Keyboard Passthrough feature, grant Accessibility permission:
 
 ## Documentation
 
-- [Functional Guide](docs/FUNCTIONAL_GUIDE.md) - Feature overview and usage
-- [Project Structure](docs/PROJECT_STRUCTURE.md) - Architecture design
-- [UI Design](docs/UI_DESIGN.md) - UI/UX specifications
+- [AGENTS.md](AGENTS.md) -- Architecture design and conventions
+- [specs/features/](specs/features/) -- Feature specifications (functional guide, UI design)
+- [specs/proposals/](specs/proposals/) -- Design proposals and RFCs
 
 ## License
 

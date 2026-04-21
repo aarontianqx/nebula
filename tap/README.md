@@ -28,11 +28,9 @@ yarn tauri:build
 
 ## 文档
 
-- `docs/FUNCTIONAL_GUIDE.md` — 产品功能
-- `docs/PROJECT_STRUCTURE.md` — 技术架构
-- `docs/UI_DESIGN.md` — UI/UX 设计
-- `docs/DSL_REFERENCE.md` — YAML DSL 语法参考
-- `docs/roadmap/` — 开发路线图
+- `AGENTS.md` — 架构设计与开发规范
+- `specs/features/` — 功能规格（产品功能、UI 设计、DSL 语法参考等）
+- `specs/proposals/` — 设计提案与路线图
 - `templates/` — YAML 宏模板示例
 
 ## License
