@@ -58,13 +58,13 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 
 | 工具 | 说明 | 状态 |
 |------|------|------|
-| Key→Click（A–Z 按住连点） | 开启后按住 `A`–`Z` 任意键即可持续模拟鼠标点击；按下 `Space` 立即终止 | 📋 规划中（见 `docs/FEATURE_KEY_TO_CLICK_MODE.md`） |
+| Key→Click（A–Z 按住连点） | 开启后按住 `A`–`Z` 任意键即可持续模拟鼠标点击；按下 `Space` 立即终止 | 📋 规划中（见 `specs/features/key-to-click-mode.md`） |
 
 ## 文档索引
 
-- [Phase 1 - MVP](./PHASE_1_MVP.md)
-- [Phase 2 - Record & Replay](./PHASE_2_RECORD_REPLAY.md)
-- [Phase 3 - Conditions](./PHASE_3_CONDITIONS.md)
-- [Phase 4 - Extensibility](./PHASE_4_EXTENSIBILITY.md)
-- [Phase 5 - Architecture](./PHASE_5_ARCHITECTURE.md)
-- [Feature - Key→Click（A–Z 按住连点）](../FEATURE_KEY_TO_CLICK_MODE.md)
+- [Phase 1 - MVP](./phase-1-mvp.md)
+- [Phase 2 - Record & Replay](./phase-2-record-replay.md)
+- [Phase 3 - Conditions](./phase-3-conditions.md)
+- [Phase 4 - Extensibility](./phase-4-extensibility.md)
+- [Phase 5 - Architecture](./phase-5-architecture.md)
+- [Feature - Key→Click（A–Z 按住连点）](../features/key-to-click-mode.md)

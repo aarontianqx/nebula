@@ -33,7 +33,7 @@ Some features in the app are **event-driven tool modes** (driven by live global 
 
 Examples of tool modes:
 
-- **Key→Click**: while enabled, holding any `A`-`Z` key triggers repeated mouse clicks; pressing `Space` stops immediately (see `docs/FEATURE_KEY_TO_CLICK_MODE.md`).
+- **Key→Click**: while enabled, holding any `A`-`Z` key triggers repeated mouse clicks; pressing `Space` stops immediately (see `specs/features/key-to-click-mode.md`).
 
 ## Metadata Fields
 
