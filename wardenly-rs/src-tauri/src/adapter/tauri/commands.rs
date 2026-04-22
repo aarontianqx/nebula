@@ -393,6 +393,39 @@ pub async fn stop_all_scripts(state: State<'_, AppState>) -> Result<(), String> 
     Ok(())
 }
 
+#[tauri::command]
+pub async fn start_all_scripts_staggered(
+    state: State<'_, AppState>,
+    session_scripts: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    state.coordinator.start_all_scripts_staggered(session_scripts).await;
+    Ok(())
+}
+
+// ====== Text Input Commands ======
+
+#[tauri::command]
+pub async fn insert_text(
+    state: State<'_, AppState>,
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .insert_text(&session_id, &text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn insert_text_all(
+    state: State<'_, AppState>,
+    text: String,
+) -> Result<(), String> {
+    state.coordinator.insert_text_all(&text).await;
+    Ok(())
+}
+
 // ====== Input Commands ======
 
 #[tauri::command]

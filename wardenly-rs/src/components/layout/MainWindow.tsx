@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Settings, Play, Keyboard, RefreshCw, Users, MousePointer, Pipette, Power, StopCircle } from "lucide-react";
+import { Settings, Play, Keyboard, RefreshCw, Users, MousePointer, Pipette, Power, StopCircle, Type } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAccountStore } from "../../stores/accountStore";
 import { useSessionStore } from "../../stores/sessionStore";
@@ -39,6 +39,10 @@ function MainWindow() {
   const [inspectorY, setInspectorY] = useState<string>("0");
   const [inspectorColor, setInspectorColor] = useState<string>("");
   const [inspectorRgb, setInspectorRgb] = useState<[number, number, number]>([0, 0, 0]);
+
+  // Text input state
+  const [textInput, setTextInput] = useState<string>("");
+  const textInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize Tauri event listeners
   useTauriEvents();
@@ -260,6 +264,28 @@ function MainWindow() {
       }
     } catch (error) {
       console.error("Failed to click:", error);
+    }
+  };
+
+  // Send text to session's focused element
+  const handleSendText = async () => {
+    if (!selectedSessionId || !textInput) return;
+    try {
+      if (spreadToAll) {
+        await invoke("insert_text_all", { text: textInput });
+      } else {
+        await invoke("insert_text", { sessionId: selectedSessionId, text: textInput });
+      }
+      setTextInput("");
+      textInputRef.current?.focus();
+    } catch (error) {
+      console.error("Failed to send text:", error);
+    }
+  };
+
+  const handleTextInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleSendText();
     }
   };
 
@@ -651,6 +677,32 @@ function MainWindow() {
                   <span className="text-sm text-[var(--color-text-secondary)] font-mono tabular-nums">
                     {inspectorColor || "RGB(0, 0, 0)"}
                   </span>
+                </div>
+
+                {/* Divider */}
+                <div className="w-px h-7 bg-[var(--color-border)]" />
+
+                {/* Text Input Section */}
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={textInputRef}
+                    type="text"
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    onKeyDown={handleTextInputKeyDown}
+                    placeholder="Type..."
+                    disabled={!selectedSessionId}
+                    className="min-w-[160px] px-2 py-1.5 text-sm bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/20 disabled:opacity-50"
+                  />
+                  <button
+                    onClick={handleSendText}
+                    disabled={!selectedSessionId || !textInput}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-[var(--color-bg-surface)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-[var(--color-border)]"
+                    title="Send text to session (respects Spread to All)"
+                  >
+                    <Type size={14} />
+                    Send
+                  </button>
                 </div>
               </div>
             </>

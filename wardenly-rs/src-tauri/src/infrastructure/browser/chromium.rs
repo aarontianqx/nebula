@@ -460,4 +460,16 @@ impl BrowserDriver for ChromiumDriver {
         tracing::info!("Page refreshed");
         Ok(())
     }
+
+    async fn insert_text(&self, text: &str) -> Result<()> {
+        use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
+
+        let page = self.page().await?;
+        let page = page.lock().await;
+
+        page.execute(InsertTextParams::new(text)).await?;
+
+        tracing::debug!("Inserted text ({} chars)", text.len());
+        Ok(())
+    }
 }
