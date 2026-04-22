@@ -96,6 +96,7 @@ Wardenly 作为一个自动化与监控工具，UI 设计应遵循以下核心�
 *   **Secondary (Manage)**: `bg-surface border border-border text-primary hover:bg-surface/80`
 *   **Destructive (Stop)**: `text-danger hover:bg-danger/10` (图标按钮) 或 `bg-danger text-white` (实心按钮)
 *   **Ghost (Icon Button)**: `text-secondary hover:text-primary hover:bg-surface`
+*   **Split Button (Run ▾ / Start All ▾)**: 主按钮 `rounded-l` + 箭头按钮 `rounded-r`，两部分使用显式 `h-[Npx]` 保证等高。箭头按钮通过 `border-l` 分隔。
 
 #### 输入框与下拉框 (Inputs)
 *   背景色: `var(--bg-surface)`
@@ -110,7 +111,8 @@ Wardenly 作为一个自动化与监控工具，UI 设计应遵循以下核心�
 *   **坐标显示**: 使用等宽字体 (Monospace)，如 `JetBrains Mono` 或 `Consolas`，增加专业感。
     *   样式: `font-mono text-xs text-secondary`
 *   **颜色预览**: `w-6 h-6 rounded border border-border`，点击可复制 Hex 值。
-*   **操作按钮**: 集成 Fetch/Click 按钮，使用 Icon + Text 的小号按钮。
+*   **操作按钮**: 集成 Fetch/Click/Send 按钮，使用 Icon + Text 的小号按钮。
+*   **文本输入**: `min-w-[160px]` 输入框 + Send 按钮，样式与坐标输入框一致。用于向会话注入文本。
 
 ---
 
