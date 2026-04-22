@@ -70,5 +70,9 @@ pub trait BrowserDriver: Send + Sync {
     
     /// Refresh/reload the current page
     async fn refresh(&self) -> anyhow::Result<()>;
+
+    /// Insert text into the currently focused element.
+    /// Uses CDP Input.insertText for full Unicode/CJK support.
+    async fn insert_text(&self, text: &str) -> anyhow::Result<()>;
 }
 

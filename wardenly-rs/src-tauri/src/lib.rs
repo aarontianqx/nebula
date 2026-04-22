@@ -227,6 +227,10 @@ pub fn run() {
             commands::stop_script,
             commands::start_all_scripts,
             commands::stop_all_scripts,
+            commands::start_all_scripts_staggered,
+            // Text input commands
+            commands::insert_text,
+            commands::insert_text_all,
             // Input commands
             commands::set_keyboard_passthrough,
             // Settings & Theme commands

@@ -272,6 +272,13 @@ impl SessionActor {
                     }
                 }
             }
+            SessionCommand::InsertText { text } => {
+                if self.state.can_accept_interaction() {
+                    if let Err(e) = self.browser.insert_text(&text).await {
+                        tracing::warn!("Insert text failed: {}", e);
+                    }
+                }
+            }
         }
         true
     }

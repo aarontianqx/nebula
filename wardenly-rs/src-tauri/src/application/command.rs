@@ -34,4 +34,7 @@ pub enum SessionCommand {
 
     /// Capture a single screenshot (for manual refresh when screencast is off)
     CaptureScreenshot,
+
+    /// Insert text into the currently focused element via CDP Input.insertText
+    InsertText { text: String },
 }

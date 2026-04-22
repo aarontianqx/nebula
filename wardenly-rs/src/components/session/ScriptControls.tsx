@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, RefreshCw, PlayCircle, StopCircle } from 'lucide-react';
+import { Play, Square, RefreshCw, PlayCircle, StopCircle, Timer } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { ScriptInfo, SessionState, SessionStateEnum } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -12,6 +12,7 @@ interface Props {
 export default function ScriptControls({ sessionId, sessionState }: Props) {
   const [scripts, setScripts] = useState<ScriptInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [startAllDropdownOpen, setStartAllDropdownOpen] = useState(false);
 
   // Per-session script selection from store
   const { sessions, sessionScripts, setSessionScript } = useSessionStore();
@@ -78,6 +79,17 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
       await invoke('stop_all_scripts');
     } catch (e) {
       console.error('Failed to stop all scripts:', e);
+    }
+    setLoading(false);
+  };
+
+  const handleRunAllStaggered = async () => {
+    setStartAllDropdownOpen(false);
+    setLoading(true);
+    try {
+      await invoke('start_all_scripts_staggered', { sessionScripts });
+    } catch (e) {
+      console.error('Failed to start all scripts (staggered):', e);
     }
     setLoading(false);
   };
@@ -163,15 +175,40 @@ export default function ScriptControls({ sessionId, sessionState }: Props) {
           <span>Stop All</span>
         </button>
       ) : (
-        <button
-          onClick={handleRunAll}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-2 border rounded bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors text-sm"
-          title="Start All Scripts"
-        >
-          <PlayCircle className="w-4 h-4" />
-          <span>Start All</span>
-        </button>
+        <div className="relative flex items-center">
+          <button
+            onClick={handleRunAll}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 border border-r-0 rounded-l bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors text-sm h-[34px]"
+            title="Start All Scripts"
+          >
+            <PlayCircle className="w-4 h-4" />
+            <span>Start All</span>
+          </button>
+          <button
+            onClick={() => setStartAllDropdownOpen(!startAllDropdownOpen)}
+            disabled={loading}
+            className="px-1.5 border rounded-r bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 transition-colors flex items-center h-[34px]"
+            title="More options"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+          </button>
+          {startAllDropdownOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setStartAllDropdownOpen(false)} />
+              <div className="absolute left-0 top-full mt-1 w-52 py-1 bg-[var(--color-bg-panel)] border border-[var(--color-border)] rounded-md shadow-lg z-50">
+                <button
+                  onClick={handleRunAllStaggered}
+                  disabled={loading}
+                  className="w-full px-3 py-2 text-sm text-left text-[var(--color-text-primary)] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                >
+                  <Timer size={14} />
+                  Staggered Start All
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

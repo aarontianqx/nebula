@@ -2,10 +2,11 @@ use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
 use crate::application::service::{SessionActor, SessionHandle};
 use crate::domain::event::DomainEvent;
+use crate::domain::model::SessionState;
 use crate::domain::repository::AccountRepository;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 /// Coordinator manages multiple SessionActors
 pub struct Coordinator {
@@ -367,5 +368,75 @@ impl Coordinator {
 
         tracing::debug!("Requested screenshot capture for session {}", session_id);
         Ok(())
+    }
+
+    /// Insert text into a specific session's focused element
+    pub async fn insert_text(&self, session_id: &str, text: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::InsertText { text: text.to_string() })
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send insert text command"))?;
+
+        tracing::debug!("Insert text to session {}", session_id);
+        Ok(())
+    }
+
+    /// Insert text into all active sessions (concurrent)
+    pub async fn insert_text_all(&self, text: &str) {
+        let sessions = self.sessions.read().await;
+        let futures: Vec<_> = sessions
+            .values()
+            .map(|h| h.cmd_tx.send(SessionCommand::InsertText { text: text.to_string() }))
+            .collect();
+        futures::future::join_all(futures).await;
+    }
+
+    /// Start scripts on all eligible sessions with 1-second staggered delay.
+    /// Skips sessions that already have a running script (no delay consumed).
+    pub async fn start_all_scripts_staggered(
+        &self,
+        session_scripts: HashMap<String, String>,
+    ) {
+        let sessions = self.sessions.read().await;
+
+        let mut targets: Vec<(String, String, mpsc::Sender<SessionCommand>)> = Vec::new();
+        for (session_id, handle) in sessions.iter() {
+            let script_name = match session_scripts.get(session_id) {
+                Some(name) if !name.is_empty() => name.clone(),
+                _ => continue,
+            };
+            if handle.info.state == SessionState::ScriptRunning {
+                continue;
+            }
+            targets.push((session_id.clone(), script_name, handle.cmd_tx.clone()));
+        }
+        drop(sessions);
+
+        tauri::async_runtime::spawn(async move {
+            for (i, (session_id, script_name, cmd_tx)) in targets.iter().enumerate() {
+                if cmd_tx
+                    .send(SessionCommand::StartScript {
+                        script_name: script_name.clone(),
+                    })
+                    .await
+                    .is_ok()
+                {
+                    tracing::info!(
+                        "Staggered start: script '{}' on session {} ({}/{})",
+                        script_name, session_id, i + 1, targets.len()
+                    );
+                }
+                if i < targets.len() - 1 {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+            tracing::info!("Staggered script start complete");
+        });
     }
 }
