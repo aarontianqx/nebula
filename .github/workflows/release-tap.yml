@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "tap-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without project prefix (e.g. v0.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -72,19 +78,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#tap-}" >> "$GITHUB_OUTPUT"
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+            TAG="tap-${VERSION}"
+            git tag "$TAG"
+            git push origin "$TAG"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#tap-}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Tap ${{ steps.version.outputs.version }}"
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "Tap ${{ steps.meta.outputs.version }}"
           files: artifacts/**/*
           generate_release_notes: true
