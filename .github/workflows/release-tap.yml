@@ -62,13 +62,24 @@ jobs:
         working-directory: tap
         run: cargo tauri build --target ${{ matrix.target }}
 
+      - name: Rename raw executable
+        working-directory: tap
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv target/${{ matrix.target }}/release/Tap.exe target/${{ matrix.target }}/release/Tap-${{ matrix.target }}.exe
+          else
+            mv target/${{ matrix.target }}/release/Tap target/${{ matrix.target }}/release/Tap-${{ matrix.target }}
+          fi
+        shell: bash
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tap-${{ matrix.label }}
           path: |
+            tap/target/${{ matrix.target }}/release/Tap-${{ matrix.target }}
+            tap/target/${{ matrix.target }}/release/Tap-${{ matrix.target }}.exe
             tap/target/${{ matrix.target }}/release/bundle/**/*.dmg
-            tap/target/${{ matrix.target }}/release/bundle/**/*.app
             tap/target/${{ matrix.target }}/release/bundle/**/*.msi
             tap/target/${{ matrix.target }}/release/bundle/**/*setup*.exe
           if-no-files-found: error
