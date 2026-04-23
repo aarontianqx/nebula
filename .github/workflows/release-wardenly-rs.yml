@@ -62,13 +62,24 @@ jobs:
         working-directory: wardenly-rs
         run: cargo tauri build --target ${{ matrix.target }}
 
+      - name: Rename raw executable
+        working-directory: wardenly-rs/src-tauri
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv target/${{ matrix.target }}/release/Wardenly.exe target/${{ matrix.target }}/release/Wardenly-${{ matrix.target }}.exe
+          else
+            mv target/${{ matrix.target }}/release/Wardenly target/${{ matrix.target }}/release/Wardenly-${{ matrix.target }}
+          fi
+        shell: bash
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wardenly-rs-${{ matrix.label }}
           path: |
+            wardenly-rs/src-tauri/target/${{ matrix.target }}/release/Wardenly-${{ matrix.target }}
+            wardenly-rs/src-tauri/target/${{ matrix.target }}/release/Wardenly-${{ matrix.target }}.exe
             wardenly-rs/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
-            wardenly-rs/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app
             wardenly-rs/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
             wardenly-rs/src-tauri/target/${{ matrix.target }}/release/bundle/**/*setup*.exe
           if-no-files-found: error
