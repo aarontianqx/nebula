@@ -36,6 +36,15 @@ steps:
       - type: wait
         duration: 1s
 
+  - scene: source_of_goods
+    timeout: 5s
+    actions:
+      - type: click
+        points:
+          - {x: 818, y: 394}
+      - type: wait
+        duration: 1s
+
   - scene: tower_entrance_1
     timeout: 5s
     continueOnFailure: false
@@ -82,6 +91,51 @@ steps:
       interval: 800ms  # Wait 800ms between loops
 
   - scene: tower_entrance_2
+    timeout: 5s
+    continueOnFailure: false
+    ocrRule:
+      name: quit_when_exhausted
+      roi:
+        x: 510
+        y: 602
+        width: 90
+        height: 50
+      threshold: 10
+    actions:
+      - type: click
+        points:
+          - {x: 546, y: 679}
+      - type: wait
+        duration: 1s
+      - type: click
+        points:
+          - {x: 726, y: 194}
+      - type: wait
+        duration: 300ms
+      - type: click
+        points:
+          - {x: 726, y: 314}
+      - type: wait
+        duration: 1s
+      - type: click
+        points:
+          - {x: 394, y: 447}
+      - type: wait
+        duration: 1s
+      - type: click
+        points:
+          - {x: 538, y: 420}
+      - type: wait
+        duration: 1s
+      - type: check_scene  # Check scene and OCR rule before next loop iteration
+    loop:
+      startIndex: 0    # Start from action 0
+      endIndex: 10     # End at action 10 (including check_scene at index 10)
+      count: -1        # Loop infinitely
+      #      until: battle    # Until battle scene is detected, no need in this script
+      interval: 800ms  # Wait 800ms between loops
+
+  - scene: tower_entrance_3
     timeout: 5s
     continueOnFailure: false
     ocrRule:

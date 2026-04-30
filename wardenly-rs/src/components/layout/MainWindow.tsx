@@ -692,7 +692,7 @@ function MainWindow() {
                     onKeyDown={handleTextInputKeyDown}
                     placeholder="Type..."
                     disabled={!selectedSessionId}
-                    className="min-w-[160px] px-2 py-1.5 text-sm bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/20 disabled:opacity-50"
+                    className="w-[104px] px-2 py-1.5 text-sm bg-[var(--color-bg-surface)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/20 disabled:opacity-50"
                   />
                   <button
                     onClick={handleSendText}
