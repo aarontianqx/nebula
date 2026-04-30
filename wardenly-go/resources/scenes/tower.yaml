@@ -25,3 +25,16 @@ scenes:
       ToWorld:
         type: click
         point: {x: 86, y: 20}
+
+  - name: tower_entrance_3
+    points:
+      - {x: 86, y: 20, color: {r: 216, g: 200, b: 149, a: 255}}
+      - {x: 543, y: 298, color: {r: 68, g: 30, b: 37, a: 255}}
+      - {x: 540, y: 674, color: {r: 50, g: 119, b: 80, a: 255}}
+    actions:
+      IntoTower:
+        type: click
+        point: {x: 540, y: 674}
+      ToWorld:
+        type: click
+        point: {x: 86, y: 20}

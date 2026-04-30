@@ -24,3 +24,17 @@ scenes:
       ToMainCity:
         type: click
         point: {x: 497, y: 604} 
+
+  - name: source_of_goods
+    points:
+      - {x: 78, y: 670, color: {r: 79, g: 75, b: 72, a: 255}}
+      - {x: 62, y: 642, color: {r: 73, g: 64, b: 49, a: 255}}
+      - {x: 674, y: 15, color: {r: 89, g: 81, b: 58, a: 255}}
+      - {x: 818, y: 394, color: {r: 106, g: 168, b: 135, a: 255}}
+    actions:
+      ToMainCity:
+        type: click
+        point: {x: 887, y: 171}
+      ToTowerEntrance:
+        type: click
+        point: {x: 818, y: 394}

@@ -36,6 +36,15 @@ steps:
       - type: wait
         duration: 1s
 
+  - scene: source_of_goods
+    timeout: 5s
+    actions:
+      - type: click
+        points:
+          - {x: 818, y: 394}
+      - type: wait
+        duration: 1s
+
   - scene: tower_entrance_1
     timeout: 5s
     ocrRule:
@@ -80,6 +89,49 @@ steps:
           - type: check_scene
 
   - scene: tower_entrance_2
+    timeout: 5s
+    ocrRule:
+      mode: ratio
+      roi:
+        x: 510
+        y: 602
+        width: 90
+        height: 50
+      condition: "used > 10 || used > total"
+      action: quit_exhausted
+    actions:
+      - type: loop
+        count: -1
+        interval: 800ms
+        actions:
+          - type: click
+            points:
+              - {x: 546, y: 679}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 726, y: 194}
+          - type: wait
+            duration: 300ms
+          - type: click
+            points:
+              - {x: 726, y: 314}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 394, y: 447}
+          - type: wait
+            duration: 1s
+          - type: click
+            points:
+              - {x: 538, y: 420}
+          - type: wait
+            duration: 1s
+          - type: check_scene
+
+  - scene: tower_entrance_3
     timeout: 5s
     ocrRule:
       mode: ratio
