@@ -58,6 +58,9 @@ pub struct HttpOcrClient {
     shutdown_tx: watch::Sender<bool>,
 }
 
+/// Maximum attempts for transient OCR transport failures.
+const OCR_REQUEST_MAX_ATTEMPTS: usize = 2;
+
 impl HttpOcrClient {
     /// Create a new HTTP OCR client with background health checking.
     pub fn new(config: OcrConfig) -> Self {
@@ -65,8 +68,12 @@ impl HttpOcrClient {
         let client = Arc::new(
             Client::builder()
                 .timeout(config.timeout())
-                .pool_max_idle_per_host(2)
-                .pool_idle_timeout(Some(std::time::Duration::from_secs(4))) // Close idle connections before server kills them (default ~5s)
+                // Shared singleton client serves all sessions; keep a wider idle pool to reduce
+                // connection churn under multi-session OCR traffic.
+                .pool_max_idle_per_host(8)
+                // Keep idle timeout short enough to avoid stale local sockets, but not so short
+                // that it forces constant reconnects.
+                .pool_idle_timeout(Some(std::time::Duration::from_secs(10)))
                 .build()
                 .expect("Failed to create HTTP client"),
         );
@@ -166,6 +173,42 @@ impl HttpOcrClient {
             }
         }
     }
+
+    async fn send_usage_ratio_request(
+        &self,
+        url: &str,
+        png_bytes: &[u8],
+    ) -> anyhow::Result<reqwest::Response> {
+        for attempt in 1..=OCR_REQUEST_MAX_ATTEMPTS {
+            let response = self
+                .client
+                .post(url)
+                .header("Content-Type", "application/octet-stream")
+                .body(png_bytes.to_vec())
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) => return Ok(resp),
+                Err(err) => {
+                    let is_last_attempt = attempt == OCR_REQUEST_MAX_ATTEMPTS;
+                    let retryable = err.is_connect() || err.is_timeout() || err.is_request();
+                    if !is_last_attempt && retryable {
+                        tracing::debug!(
+                            "Transient OCR transport error (attempt {}/{}), retrying: {}",
+                            attempt,
+                            OCR_REQUEST_MAX_ATTEMPTS,
+                            err
+                        );
+                        continue;
+                    }
+                    return Err(err.into());
+                }
+            }
+        }
+
+        anyhow::bail!("OCR request failed without a response")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,14 +261,8 @@ impl OcrClient for HttpOcrClient {
         // Build request URL
         let url = format!("{}/v1/ratios/usage", self.config.base_url);
 
-        // Send request
-        let response: reqwest::Response = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/octet-stream")
-            .body(png_bytes)
-            .send()
-            .await?;
+        // Send request with one retry for transient transport failures.
+        let response = self.send_usage_ratio_request(&url, &png_bytes).await?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             anyhow::bail!("No ratio found in image");

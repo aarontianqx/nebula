@@ -11,10 +11,17 @@ use std::time::Duration;
 
 /// Connection timeout for MongoDB operations.
 /// Applies to both initial connection and server selection.
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Server selection timeout for topology discovery and failover scenarios.
+const SERVER_SELECTION_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// Maximum idle time for pooled connections.
+/// Keeping this short helps recycle sockets when WSL2/host NAT mappings change.
+const MAX_IDLE_TIME: Duration = Duration::from_secs(20);
 
 /// Hard timeout for the entire connection process (including DNS, handshake, etc.)
-const HARD_TIMEOUT: Duration = Duration::from_secs(4);
+const HARD_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// MongoDB connection wrapper.
 /// Holds the database reference for collection operations.
@@ -64,8 +71,10 @@ impl MongoConnection {
     /// Create client options with timeout configuration.
     async fn create_client_options(uri: &str) -> anyhow::Result<ClientOptions> {
         let mut options = ClientOptions::parse(uri).await?;
+        options.app_name = Some("wardenly-rs".to_string());
         options.connect_timeout = Some(CONNECTION_TIMEOUT);
-        options.server_selection_timeout = Some(CONNECTION_TIMEOUT);
+        options.server_selection_timeout = Some(SERVER_SELECTION_TIMEOUT);
+        options.max_idle_time = Some(MAX_IDLE_TIME);
         Ok(options)
     }
 }
