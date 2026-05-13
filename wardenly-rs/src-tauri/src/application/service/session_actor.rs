@@ -25,7 +25,7 @@ pub struct SessionActor {
     cmd_rx: mpsc::Receiver<SessionCommand>,
     event_bus: SharedEventBus,
     browser: Arc<dyn BrowserDriver + Send + Sync>,
-    frame_rx: mpsc::UnboundedReceiver<String>,
+    frame_rx: mpsc::Receiver<String>,
     script_handle: Option<ScriptHandle>,
 }
 
@@ -35,8 +35,8 @@ impl SessionActor {
         account: Account,
         cmd_rx: mpsc::Receiver<SessionCommand>,
         event_bus: SharedEventBus,
-        frame_tx: mpsc::UnboundedSender<String>,
-        frame_rx: mpsc::UnboundedReceiver<String>,
+        frame_tx: mpsc::Sender<String>,
+        frame_rx: mpsc::Receiver<String>,
     ) -> Self {
         // Pass session ID and account ID to browser driver for persistent profile directory
         let browser = Arc::new(ChromiumDriver::new(&id, &account.id, frame_tx));
@@ -60,7 +60,9 @@ impl SessionActor {
     ) -> SessionHandle {
         let id = ulid::Ulid::new().to_string();
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
-        let (frame_tx, frame_rx) = mpsc::unbounded_channel();
+        // Keep only a tiny buffer for screencast frames to avoid unbounded memory growth.
+        // New frames can be dropped by producer when consumer is busy.
+        let (frame_tx, frame_rx) = mpsc::channel(2);
 
         let info = SessionInfo {
             id: id.clone(),
