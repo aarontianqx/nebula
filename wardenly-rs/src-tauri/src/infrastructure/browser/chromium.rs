@@ -11,6 +11,7 @@ use image::DynamicImage;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::time::{timeout, Duration};
 
 /// Chromium browser driver using chromiumoxide
 pub struct ChromiumDriver {
@@ -19,7 +20,7 @@ pub struct ChromiumDriver {
     browser: RwLock<Option<Browser>>,
     page: RwLock<Option<Arc<Mutex<Page>>>>,
     handler_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
-    frame_tx: mpsc::UnboundedSender<String>,
+    frame_tx: mpsc::Sender<String>,
     screenshot_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     user_data_dir: PathBuf,
     viewport_width: u32,
@@ -29,7 +30,7 @@ pub struct ChromiumDriver {
 impl ChromiumDriver {
     /// Create a new ChromiumDriver with a persistent user data directory per account.
     /// Profile data (cache, cookies, localStorage) is preserved across sessions.
-    pub fn new(session_id: &str, account_id: &str, frame_tx: mpsc::UnboundedSender<String>) -> Self {
+    pub fn new(session_id: &str, account_id: &str, frame_tx: mpsc::Sender<String>) -> Self {
         // Use centralized path utility for consistency with delete_profile()
         use crate::infrastructure::config::paths;
         let user_data_dir = paths::profile_dir(account_id);
@@ -143,19 +144,36 @@ impl BrowserDriver for ChromiumDriver {
         // Stop screenshot task first
         if let Some(handle) = self.screenshot_handle.write().await.take() {
             handle.abort();
+            let _ = handle.await;
         }
 
-        // Close browser
+        // Clear page handle before closing browser to release references quickly.
+        *self.page.write().await = None;
+
+        // Close browser process and CDP resources.
         if let Some(mut browser) = self.browser.write().await.take() {
-            let _ = browser.close().await;
+            if let Err(e) = browser.close().await {
+                tracing::warn!(
+                    "Failed to close browser cleanly for session {}: {}",
+                    self.session_id,
+                    e
+                );
+            }
         }
 
-        // Abort handler
+        // Abort handler and wait briefly for it to settle to avoid orphaned runtime tasks.
         if let Some(handle) = self.handler_handle.write().await.take() {
             handle.abort();
+            match timeout(Duration::from_secs(1), handle).await {
+                Ok(_) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        "Timed out waiting browser handler to stop for session {}",
+                        self.session_id
+                    );
+                }
+            }
         }
-
-        *self.page.write().await = None;
         
         // NOTE: Profile directory is NOT cleaned up to preserve cache for faster startup next time.
         // See docs/roadmap/BROWSER_PERSISTENCE_RFC.md for rationale.
@@ -308,6 +326,7 @@ impl BrowserDriver for ChromiumDriver {
         // Use periodic screenshots as screencast (~3 FPS with JPEG for better performance)
         // 3 FPS (333ms) is sufficient for game automation and reduces CPU load
         let handle = tokio::spawn(async move {
+            let mut dropped_frames: u64 = 0;
             use chromiumoxide::cdp::browser_protocol::page::{
                 CaptureScreenshotFormat, CaptureScreenshotParams,
             };
@@ -327,10 +346,21 @@ impl BrowserDriver for ChromiumDriver {
                     Ok(data) => {
                         use base64::Engine;
                         let base64_data = base64::engine::general_purpose::STANDARD.encode(&data);
-                        // Non-blocking send - if channel is full, the frame is dropped
-                        // This prevents frame backlog when frontend can't keep up
-                        if frame_tx.send(base64_data).is_err() {
-                            break;
+                        // Non-blocking send; drop frame when queue is full to avoid backlog growth.
+                        match frame_tx.try_send(base64_data) {
+                            Ok(()) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                dropped_frames += 1;
+                                if dropped_frames % 120 == 1 {
+                                    tracing::debug!(
+                                        "Dropping screencast frames due to backpressure (dropped={})",
+                                        dropped_frames
+                                    );
+                                }
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
