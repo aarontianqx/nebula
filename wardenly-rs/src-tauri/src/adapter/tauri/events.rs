@@ -33,4 +33,3 @@ fn forward_event(app: &AppHandle, event: DomainEvent) {
         tracing::warn!("Failed to emit event {}: {}", event_name, e);
     }
 }
-

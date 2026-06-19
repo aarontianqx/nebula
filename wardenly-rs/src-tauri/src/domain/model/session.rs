@@ -32,4 +32,3 @@ pub struct SessionInfo {
     pub display_name: String,
     pub state: SessionState,
 }
-

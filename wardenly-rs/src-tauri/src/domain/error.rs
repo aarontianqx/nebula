@@ -20,4 +20,3 @@ impl From<rusqlite::Error> for DomainError {
         DomainError::Database(err.to_string())
     }
 }
-

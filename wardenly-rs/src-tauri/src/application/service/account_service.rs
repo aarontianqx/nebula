@@ -28,4 +28,3 @@ impl<R: AccountRepository> AccountService<R> {
         self.repo.delete(id)
     }
 }
-

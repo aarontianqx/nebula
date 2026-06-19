@@ -31,27 +31,26 @@ pub fn load_scenes() -> anyhow::Result<Vec<Scene>> {
     for file in SCENES_DIR.files() {
         let path = file.path();
         let extension = path.extension().and_then(|e| e.to_str());
-        
+
         if !matches!(extension, Some("yaml") | Some("yml")) {
             continue;
         }
 
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
         match file.contents_utf8() {
-            Some(content) => {
-                match parse_scene_content(content) {
-                    Ok(scenes) => {
-                        tracing::debug!("Loaded {} scenes from {}", scenes.len(), file_name);
-                        all_scenes.extend(scenes);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to parse scene {}: {}", file_name, e);
-                    }
+            Some(content) => match parse_scene_content(content) {
+                Ok(scenes) => {
+                    tracing::debug!("Loaded {} scenes from {}", scenes.len(), file_name);
+                    all_scenes.extend(scenes);
                 }
-            }
+                Err(e) => {
+                    tracing::error!("Failed to parse scene {}: {}", file_name, e);
+                }
+            },
             None => {
                 tracing::error!("Scene file {} is not valid UTF-8", file_name);
             }
@@ -89,27 +88,26 @@ pub fn load_scripts() -> anyhow::Result<Vec<Script>> {
     for file in SCRIPTS_DIR.files() {
         let path = file.path();
         let extension = path.extension().and_then(|e| e.to_str());
-        
+
         if !matches!(extension, Some("yaml") | Some("yml")) {
             continue;
         }
 
-        let file_name = path.file_name()
+        let file_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
         match file.contents_utf8() {
-            Some(content) => {
-                match serde_yaml::from_str::<Script>(content) {
-                    Ok(script) => {
-                        tracing::debug!("Loaded script: {}", file_name);
-                        scripts.push(script);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to parse script {}: {}", file_name, e);
-                    }
+            Some(content) => match serde_yaml::from_str::<Script>(content) {
+                Ok(script) => {
+                    tracing::debug!("Loaded script: {}", file_name);
+                    scripts.push(script);
                 }
-            }
+                Err(e) => {
+                    tracing::error!("Failed to parse script {}: {}", file_name, e);
+                }
+            },
             None => {
                 tracing::error!("Script file {} is not valid UTF-8", file_name);
             }

@@ -70,20 +70,48 @@ pub struct Theme {
 }
 
 // Default color values (ocean-dark theme)
-fn default_bg_app() -> String { "#0f172a".to_string() }
-fn default_bg_panel() -> String { "#1e293b".to_string() }
-fn default_bg_surface() -> String { "#334155".to_string() }
-fn default_bg_hover() -> String { "#3f4f63".to_string() }
-fn default_border() -> String { "#475569".to_string() }
-fn default_text_primary() -> String { "#f8fafc".to_string() }
-fn default_text_secondary() -> String { "#94a3b8".to_string() }
-fn default_text_muted() -> String { "#64748b".to_string() }
-fn default_accent() -> String { "#3b82f6".to_string() }
-fn default_accent_hover() -> String { "#2563eb".to_string() }
-fn default_accent_fg() -> String { "#ffffff".to_string() }
-fn default_success() -> String { "#22c55e".to_string() }
-fn default_warning() -> String { "#f59e0b".to_string() }
-fn default_error() -> String { "#ef4444".to_string() }
+fn default_bg_app() -> String {
+    "#0f172a".to_string()
+}
+fn default_bg_panel() -> String {
+    "#1e293b".to_string()
+}
+fn default_bg_surface() -> String {
+    "#334155".to_string()
+}
+fn default_bg_hover() -> String {
+    "#3f4f63".to_string()
+}
+fn default_border() -> String {
+    "#475569".to_string()
+}
+fn default_text_primary() -> String {
+    "#f8fafc".to_string()
+}
+fn default_text_secondary() -> String {
+    "#94a3b8".to_string()
+}
+fn default_text_muted() -> String {
+    "#64748b".to_string()
+}
+fn default_accent() -> String {
+    "#3b82f6".to_string()
+}
+fn default_accent_hover() -> String {
+    "#2563eb".to_string()
+}
+fn default_accent_fg() -> String {
+    "#ffffff".to_string()
+}
+fn default_success() -> String {
+    "#22c55e".to_string()
+}
+fn default_warning() -> String {
+    "#f59e0b".to_string()
+}
+fn default_error() -> String {
+    "#ef4444".to_string()
+}
 
 impl Theme {
     /// Convert theme to a flat map of CSS variable names to values
@@ -94,11 +122,20 @@ impl Theme {
         vars.insert("--color-bg-surface".to_string(), self.bg_surface.clone());
         vars.insert("--color-bg-hover".to_string(), self.bg_hover.clone());
         vars.insert("--color-border".to_string(), self.border.clone());
-        vars.insert("--color-text-primary".to_string(), self.text_primary.clone());
-        vars.insert("--color-text-secondary".to_string(), self.text_secondary.clone());
+        vars.insert(
+            "--color-text-primary".to_string(),
+            self.text_primary.clone(),
+        );
+        vars.insert(
+            "--color-text-secondary".to_string(),
+            self.text_secondary.clone(),
+        );
         vars.insert("--color-text-muted".to_string(), self.text_muted.clone());
         vars.insert("--color-accent".to_string(), self.accent.clone());
-        vars.insert("--color-accent-hover".to_string(), self.accent_hover.clone());
+        vars.insert(
+            "--color-accent-hover".to_string(),
+            self.accent_hover.clone(),
+        );
         vars.insert("--color-accent-fg".to_string(), self.accent_fg.clone());
         vars.insert("--color-success".to_string(), self.success.clone());
         vars.insert("--color-warning".to_string(), self.warning.clone());

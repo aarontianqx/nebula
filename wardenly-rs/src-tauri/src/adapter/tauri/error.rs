@@ -19,4 +19,3 @@ impl From<ApiError> for String {
         err.message
     }
 }
-

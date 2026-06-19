@@ -1,7 +1,7 @@
+use super::DbConnection;
 use crate::domain::error::DomainError;
 use crate::domain::model::Account;
 use crate::domain::repository::{AccountRepository, Result};
-use super::DbConnection;
 use rusqlite::params;
 
 pub struct SqliteAccountRepository {
@@ -16,11 +16,14 @@ impl SqliteAccountRepository {
 
 impl AccountRepository for SqliteAccountRepository {
     fn find_by_id(&self, id: &str) -> Result<Option<Account>> {
-        let conn = self.conn.lock().map_err(|e| DomainError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DomainError::Database(e.to_string()))?;
 
         let mut stmt = conn.prepare(
             "SELECT id, role_name, user_name, password, server_id, ranking 
-             FROM accounts WHERE id = ?"
+             FROM accounts WHERE id = ?",
         )?;
 
         let mut rows = stmt.query(params![id])?;
@@ -40,11 +43,14 @@ impl AccountRepository for SqliteAccountRepository {
     }
 
     fn find_all(&self) -> Result<Vec<Account>> {
-        let conn = self.conn.lock().map_err(|e| DomainError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DomainError::Database(e.to_string()))?;
 
         let mut stmt = conn.prepare(
             "SELECT id, role_name, user_name, password, server_id, ranking 
-             FROM accounts ORDER BY ranking ASC, id ASC"
+             FROM accounts ORDER BY ranking ASC, id ASC",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -67,7 +73,10 @@ impl AccountRepository for SqliteAccountRepository {
     }
 
     fn save(&self, account: &Account) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| DomainError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DomainError::Database(e.to_string()))?;
 
         conn.execute(
             "INSERT OR REPLACE INTO accounts 
@@ -87,11 +96,13 @@ impl AccountRepository for SqliteAccountRepository {
     }
 
     fn delete(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| DomainError::Database(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DomainError::Database(e.to_string()))?;
 
         conn.execute("DELETE FROM accounts WHERE id = ?", params![id])?;
 
         Ok(())
     }
 }
-

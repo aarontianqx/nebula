@@ -13,4 +13,3 @@ pub use script::{
     Action, Condition, OcrAction, OcrMode, OcrRegion, OcrRule, Point, Script, ScriptInfo, Step,
 };
 pub use session::{SessionInfo, SessionState};
-

@@ -60,7 +60,12 @@ impl MongoConnection {
             Ok(Self { database })
         })
         .await
-        .map_err(|_| anyhow::anyhow!("Connection attempt timed out after {}s", HARD_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Connection attempt timed out after {}s",
+                HARD_TIMEOUT.as_secs()
+            )
+        })?
     }
 
     /// Get a typed collection from the database.

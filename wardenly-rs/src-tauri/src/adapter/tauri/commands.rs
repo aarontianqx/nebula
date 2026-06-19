@@ -45,10 +45,7 @@ pub fn create_account(
 }
 
 #[tauri::command]
-pub fn update_account(
-    state: State<'_, AppState>,
-    account: Account,
-) -> Result<Account, String> {
+pub fn update_account(state: State<'_, AppState>, account: Account) -> Result<Account, String> {
     state
         .account_service
         .update(account)
@@ -62,10 +59,10 @@ pub fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), Stri
         .account_service
         .delete(&id)
         .map_err(|e| -> String { ApiError::from(e).into() })?;
-    
+
     // Clean up browser profile directory for this account
     crate::infrastructure::config::paths::delete_profile(&id);
-    
+
     Ok(())
 }
 
@@ -296,15 +293,15 @@ pub async fn drag_all_sessions(
     to_x: f64,
     to_y: f64,
 ) -> Result<(), String> {
-    state.coordinator.drag_all((from_x, from_y), (to_x, to_y)).await;
+    state
+        .coordinator
+        .drag_all((from_x, from_y), (to_x, to_y))
+        .await;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn refresh_session(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn refresh_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     state
         .coordinator
         .refresh_session(&session_id)
@@ -325,10 +322,7 @@ pub async fn start_screencast(
 }
 
 #[tauri::command]
-pub async fn stop_screencast(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn stop_screencast(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     state
         .coordinator
         .stop_screencast(&session_id)
@@ -398,7 +392,10 @@ pub async fn start_all_scripts_staggered(
     state: State<'_, AppState>,
     session_scripts: std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
-    state.coordinator.start_all_scripts_staggered(session_scripts).await;
+    state
+        .coordinator
+        .start_all_scripts_staggered(session_scripts)
+        .await;
     Ok(())
 }
 
@@ -418,10 +415,7 @@ pub async fn insert_text(
 }
 
 #[tauri::command]
-pub async fn insert_text_all(
-    state: State<'_, AppState>,
-    text: String,
-) -> Result<(), String> {
+pub async fn insert_text_all(state: State<'_, AppState>, text: String) -> Result<(), String> {
     state.coordinator.insert_text_all(&text).await;
     Ok(())
 }
@@ -443,15 +437,16 @@ pub async fn set_keyboard_passthrough(
 // ====== Settings & Theme Commands ======
 
 use crate::infrastructure::config::{
-    keyboard, themes, user_settings, ThemeResponse, UserSettings, SettingsResponse,
+    keyboard,
     loader::{save_user_settings, settings_file_path},
+    themes, user_settings, SettingsResponse, ThemeResponse, UserSettings,
 };
 
 #[tauri::command]
 pub fn get_settings() -> Result<SettingsResponse, String> {
     let settings = user_settings();
     let theme_config = themes();
-    
+
     Ok(SettingsResponse {
         settings,
         available_themes: theme_config.available_themes(),
@@ -471,7 +466,7 @@ pub fn save_settings(settings: UserSettings) -> Result<(), String> {
 #[tauri::command]
 pub async fn test_mongodb_connection(uri: String, database: String) -> Result<(), String> {
     use crate::infrastructure::persistence::mongodb::test_connection;
-    
+
     test_connection(&uri, &database).await
 }
 
@@ -479,16 +474,16 @@ pub async fn test_mongodb_connection(uri: String, database: String) -> Result<()
 pub fn get_theme_config() -> Result<ThemeResponse, String> {
     let settings = user_settings();
     let theme_config = themes();
-    
+
     // Determine which theme to use: user preference > default
     let active_theme_name = settings
         .theme
         .filter(|t| theme_config.themes.contains_key(t))
         .unwrap_or_else(|| theme_config.default_theme.clone());
-    
+
     // Get the theme
     let theme = theme_config.get_theme(&active_theme_name);
-    
+
     Ok(ThemeResponse {
         active_theme: active_theme_name,
         css_vars: theme.to_css_vars(),
@@ -578,4 +573,3 @@ pub fn get_cache_size() -> Result<CacheSizeResponse, String> {
 pub fn clear_all_cache() -> Result<usize, String> {
     Ok(paths::clear_all_profiles())
 }
-

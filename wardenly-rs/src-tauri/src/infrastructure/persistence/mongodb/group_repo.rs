@@ -7,8 +7,8 @@ use crate::domain::error::DomainError;
 use crate::domain::model::Group;
 use crate::domain::repository::{GroupRepository, Result};
 use mongodb::bson::doc;
-use mongodb::Collection;
 use mongodb::options::FindOptions;
+use mongodb::Collection;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
@@ -151,5 +151,3 @@ impl GroupRepository for MongoGroupRepository {
         })
     }
 }
-
-
