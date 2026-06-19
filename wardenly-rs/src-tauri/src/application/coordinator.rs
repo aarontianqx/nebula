@@ -22,29 +22,34 @@ impl Coordinator {
             event_bus,
             account_repo,
         };
-        
+
         coordinator
     }
-    
+
     /// Start the event listener for state sync and auto-cleanup of stopped sessions
     /// This should be called after the Coordinator is created and wrapped in Arc
     pub fn start_event_listener(self: &Arc<Self>) {
         let sessions = self.sessions.clone();
         let mut receiver = self.event_bus.subscribe();
-        
+
         tauri::async_runtime::spawn(async move {
             loop {
                 match receiver.recv().await {
                     Ok(event) => {
                         match event {
-                            DomainEvent::SessionStateChanged { session_id, new_state, .. } => {
+                            DomainEvent::SessionStateChanged {
+                                session_id,
+                                new_state,
+                                ..
+                            } => {
                                 // Sync session state to SessionHandle
                                 let mut sessions_guard = sessions.write().await;
                                 if let Some(handle) = sessions_guard.get_mut(&session_id) {
                                     handle.info.state = new_state;
                                     tracing::trace!(
                                         "Synced session {} state to {:?}",
-                                        session_id, new_state
+                                        session_id,
+                                        new_state
                                     );
                                 }
                             }
@@ -58,15 +63,24 @@ impl Coordinator {
                                     );
                                 }
                             }
-                            DomainEvent::ScriptStopped { session_id, script_name, run_id } => {
+                            DomainEvent::ScriptStopped {
+                                session_id,
+                                script_name,
+                                run_id,
+                            } => {
                                 // Forward to SessionActor with run_id for validation.
                                 // SessionActor will verify run_id matches current script,
                                 // preventing stale events from stopping newly started scripts.
                                 let sessions_guard = sessions.read().await;
                                 if let Some(handle) = sessions_guard.get(&session_id) {
-                                    if handle.cmd_tx.send(SessionCommand::StopScript { 
-                                        run_id: Some(run_id.clone()) 
-                                    }).await.is_ok() {
+                                    if handle
+                                        .cmd_tx
+                                        .send(SessionCommand::StopScript {
+                                            run_id: Some(run_id.clone()),
+                                        })
+                                        .await
+                                        .is_ok()
+                                    {
                                         tracing::debug!(
                                             "Forwarded ScriptStopped for '{}' (run_id={}) to session {}",
                                             script_name, run_id, session_id
@@ -87,7 +101,7 @@ impl Coordinator {
                 }
             }
         });
-        
+
         tracing::info!("Coordinator event listener started");
     }
 
@@ -166,6 +180,41 @@ impl Coordinator {
         }
 
         tracing::info!("Stopped all sessions");
+    }
+
+    /// Gracefully shut down every session and wait (bounded by the caller) until each browser
+    /// has actually been torn down.
+    ///
+    /// Unlike `stop_all`, which only fires Stop commands and returns immediately, this awaits
+    /// the `SessionStopped` events that an actor publishes *after* `browser.stop()` (close + kill)
+    /// completes. This is what makes application exit reliably reap headless Chrome processes
+    /// instead of leaving orphans. The caller MUST wrap this in a timeout.
+    pub async fn shutdown(&self) {
+        // Subscribe before sending Stop so no SessionStopped event can be missed.
+        let mut rx = self.event_bus.subscribe();
+
+        let mut remaining = {
+            let mut sessions = self.sessions.write().await;
+            let handles: Vec<SessionHandle> = sessions.drain().map(|(_, h)| h).collect();
+            let count = handles.len();
+            for handle in handles {
+                let _ = handle.cmd_tx.send(SessionCommand::Stop).await;
+            }
+            count
+        };
+
+        while remaining > 0 {
+            match rx.recv().await {
+                Ok(DomainEvent::SessionStopped { .. }) => {
+                    remaining -= 1;
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+
+        tracing::info!("All sessions shut down");
     }
 
     /// Send click to a specific session
@@ -283,7 +332,9 @@ impl Coordinator {
 
             if handle
                 .cmd_tx
-                .send(SessionCommand::StartScript { script_name: script_name.clone() })
+                .send(SessionCommand::StartScript {
+                    script_name: script_name.clone(),
+                })
                 .await
                 .is_ok()
             {
@@ -296,12 +347,17 @@ impl Coordinator {
     pub async fn stop_all_scripts(&self) {
         let sessions = self.sessions.read().await;
         for (session_id, handle) in sessions.iter() {
-            if handle.cmd_tx.send(SessionCommand::StopScript { run_id: None }).await.is_ok() {
+            if handle
+                .cmd_tx
+                .send(SessionCommand::StopScript { run_id: None })
+                .await
+                .is_ok()
+            {
                 tracing::info!("Stopped script on session {}", session_id);
             }
         }
     }
-    
+
     /// Refresh/reload page on a specific session
     pub async fn refresh_session(&self, session_id: &str) -> anyhow::Result<()> {
         let sessions = self.sessions.read().await;
@@ -318,7 +374,7 @@ impl Coordinator {
         tracing::info!("Refreshed session {}", session_id);
         Ok(())
     }
-    
+
     /// Start screencast streaming on a specific session
     pub async fn start_screencast(&self, session_id: &str) -> anyhow::Result<()> {
         let sessions = self.sessions.read().await;
@@ -335,7 +391,7 @@ impl Coordinator {
         tracing::info!("Started screencast for session {}", session_id);
         Ok(())
     }
-    
+
     /// Stop screencast streaming on a specific session
     pub async fn stop_screencast(&self, session_id: &str) -> anyhow::Result<()> {
         let sessions = self.sessions.read().await;
@@ -379,7 +435,9 @@ impl Coordinator {
 
         handle
             .cmd_tx
-            .send(SessionCommand::InsertText { text: text.to_string() })
+            .send(SessionCommand::InsertText {
+                text: text.to_string(),
+            })
             .await
             .map_err(|_| anyhow::anyhow!("Failed to send insert text command"))?;
 
@@ -392,17 +450,18 @@ impl Coordinator {
         let sessions = self.sessions.read().await;
         let futures: Vec<_> = sessions
             .values()
-            .map(|h| h.cmd_tx.send(SessionCommand::InsertText { text: text.to_string() }))
+            .map(|h| {
+                h.cmd_tx.send(SessionCommand::InsertText {
+                    text: text.to_string(),
+                })
+            })
             .collect();
         futures::future::join_all(futures).await;
     }
 
     /// Start scripts on all eligible sessions with 1-second staggered delay.
     /// Skips sessions that already have a running script (no delay consumed).
-    pub async fn start_all_scripts_staggered(
-        &self,
-        session_scripts: HashMap<String, String>,
-    ) {
+    pub async fn start_all_scripts_staggered(&self, session_scripts: HashMap<String, String>) {
         let sessions = self.sessions.read().await;
 
         let mut targets: Vec<(String, String, mpsc::Sender<SessionCommand>)> = Vec::new();
@@ -429,7 +488,10 @@ impl Coordinator {
                 {
                     tracing::info!(
                         "Staggered start: script '{}' on session {} ({}/{})",
-                        script_name, session_id, i + 1, targets.len()
+                        script_name,
+                        session_id,
+                        i + 1,
+                        targets.len()
                     );
                 }
                 if i < targets.len() - 1 {

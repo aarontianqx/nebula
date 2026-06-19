@@ -37,7 +37,8 @@ fn init_sqlite_storage() -> Result<StorageBackend, String> {
 
     let account_repo = Box::new(SqliteAccountRepository::new(db.clone()));
     let group_repo = Box::new(SqliteGroupRepository::new(db.clone()));
-    let coordinator_account_repo: Arc<dyn AccountRepository> = Arc::new(SqliteAccountRepository::new(db));
+    let coordinator_account_repo: Arc<dyn AccountRepository> =
+        Arc::new(SqliteAccountRepository::new(db));
 
     Ok(StorageBackend {
         account_repo,
@@ -73,18 +74,19 @@ fn init_storage() -> Result<StorageInitResult, String> {
             let uri = mongo_config.uri.clone();
             let db = mongo_config.database.clone();
 
-            let mongo_result = tauri_handle.block_on(async move {
-                persistence::mongodb::init_mongodb(&uri, &db).await
-            });
+            let mongo_result = tauri_handle
+                .block_on(async move { persistence::mongodb::init_mongodb(&uri, &db).await });
 
             match mongo_result {
                 Ok(conn) => {
                     tracing::info!("MongoDB connection successful");
                     use persistence::mongodb::{MongoAccountRepository, MongoGroupRepository};
 
-                    let account_repo = Box::new(MongoAccountRepository::new(conn.clone(), runtime.clone()));
-                    let group_repo = Box::new(MongoGroupRepository::new(conn.clone(), runtime.clone()));
-                    let coordinator_account_repo: Arc<dyn AccountRepository> = 
+                    let account_repo =
+                        Box::new(MongoAccountRepository::new(conn.clone(), runtime.clone()));
+                    let group_repo =
+                        Box::new(MongoGroupRepository::new(conn.clone(), runtime.clone()));
+                    let coordinator_account_repo: Arc<dyn AccountRepository> =
                         Arc::new(MongoAccountRepository::new(conn, runtime));
 
                     Ok(StorageInitResult {
@@ -186,7 +188,10 @@ pub fn run() {
     // Start coordinator event listener for auto-cleanup of stopped sessions
     coordinator.start_event_listener();
 
-    tauri::Builder::default()
+    // Clone for the exit hook so we can reap browser processes on shutdown.
+    let shutdown_coordinator = coordinator.clone();
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
@@ -244,8 +249,20 @@ pub fn run() {
             commands::get_cache_size,
             commands::clear_all_cache,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // Run with an exit hook that tears down all browser sessions before the process exits.
+    // Without this, headless Chrome children would be orphaned on quit.
+    app.run(move |_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            tracing::info!("Exit requested: shutting down all browser sessions");
+            let coordinator = shutdown_coordinator.clone();
+            // Bounded so a misbehaving session can never block application exit.
+            let _ = tauri::async_runtime::block_on(async move {
+                tokio::time::timeout(std::time::Duration::from_secs(10), coordinator.shutdown())
+                    .await
+            });
+        }
+    });
 }
-
-
