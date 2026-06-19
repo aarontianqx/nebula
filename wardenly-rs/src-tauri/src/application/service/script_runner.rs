@@ -120,7 +120,11 @@ impl ScriptRunner {
                 }
                 Err(e) => {
                     capture_failures += 1;
-                    tracing::warn!(attempt = capture_failures, "Failed to capture screen: {}", e);
+                    tracing::warn!(
+                        attempt = capture_failures,
+                        "Failed to capture screen: {}",
+                        e
+                    );
 
                     if capture_failures >= MAX_CAPTURE_FAILURES {
                         tracing::error!("Too many capture failures, browser may have stopped");
@@ -213,7 +217,8 @@ impl ScriptRunner {
         }
 
         // Execute actions sequentially, passing OCR rule for loop iteration checks
-        self.execute_actions(&step.actions, step.ocr_rule.as_ref(), &scene_name).await
+        self.execute_actions(&step.actions, step.ocr_rule.as_ref(), &scene_name)
+            .await
     }
 
     /// Execute a list of actions
@@ -291,7 +296,14 @@ impl ScriptRunner {
                 actions,
             } => {
                 return self
-                    .execute_loop(*count, interval.as_ref(), until.as_ref(), actions, ocr_rule, scene_name)
+                    .execute_loop(
+                        *count,
+                        interval.as_ref(),
+                        until.as_ref(),
+                        actions,
+                        ocr_rule,
+                        scene_name,
+                    )
                     .await;
             }
         }
@@ -310,10 +322,8 @@ impl ScriptRunner {
             }
         } else if points.len() > 2 {
             // Multi-point path: use drag_path for precise path following
-            let browser_points: Vec<BrowserPoint> = points
-                .iter()
-                .map(|p| BrowserPoint::new(p.x, p.y))
-                .collect();
+            let browser_points: Vec<BrowserPoint> =
+                points.iter().map(|p| BrowserPoint::new(p.x, p.y)).collect();
             if let Err(e) = self.browser.drag_path(&browser_points).await {
                 tracing::warn!("Drag path failed: {}", e);
             }

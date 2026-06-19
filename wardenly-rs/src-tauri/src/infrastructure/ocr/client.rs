@@ -86,7 +86,8 @@ impl HttpOcrClient {
         let health_config = config.clone();
         let health_healthy = healthy.clone();
         tokio::spawn(async move {
-            Self::health_check_loop(health_client, health_config, health_healthy, shutdown_rx).await;
+            Self::health_check_loop(health_client, health_config, health_healthy, shutdown_rx)
+                .await;
         });
 
         Self {
@@ -157,7 +158,9 @@ impl HttpOcrClient {
                 healthy.store(false, Ordering::Relaxed);
                 if was_healthy {
                     if e.is_connect() {
-                        tracing::warn!("OCR health check: connection refused (service may be down)");
+                        tracing::warn!(
+                            "OCR health check: connection refused (service may be down)"
+                        );
                     } else {
                         tracing::warn!("OCR health check failed: {}", e);
                     }

@@ -35,4 +35,3 @@ impl Account {
         format!("{} - {}", self.server_id, self.role_name)
     }
 }
-

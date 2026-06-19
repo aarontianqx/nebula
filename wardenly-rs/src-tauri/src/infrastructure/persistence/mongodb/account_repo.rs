@@ -7,8 +7,8 @@ use crate::domain::error::DomainError;
 use crate::domain::model::Account;
 use crate::domain::repository::{AccountRepository, Result};
 use mongodb::bson::doc;
-use mongodb::Collection;
 use mongodb::options::FindOptions;
+use mongodb::Collection;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
@@ -155,4 +155,3 @@ impl AccountRepository for MongoAccountRepository {
         })
     }
 }
-

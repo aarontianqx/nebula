@@ -51,4 +51,3 @@ pub fn init_database() -> anyhow::Result<DbConnection> {
 
     Ok(Arc::new(Mutex::new(conn)))
 }
-

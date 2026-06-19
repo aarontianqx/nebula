@@ -56,4 +56,3 @@ impl GroupRepository for Box<dyn GroupRepository> {
         (**self).delete(id)
     }
 }
-
