@@ -33,28 +33,24 @@ pub fn save_yaml<T: Serialize>(path: impl AsRef<Path>, config: &T) -> anyhow::Re
 /// Files are embedded at compile time using include_dir
 pub fn load_embedded_config<T: DeserializeOwned + Default>(name: &str) -> T {
     let file_name = format!("{}.yaml", name);
-    
+
     match CONFIGS_DIR.get_file(&file_name) {
-        Some(file) => {
-            match file.contents_utf8() {
-                Some(content) => {
-                    match parse_yaml::<T>(content) {
-                        Ok(config) => {
-                            tracing::debug!("Loaded embedded config: {}", name);
-                            config
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to parse embedded config {}: {}", name, e);
-                            T::default()
-                        }
-                    }
+        Some(file) => match file.contents_utf8() {
+            Some(content) => match parse_yaml::<T>(content) {
+                Ok(config) => {
+                    tracing::debug!("Loaded embedded config: {}", name);
+                    config
                 }
-                None => {
-                    tracing::error!("Embedded config {} is not valid UTF-8", name);
+                Err(e) => {
+                    tracing::error!("Failed to parse embedded config {}: {}", name, e);
                     T::default()
                 }
+            },
+            None => {
+                tracing::error!("Embedded config {} is not valid UTF-8", name);
+                T::default()
             }
-        }
+        },
         None => {
             tracing::warn!("Embedded config {} not found, using defaults", name);
             T::default()

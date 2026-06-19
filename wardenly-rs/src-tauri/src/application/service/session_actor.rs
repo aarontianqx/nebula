@@ -1,8 +1,8 @@
 use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
 use crate::application::service::script_runner::{ScriptHandle, ScriptRunner};
-use crate::domain::model::{Account, Scene, SceneAction, SessionInfo, SessionState};
 use crate::domain::event::DomainEvent;
+use crate::domain::model::{Account, Scene, SceneAction, SessionInfo, SessionState};
 use crate::infrastructure::browser::{BrowserDriver, ChromiumDriver};
 use crate::infrastructure::config::resources;
 use crate::infrastructure::ocr::global_ocr_client;
@@ -54,10 +54,7 @@ impl SessionActor {
     }
 
     /// Create a new session and return a handle
-    pub fn spawn(
-        account: Account,
-        event_bus: SharedEventBus,
-    ) -> SessionHandle {
+    pub fn spawn(account: Account, event_bus: SharedEventBus) -> SessionHandle {
         let id = ulid::Ulid::new().to_string();
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         // Keep only a tiny buffer for screencast frames to avoid unbounded memory growth.
@@ -71,7 +68,14 @@ impl SessionActor {
             state: SessionState::Idle,
         };
 
-        let actor = Self::new(id.clone(), account, cmd_rx, event_bus.clone(), frame_tx, frame_rx);
+        let actor = Self::new(
+            id.clone(),
+            account,
+            cmd_rx,
+            event_bus.clone(),
+            frame_tx,
+            frame_rx,
+        );
 
         // Publish session created event
         event_bus.publish(DomainEvent::SessionCreated {
@@ -88,7 +92,11 @@ impl SessionActor {
 
     /// Main run loop
     pub async fn run(mut self) {
-        tracing::info!("Session {} started for account {}", self.id, self.account.id);
+        tracing::info!(
+            "Session {} started for account {}",
+            self.id,
+            self.account.id
+        );
 
         // Wait for Start command
         loop {
@@ -182,7 +190,7 @@ impl SessionActor {
                 self.transition_to(SessionState::Ready).await;
             }
         }
-        
+
         true
     }
 
@@ -234,7 +242,8 @@ impl SessionActor {
                         } else {
                             tracing::debug!(
                                 "Ignoring StopScript: run_id mismatch (expected={}, current={})",
-                                expected_run_id, handle.run_id
+                                expected_run_id,
+                                handle.run_id
                             );
                         }
                     }
@@ -314,23 +323,23 @@ impl SessionActor {
         let timeout = Duration::from_secs(30);
         let scene_check_interval = Duration::from_millis(500);
         let login_form_check_interval = Duration::from_millis(300);
-        
+
         // Load scenes for detection
         let scenes = resources::load_scenes().unwrap_or_default();
-        
+
         // Navigate to game URL first
         tracing::info!("Navigating to {} for {}", game_url, self.account.identity());
         self.browser.navigate(&game_url).await?;
-        
+
         let start = Instant::now();
         let mut login_attempted = false;
-        
+
         // Race loop: check for login form OR game scenes
         loop {
             if start.elapsed() > timeout {
                 anyhow::bail!("Login timeout after {:?}", timeout);
             }
-            
+
             // Check for game scenes first (higher priority - means we're already logged in)
             if let Some(matched_scene) = self.check_game_scenes(&scenes).await {
                 match matched_scene.name.as_str() {
@@ -338,7 +347,9 @@ impl SessionActor {
                         tracing::info!("Detected user_agreement scene, clicking Agree");
                         self.click_scene_action(&matched_scene, "Agree").await?;
                         // After clicking agree, wait for main_city scene
-                        return self.wait_for_main_city(&scenes, timeout - start.elapsed()).await;
+                        return self
+                            .wait_for_main_city(&scenes, timeout - start.elapsed())
+                            .await;
                     }
                     "main_city" | "main_city_shadow" => {
                         tracing::info!("Detected {} scene, already logged in", matched_scene.name);
@@ -347,27 +358,37 @@ impl SessionActor {
                     _ => {}
                 }
             }
-            
+
             // Check for login form (only attempt login once)
             if !login_attempted {
-                if self.browser.wait_visible("#username", login_form_check_interval).await.is_ok() {
-                    tracing::info!("Detected login form, performing password login for {}", self.account.identity());
-                    self.browser.login_with_password(
-                        &self.account.user_name,
-                        &self.account.password,
-                        Duration::from_secs(10),
-                    ).await?;
+                if self
+                    .browser
+                    .wait_visible("#username", login_form_check_interval)
+                    .await
+                    .is_ok()
+                {
+                    tracing::info!(
+                        "Detected login form, performing password login for {}",
+                        self.account.identity()
+                    );
+                    self.browser
+                        .login_with_password(
+                            &self.account.user_name,
+                            &self.account.password,
+                            Duration::from_secs(10),
+                        )
+                        .await?;
                     login_attempted = true;
                     // After login form submission, continue loop to wait for game scenes
                     continue;
                 }
             }
-            
+
             // Small delay before next check iteration
             tokio::time::sleep(scene_check_interval).await;
         }
     }
-    
+
     /// Check for game scenes that indicate login success.
     /// Returns the matched scene if found.
     async fn check_game_scenes(&self, scenes: &[Scene]) -> Option<Scene> {
@@ -375,7 +396,7 @@ impl SessionActor {
             Ok(img) => img,
             Err(_) => return None,
         };
-        
+
         // Check scenes in priority order
         for scene_name in &["user_agreement", "main_city_shadow", "main_city"] {
             if let Some(scene) = resources::find_scene(scenes, scene_name) {
@@ -384,10 +405,10 @@ impl SessionActor {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Click a named action in a scene.
     async fn click_scene_action(&self, scene: &Scene, action_name: &str) -> anyhow::Result<()> {
         if let Some(action) = scene.actions.get(action_name) {
@@ -397,17 +418,17 @@ impl SessionActor {
         }
         Ok(())
     }
-    
+
     /// Wait for main_city or main_city_shadow scene after user_agreement.
     async fn wait_for_main_city(&self, scenes: &[Scene], timeout: Duration) -> anyhow::Result<()> {
         let start = Instant::now();
         let check_interval = Duration::from_millis(500);
-        
+
         loop {
             if start.elapsed() > timeout {
                 anyhow::bail!("Timeout waiting for main_city scene");
             }
-            
+
             if let Some(matched) = self.check_game_scenes(scenes).await {
                 match matched.name.as_str() {
                     "main_city" | "main_city_shadow" => {
@@ -422,7 +443,7 @@ impl SessionActor {
                     _ => {}
                 }
             }
-            
+
             tokio::time::sleep(check_interval).await;
         }
     }
@@ -560,4 +581,3 @@ impl SessionActor {
         });
     }
 }
-

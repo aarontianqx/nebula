@@ -74,14 +74,10 @@ pub enum Action {
     },
 
     /// Increment a counter
-    Incr {
-        key: String,
-    },
+    Incr { key: String },
 
     /// Decrement a counter
-    Decr {
-        key: String,
-    },
+    Decr { key: String },
 
     /// Check scene (trigger OCR rule evaluation at this point)
     CheckScene,

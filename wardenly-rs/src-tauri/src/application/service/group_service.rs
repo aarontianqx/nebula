@@ -28,4 +28,3 @@ impl<R: GroupRepository> GroupService<R> {
         self.repo.delete(id)
     }
 }
-

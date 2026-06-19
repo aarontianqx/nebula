@@ -191,4 +191,3 @@ impl Scene {
         SceneMatcher::default().matches(self, image)
     }
 }
-

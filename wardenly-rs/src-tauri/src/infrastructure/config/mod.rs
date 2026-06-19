@@ -35,4 +35,3 @@ pub fn themes() -> &'static ThemeConfig {
 pub fn user_settings() -> UserSettings {
     loader::load_user_settings()
 }
-

@@ -39,4 +39,3 @@ pub type SharedEventBus = Arc<EventBus>;
 pub fn create_event_bus() -> SharedEventBus {
     Arc::new(EventBus::default())
 }
-

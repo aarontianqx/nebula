@@ -55,10 +55,10 @@ pub trait BrowserDriver: Send + Sync {
 
     /// Click an element by selector
     async fn click_element(&self, selector: &str) -> anyhow::Result<()>;
-    
+
     /// Wait for an element to be visible
     async fn wait_visible(&self, selector: &str, timeout: Duration) -> anyhow::Result<()>;
-    
+
     /// Perform complete login with username/password
     /// This executes all steps atomically like wardenly-go
     async fn login_with_password(
@@ -67,7 +67,7 @@ pub trait BrowserDriver: Send + Sync {
         password: &str,
         timeout: Duration,
     ) -> anyhow::Result<()>;
-    
+
     /// Refresh/reload the current page
     async fn refresh(&self) -> anyhow::Result<()>;
 
@@ -75,4 +75,3 @@ pub trait BrowserDriver: Send + Sync {
     /// Uses CDP Input.insertText for full Unicode/CJK support.
     async fn insert_text(&self, text: &str) -> anyhow::Result<()>;
 }
-
