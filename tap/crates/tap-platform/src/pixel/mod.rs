@@ -6,7 +6,7 @@
 //!
 //! Platform implementations:
 //! - Windows: Uses GDI API (`windows.rs`)
-//! - macOS: Stub implementation (`macos.rs`, TODO)
+//! - macOS: Uses `CGWindowListCreateImage` (`macos.rs`)
 
 use serde::{Deserialize, Serialize};
 
