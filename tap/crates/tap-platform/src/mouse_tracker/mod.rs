@@ -10,7 +10,7 @@
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread;
 
 #[cfg(not(target_os = "macos"))]
 mod rdev_impl;
@@ -41,14 +41,13 @@ pub enum MouseTrackerCommand {
 }
 
 /// Handle to control the mouse tracker.
+///
+/// The worker thread is detached: it observes `running` / the `Stop` command to
+/// exit, so the handle only needs the channels and the shared flag.
 pub struct MouseTrackerHandle {
     event_rx: Receiver<MouseTrackerEvent>,
     cmd_tx: Sender<MouseTrackerCommand>,
     running: Arc<AtomicBool>,
-    /// Kept for potential future graceful shutdown.
-    /// Currently unused because the listener blocks and cannot be interrupted gracefully.
-    #[allow(dead_code)]
-    thread: Option<JoinHandle<()>>,
 }
 
 impl MouseTrackerHandle {
@@ -118,12 +117,12 @@ pub fn start_mouse_tracker(config: MouseTrackerConfig) -> MouseTrackerHandle {
     let running_clone = running.clone();
 
     #[cfg(not(target_os = "macos"))]
-    let thread = thread::spawn(move || {
+    thread::spawn(move || {
         rdev_impl::start_tracker(config, event_tx, cmd_rx, running_clone);
     });
 
     #[cfg(target_os = "macos")]
-    let thread = thread::spawn(move || {
+    thread::spawn(move || {
         macos::start_tracker(config, event_tx, cmd_rx, running_clone);
     });
 
@@ -131,7 +130,6 @@ pub fn start_mouse_tracker(config: MouseTrackerConfig) -> MouseTrackerHandle {
         event_rx,
         cmd_tx,
         running,
-        thread: Some(thread),
     }
 }
 
