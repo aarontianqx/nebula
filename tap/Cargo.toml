@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/tap-core",
+  "crates/tap-application",
   "crates/tap-platform",
   "src-tauri",
 ]

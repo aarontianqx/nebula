@@ -12,8 +12,6 @@ serde_yaml = "0.9"
 thiserror = "2"
 time = { version = "0.3", features = ["serde", "macros"] }
 tracing = "0.1"
-crossbeam-channel = "0.5"
-dirs-next = "2"
 rhai = { version = "1.19", features = ["sync"] }
 
 

@@ -12,8 +12,9 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 | Phase 2 | **Record & Replay** | 录制与回放 | 全局 Hook + 时间线生成 + 回放引擎 | ✅ 完成 |
 | Phase 3 | **Conditions** | 条件与识别 | 窗口绑定 + 像素检测 + 简单分支 | ✅ 完成 |
 | Phase 4 | **Extensibility** | 可编程与插件 | DSL + 参数化变量 + 表达式引擎 | ✅ 核心完成 |
-| Phase 5 | **Architecture** | 架构优化 | 跨平台成熟度 + 代码组织 | ✅ 评估完成（无需重构） |
-| Phase 6 | **Plugins** | 插件系统 | Wasm 插件 + 自定义动作 | 📋 计划中 |
+| Phase 5 | **Architecture** | 架构优化 | 跨平台成熟度 + 代码组织 | ✅ 评估完成 |
+| Phase 6 | **Consolidation** | 打通并跑通已建能力 | 统一文档模型 + 执行期变量/子宏 + Application 层 + 双平台 | 🚧 进行中 |
+| Phase 7 | **Plugins** | 插件系统 | Wasm 插件 + 自定义动作 | 📋 计划中 |
 
 ## 优先级框架（MoSCoW）
 
@@ -48,9 +49,9 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 | 功能 | 说明 | 原属阶段 |
 |------|------|----------|
 | 相对坐标 | API 就绪，Action 集成待做 | Phase 3 |
-| 子宏调用 | 框架就绪，Engine 集成待做 | Phase 4 |
-| 变量运行时替换 | DSL 解析完成，执行时替换待完善 | Phase 4 |
-| macOS 窗口 API | 需实现 `get_foreground_window` 等 | Phase 5 |
+| macOS 窗口 API | 需实现 `get_foreground_window` 等 | Phase 5 / Phase 6 (M5) |
+
+> 已在 Phase 6 打通：**变量运行时替换**（M3，Resolve 阶段 + 运行前覆盖）与**子宏调用 `call_macro`**（M4，引擎就地展开 + 环/深度保护 + 子作用域）。
 
 ### Quick Tools（跨阶段体验增强）
 
@@ -67,4 +68,5 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 - [Phase 3 - Conditions](./phase-3-conditions.md)
 - [Phase 4 - Extensibility](./phase-4-extensibility.md)
 - [Phase 5 - Architecture](./phase-5-architecture.md)
+- [Phase 6 - Consolidation](./phase-6-consolidation.md)
 - [Feature - Key→Click（A–Z 按住连点）](../features/key-to-click-mode.md)
