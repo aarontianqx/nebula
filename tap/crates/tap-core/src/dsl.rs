@@ -330,7 +330,11 @@ pub enum DslCondition {
     /// Logical OR.
     Or(Vec<DslCondition>),
     /// Logical NOT.
-    Not(Box<DslCondition>),
+    ///
+    /// A struct variant (rather than a newtype) so the inner condition nests
+    /// under a `condition:` key; YAML cannot stack two tags (`!not !window_...`)
+    /// on one node, which would make the macro unserializable.
+    Not { condition: Box<DslCondition> },
 }
 
 fn default_tolerance() -> u8 {
@@ -542,7 +546,9 @@ impl From<&Condition> for DslCondition {
             Condition::Or(conditions) => {
                 DslCondition::Or(conditions.iter().map(DslCondition::from).collect())
             }
-            Condition::Not(c) => DslCondition::Not(Box::new(DslCondition::from(c.as_ref()))),
+            Condition::Not(c) => DslCondition::Not {
+                condition: Box::new(DslCondition::from(c.as_ref())),
+            },
         }
     }
 }
@@ -835,7 +841,9 @@ impl TryFrom<&DslCondition> for Condition {
                     .map(Condition::try_from)
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            DslCondition::Not(c) => Ok(Condition::Not(Box::new(Condition::try_from(c.as_ref())?))),
+            DslCondition::Not { condition } => {
+                Ok(Condition::Not(Box::new(Condition::try_from(condition.as_ref())?)))
+            }
         }
     }
 }
@@ -992,6 +1000,66 @@ mod tests {
         let yaml = document_to_yaml(&doc).unwrap();
         let parsed = parse_yaml(&yaml).unwrap();
         assert_eq!(parsed, doc, "YAML round-trip must be lossless");
+    }
+
+    #[test]
+    fn test_conditions_roundtrip_including_not() {
+        // Regression: `not` wrapping another tagged condition must still
+        // serialize (YAML cannot stack two tags on one node, so `Not` is a
+        // struct variant). Exercise and/or/not nesting plus `conditional`.
+        let doc = MacroDocument {
+            name: "Conditions".to_string(),
+            description: None,
+            version: DSL_VERSION.to_string(),
+            author: None,
+            tags: vec![],
+            variables: HashMap::new(),
+            target_window: None,
+            run: DslRunConfig::default(),
+            timeline: vec![
+                DslTimedAction {
+                    at_ms: 0,
+                    action: DslAction::WaitUntil {
+                        condition: DslCondition::And(vec![
+                            DslCondition::WindowFocused {
+                                title: Some("Notepad".to_string()),
+                                process: None,
+                            },
+                            DslCondition::Not {
+                                condition: Box::new(DslCondition::PixelColor {
+                                    x: 10,
+                                    y: 20,
+                                    color: "#00FF00".to_string(),
+                                    tolerance: 10,
+                                }),
+                            },
+                        ]),
+                        timeout_ms: Some(5000),
+                        poll_interval_ms: 100,
+                    },
+                    enabled: true,
+                    note: None,
+                },
+                DslTimedAction {
+                    at_ms: 1,
+                    action: DslAction::Conditional {
+                        condition: DslCondition::Counter {
+                            key: "n".to_string(),
+                            op: "<".to_string(),
+                            value: 10,
+                        },
+                        then_action: Box::new(DslAction::Exit),
+                        else_action: None,
+                    },
+                    enabled: true,
+                    note: None,
+                },
+            ],
+        };
+
+        let yaml = document_to_yaml(&doc).expect("conditions must serialize");
+        let parsed = parse_yaml(&yaml).unwrap();
+        assert_eq!(parsed, doc, "condition round-trip must be lossless");
     }
 
     #[test]
