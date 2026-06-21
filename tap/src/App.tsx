@@ -33,6 +33,7 @@ export default function App() {
     // Probe OS permissions now, and again when the window regains focus so
     // grants made in System Settings reflect without a manual re-check.
     void usePermissionStore.getState().refresh();
+    void useUiStore.getState().loadDryRun();
     const onFocus = () => void usePermissionStore.getState().refresh();
     window.addEventListener("focus", onFocus);
     return () => {

@@ -106,6 +106,7 @@ export const api = {
     x: number | null;
     y: number | null;
     key: string | null;
+    button: string | null;
     intervalMs: number;
     repeatCount: number | null;
     countdownSecs: number;
@@ -138,4 +139,9 @@ export const api = {
   // === Key-to-Click ===
   startKeyClick: (request: KeyClickRequest) => invoke<void>("start_key_click", { request }),
   stopKeyClick: () => invoke<void>("stop_key_click"),
+
+  // === Dry-run + key capture ===
+  setDryRun: (enabled: boolean) => invoke<void>("cmd_set_dry_run", { enabled }),
+  getDryRun: () => invoke<boolean>("cmd_get_dry_run"),
+  captureKey: () => invoke<string>("cmd_capture_key"),
 };

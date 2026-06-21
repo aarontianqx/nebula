@@ -172,6 +172,7 @@ pub fn start_key_click_runner(
     injector: Arc<EnigoInjector>,
     get_mouse_position: impl Fn() -> (i32, i32) + Send + 'static,
     focus_gate: Option<FocusGate>,
+    dry_run: Arc<AtomicBool>,
 ) -> KeyClickHandle {
     let (event_tx, event_rx) = bounded::<KeyClickEvent>(256);
 
@@ -190,6 +191,7 @@ pub fn start_key_click_runner(
             injector,
             get_mouse_position,
             focus_gate,
+            dry_run,
             stop_clone,
             event_tx,
             running_clone,
@@ -219,6 +221,7 @@ fn run_loop(
     injector: Arc<EnigoInjector>,
     get_mouse_position: impl Fn() -> (i32, i32),
     focus_gate: Option<FocusGate>,
+    dry_run: Arc<AtomicBool>,
     stop_requested: Arc<AtomicBool>,
     event_tx: Sender<KeyClickEvent>,
     running: Arc<AtomicBool>,
@@ -237,6 +240,8 @@ fn run_loop(
     let mut active: Option<ActiveKey> = None;
 
     // Fire one click, respecting the focus gate and resolving the target point.
+    // In dry-run we still count and emit (so the live counter previews intent)
+    // but never inject.
     let click_once = |click_count: &AtomicU64, event_tx: &Sender<KeyClickEvent>| {
         if let Some(ref gate) = focus_gate {
             if !gate() {
@@ -247,7 +252,12 @@ fn run_loop(
             ClickLocation::Cursor => get_mouse_position(),
             ClickLocation::Fixed { x, y } => (x, y),
         };
-        do_click(&injector, config.button, x, y, click_count, event_tx);
+        if dry_run.load(Ordering::SeqCst) {
+            let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
+            let _ = event_tx.send(KeyClickEvent::Click { count, x, y });
+        } else {
+            do_click(&injector, config.button, x, y, click_count, event_tx);
+        }
     };
 
     loop {
