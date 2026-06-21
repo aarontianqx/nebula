@@ -17,30 +17,31 @@ pub use condition::{
     CompareOp, Condition, ConditionColor, ConditionEvaluator, ConditionResult, WaitUntilConfig,
 };
 pub use dsl::{
-    export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, parse_yaml, DslAction,
-    DslCondition, DslError, DslMouseButton, DslProfile, DslRunConfig, DslTargetWindow,
-    DslTimedAction, DslValue, VariableDefinition, VariableType, DSL_VERSION,
-};
-pub use expression::{
-    create_expression_engine, resolve_expressions, ExpressionEngine, ExpressionEngineHandle,
-    ExpressionError, ExpressionResult,
-};
-pub use schema::{validate_profile, ValidationError, ValidationResult};
-pub use submacro::{
-    create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,
-    SubMacroContextHandle, SubMacroError, MAX_CALL_DEPTH,
+    document_to_yaml, export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, parse_yaml,
+    DslAction, DslCondition, DslError, DslMouseButton, DslRunConfig, DslTargetWindow,
+    DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType, DSL_VERSION,
 };
 pub use engine::{
     ActionExecutor, ActionExecutorAdapter, EngineCommand, EngineEvent, EngineState,
     InjectorExecutor, PlatformConditionProvider, Player, PlayerHandle,
 };
+pub use expression::{
+    create_expression_engine, resolve_expressions, ExpressionEngine, ExpressionEngineHandle,
+    ExpressionError, ExpressionResult,
+};
 pub use recorder::{
     BufferedEvent, MouseButtonRaw, RawEventType, Recorder, RecorderConfig, RecorderEvent,
     RecorderState,
 };
+pub use schema::{validate_profile, ValidationError, ValidationResult};
 pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
-    load_last_used, load_profile, save_last_used, save_profile, StorageError, StorageResult,
+    load_document, load_last_used, load_profile, save_document, save_last_used, save_profile,
+    StorageError, StorageResult,
+};
+pub use submacro::{
+    create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,
+    SubMacroContextHandle, SubMacroError, MAX_CALL_DEPTH,
 };
 pub use variables::{VariableError, VariableResolver, VariableStore, VariableValue};
 
@@ -78,12 +79,28 @@ impl Default for Profile {
             name: "Default".into(),
             timeline: Timeline {
                 actions: vec![
-                    TimedAction::after_ms(0, Action::Click { x: 640, y: 360, button: MouseButton::Left }),
+                    TimedAction::after_ms(
+                        0,
+                        Action::Click {
+                            x: 640,
+                            y: 360,
+                            button: MouseButton::Left,
+                        },
+                    ),
                     TimedAction::after_ms(500, Action::Wait { ms: 500 }),
-                    TimedAction::after_ms(1200, Action::KeyTap { key: "Space".into() }),
+                    TimedAction::after_ms(
+                        1200,
+                        Action::KeyTap {
+                            key: "Space".into(),
+                        },
+                    ),
                 ],
             },
-            run: RunConfig { repeat: Repeat::Forever, start_delay_ms: 0, speed: 1.0 },
+            run: RunConfig {
+                repeat: Repeat::Forever,
+                start_delay_ms: 0,
+                speed: 1.0,
+            },
             target_window: None,
         }
     }
@@ -122,11 +139,16 @@ pub struct TimedAction {
 
 impl TimedAction {
     pub fn after_ms(at_ms: u64, action: Action) -> Self {
-        Self { at_ms, action, enabled: true, note: None }
+        Self {
+            at_ms,
+            action,
+            enabled: true,
+            note: None,
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     /// Single click at position.
     Click { x: i32, y: i32, button: MouseButton },
@@ -139,7 +161,11 @@ pub enum Action {
     /// Move mouse to position.
     MouseMove { x: i32, y: i32 },
     /// Drag from one point to another.
-    Drag { from: Point, to: Point, duration_ms: u64 },
+    Drag {
+        from: Point,
+        to: Point,
+        duration_ms: u64,
+    },
     /// Scroll wheel.
     Scroll { delta_x: i32, delta_y: i32 },
     /// Press and release a key.
@@ -154,7 +180,6 @@ pub enum Action {
     Wait { ms: u64 },
 
     // === Phase 3: Condition & Variable Actions ===
-
     /// Wait until a condition is satisfied or timeout.
     WaitUntil {
         condition: Condition,
@@ -179,17 +204,15 @@ pub enum Action {
     Exit,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
     Right,
     Middle,
 }
-
-
