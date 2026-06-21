@@ -1,4 +1,9 @@
+import { useUiStore } from "../../stores/uiStore";
+
 export function SafetyCard() {
+  const dryRun = useUiStore((s) => s.dryRun);
+  const setDryRun = useUiStore((s) => s.setDryRun);
+
   return (
     <>
       <h3>Safety</h3>
@@ -10,6 +15,10 @@ export function SafetyCard() {
             <div className="safety-key">Ctrl + Shift + Backspace</div>
           </div>
         </div>
+        <label className="checkbox-label dry-run-toggle">
+          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
+          <span>Dry run (preview without real clicks/keys)</span>
+        </label>
       </div>
     </>
   );

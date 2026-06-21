@@ -8,7 +8,9 @@ export function SimpleConfig() {
   const actionType = useToolStore((s) => s.actionType);
   const clickX = useToolStore((s) => s.clickX);
   const clickY = useToolStore((s) => s.clickY);
+  const clickButton = useToolStore((s) => s.clickButton);
   const keyName = useToolStore((s) => s.keyName);
+  const capturingKey = useToolStore((s) => s.capturingKey);
   const intervalMs = useToolStore((s) => s.intervalMs);
   const repeatText = useToolStore((s) => s.repeatText);
   const countdownSecs = useToolStore((s) => s.countdownSecs);
@@ -42,6 +44,19 @@ export function SimpleConfig() {
         {actionType === "click" && (
           <>
             <div className="field">
+              <label className="label">Mouse Button</label>
+              <select
+                value={clickButton}
+                onChange={(e) => tool().setClickButton(e.target.value as MouseButton)}
+                disabled={!isIdle}
+                className="input"
+              >
+                <option value="Left">Left</option>
+                <option value="Right">Right</option>
+                <option value="Middle">Middle</option>
+              </select>
+            </div>
+            <div className="field">
               <label className="label">X</label>
               <input
                 type="number"
@@ -72,14 +87,24 @@ export function SimpleConfig() {
         {actionType === "key" && (
           <div className="field">
             <label className="label">Key</label>
-            <input
-              type="text"
-              value={keyName}
-              onChange={(e) => tool().setKeyName(e.target.value)}
-              disabled={!isIdle}
-              className="input"
-              placeholder="e.g., Space, Enter"
-            />
+            <div className="input-with-button">
+              <input
+                type="text"
+                value={keyName}
+                onChange={(e) => tool().setKeyName(e.target.value)}
+                disabled={!isIdle || capturingKey}
+                className="input"
+                placeholder="e.g., Space, Enter"
+              />
+              <button
+                className="btn btn-pick"
+                onClick={() => tool().captureKeyName()}
+                disabled={!isIdle || capturingKey}
+                title="Press the next key to capture it"
+              >
+                {capturingKey ? "Press..." : "Capture"}
+              </button>
+            </div>
           </div>
         )}
 

@@ -84,7 +84,7 @@ function Picker() {
         <span className="coord-value">
           ({Math.round(mousePos.x * dpiScale)}, {Math.round(mousePos.y * dpiScale)})
         </span>
-        <span className="coord-hint">Click to select �?ESC to cancel</span>
+        <span className="coord-hint">Click to select | ESC to cancel</span>
       </div>
 
       {/* Center crosshair marker */}

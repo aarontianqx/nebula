@@ -87,6 +87,15 @@ fn update_profile(state: State<'_, Mutex<AppState>>, profile: Profile) -> Result
     Ok(())
 }
 
+/// Parse a frontend mouse-button string (`left`/`right`/`middle`), defaulting to Left.
+fn parse_mouse_button(s: Option<&str>) -> tap_core::MouseButton {
+    match s.map(|v| v.to_lowercase()).as_deref() {
+        Some("right") => tap_core::MouseButton::Right,
+        Some("middle") => tap_core::MouseButton::Middle,
+        _ => tap_core::MouseButton::Left,
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri command: arguments mirror the UI form fields.
 fn set_simple_repeat(
@@ -95,6 +104,7 @@ fn set_simple_repeat(
     x: Option<i32>,
     y: Option<i32>,
     key: Option<String>,
+    button: Option<String>,
     interval_ms: u64,
     repeat_count: Option<u32>,
     countdown_secs: u32,
@@ -105,7 +115,7 @@ fn set_simple_repeat(
         "click" => Action::Click {
             x: x.unwrap_or(0),
             y: y.unwrap_or(0),
-            button: tap_core::MouseButton::Left,
+            button: parse_mouse_button(button.as_deref()),
         },
         "key" => Action::KeyTap {
             key: key.unwrap_or_else(|| "Space".into()),
@@ -159,6 +169,67 @@ fn get_or_create_injector() -> Arc<EnigoInjector> {
     KEY_CLICK_INJECTOR
         .get_or_init(|| Arc::new(EnigoInjector::new().expect("Failed to create EnigoInjector")))
         .clone()
+}
+
+/// Global dry-run flag: when set, injections are skipped (logged only) so a
+/// macro or Key->Click session can be exercised without touching the real
+/// mouse/keyboard. Shared by the engine executor and the key-click runner.
+static DRY_RUN: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> =
+    std::sync::OnceLock::new();
+
+fn dry_run_flag() -> Arc<std::sync::atomic::AtomicBool> {
+    DRY_RUN
+        .get_or_init(|| Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        .clone()
+}
+
+#[tauri::command]
+fn cmd_set_dry_run(enabled: bool) {
+    dry_run_flag().store(enabled, std::sync::atomic::Ordering::SeqCst);
+    info!(enabled, "Dry-run toggled");
+}
+
+#[tauri::command]
+fn cmd_get_dry_run() -> bool {
+    dry_run_flag().load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Capture the next physical key press and return its normalized name.
+///
+/// Blocks (up to a timeout) on a temporary input hook, so it requires the app
+/// to be idle (no run / recording / Key->Click) to avoid competing hooks.
+#[tauri::command]
+fn cmd_capture_key(state: State<'_, Mutex<AppState>>) -> Result<String, String> {
+    {
+        let app_state = state.lock().unwrap();
+        if app_state.coordinator.engine_state() != EngineState::Idle {
+            return Err("Cannot capture: engine is not idle".into());
+        }
+        if app_state.recorder.state() != RecorderState::Idle {
+            return Err("Cannot capture: recording in progress".into());
+        }
+        if app_state.key_click_handle.is_some() {
+            return Err("Cannot capture: Key->Click is running".into());
+        }
+    } // release the lock before the blocking wait
+
+    let hook = start_input_hook();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        for ev in hook.drain() {
+            if let InputEventType::KeyDown { key } = ev.event {
+                let normalized = tap_platform::normalize_key(&key);
+                hook.stop();
+                info!(key = %normalized, "Captured key");
+                return Ok(normalized);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            hook.stop();
+            return Err("Key capture timed out (no key pressed)".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 #[tauri::command]
@@ -249,7 +320,14 @@ fn start_key_click(
     };
 
     let config = request.to_config();
-    let handle = start_key_click_runner(config, input_hook, injector, get_position, focus_gate);
+    let handle = start_key_click_runner(
+        config,
+        input_hook,
+        injector,
+        get_position,
+        focus_gate,
+        dry_run_flag(),
+    );
     app_state.key_click_handle = Some(handle);
 
     info!(
@@ -903,16 +981,21 @@ fn cmd_get_runtime_variables(
 /// port, keeping `tap-application` free of any platform dependency.
 struct EnigoExecutor {
     injector: EnigoInjector,
+    dry_run: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl EnigoExecutor {
-    fn new(injector: EnigoInjector) -> Self {
-        Self { injector }
+    fn new(injector: EnigoInjector, dry_run: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        Self { injector, dry_run }
     }
 }
 
 impl ActionExecutor for EnigoExecutor {
     fn execute(&self, action: &Action) -> Result<(), String> {
+        if self.dry_run.load(std::sync::atomic::Ordering::SeqCst) {
+            debug!(?action, "dry-run: skipping injection");
+            return Ok(());
+        }
         InputInjector::inject(&self.injector, action).map_err(|e| e.to_string())
     }
 }
@@ -961,7 +1044,7 @@ fn setup_app(app: &AppHandle) {
 
     // Create the player with executor and platform provider, wrapped in the
     // application-layer coordinator (owns the engine state machine + document).
-    let executor = EnigoExecutor::new(injector);
+    let executor = EnigoExecutor::new(injector, dry_run_flag());
     let player_handle = Player::spawn(executor, platform_provider);
     let coordinator = Coordinator::new(player_handle);
 
@@ -1299,6 +1382,10 @@ fn main() {
             start_key_click,
             stop_key_click,
             get_key_click_status,
+            // Dry-run + key capture helpers
+            cmd_set_dry_run,
+            cmd_get_dry_run,
+            cmd_capture_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tap");

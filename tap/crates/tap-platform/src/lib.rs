@@ -38,7 +38,7 @@ pub use error::{PlatformError, PlatformResult};
 pub use dpi::{browser_to_injection_scale, get_primary_scale_factor, set_dpi_aware, ScaledCoords};
 
 // Re-export input injection
-pub use injector::{EnigoInjector, InputInjector, NoopInjector};
+pub use injector::{normalize_key, EnigoInjector, InputInjector, NoopInjector};
 
 // Re-export input hook
 pub use input_hook::{

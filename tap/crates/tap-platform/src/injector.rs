@@ -278,13 +278,83 @@ fn mouse_button_to_enigo(button: MouseButton) -> Button {
     }
 }
 
+/// Normalize a key name from any platform hook (rdev / Core Graphics) or from
+/// user input into a canonical token that [`parse_key`] accepts, so a macro
+/// recorded on one OS replays correctly on another.
+///
+/// Both hooks emit names like `ControlLeft` / `ShiftLeft` / `MetaLeft` /
+/// `AltGr` / `Return` / `Kp5` that the bare key parser does not recognize;
+/// without this mapping those modifiers would be (mis)typed as their first
+/// letter. Single printable characters and already-canonical names pass through
+/// unchanged.
+pub fn normalize_key(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        // Whitespace-only historically meant the space bar.
+        return if raw.is_empty() {
+            String::new()
+        } else {
+            "Space".to_string()
+        };
+    }
+
+    match trimmed.to_lowercase().as_str() {
+        // Modifiers
+        "controlleft" | "lcontrol" | "lctrl" | "control" | "ctrl" => "Ctrl".to_string(),
+        "controlright" | "rcontrol" | "rctrl" => "RCtrl".to_string(),
+        "shiftleft" | "lshift" | "shift" => "Shift".to_string(),
+        "shiftright" | "rshift" => "RShift".to_string(),
+        "alt" | "lalt" | "altleft" | "option" => "Alt".to_string(),
+        "altgr" | "ralt" | "altright" => "Alt".to_string(),
+        "metaleft" | "metaright" | "meta" | "command" | "cmd" | "win" | "super" => {
+            "Meta".to_string()
+        }
+        // Navigation / editing
+        "return" | "enter" | "kpreturn" => "Enter".to_string(),
+        "escape" | "esc" => "Escape".to_string(),
+        "up" | "uparrow" => "Up".to_string(),
+        "down" | "downarrow" => "Down".to_string(),
+        "left" | "leftarrow" => "Left".to_string(),
+        "right" | "rightarrow" => "Right".to_string(),
+        "pageup" | "pgup" => "PageUp".to_string(),
+        "pagedown" | "pgdn" => "PageDown".to_string(),
+        "backspace" | "back" => "Backspace".to_string(),
+        "delete" | "del" | "kpdelete" => "Delete".to_string(),
+        "space" => "Space".to_string(),
+        "tab" => "Tab".to_string(),
+        "home" => "Home".to_string(),
+        "end" => "End".to_string(),
+        "capslock" | "caps" => "CapsLock".to_string(),
+        // Keypad digits / operators map to their plain equivalents.
+        "kp0" => "0".to_string(),
+        "kp1" => "1".to_string(),
+        "kp2" => "2".to_string(),
+        "kp3" => "3".to_string(),
+        "kp4" => "4".to_string(),
+        "kp5" => "5".to_string(),
+        "kp6" => "6".to_string(),
+        "kp7" => "7".to_string(),
+        "kp8" => "8".to_string(),
+        "kp9" => "9".to_string(),
+        "kpminus" => "-".to_string(),
+        "kpplus" => "+".to_string(),
+        "kpmultiply" => "*".to_string(),
+        "kpdivide" => "/".to_string(),
+        // Function keys, punctuation, single letters, and anything unknown:
+        // keep the original token (trimmed) and let `parse_key` handle it.
+        _ => trimmed.to_string(),
+    }
+}
+
 /// Parse a key string into an enigo Key.
 /// Supports common key names and single characters.
 fn parse_key(key: &str) -> PlatformResult<enigo::Key> {
     use enigo::Key;
 
+    let key = normalize_key(key);
+
     // Handle single character keys
-    if key.len() == 1 {
+    if key.chars().count() == 1 {
         let c = key.chars().next().unwrap();
         return Ok(Key::Unicode(c));
     }
@@ -376,7 +446,7 @@ fn parse_key(key: &str) -> PlatformResult<enigo::Key> {
         }
 
         _ => {
-            warn!(key, "unknown key, treating as unicode sequence");
+            warn!(key = %key, "unknown key, treating as unicode sequence");
             // For unknown keys, if it's a single word, treat first char as unicode
             if let Some(c) = key.chars().next() {
                 Key::Unicode(c)
@@ -415,5 +485,45 @@ mod tests {
     fn test_parse_key_function() {
         let k = parse_key("F1").unwrap();
         assert!(matches!(k, enigo::Key::F1));
+
+        let k = parse_key("F5").unwrap();
+        assert!(matches!(k, enigo::Key::F5));
+    }
+
+    #[test]
+    fn normalize_maps_hook_modifier_names() {
+        assert_eq!(normalize_key("ControlLeft"), "Ctrl");
+        assert_eq!(normalize_key("ControlRight"), "RCtrl");
+        assert_eq!(normalize_key("ShiftLeft"), "Shift");
+        assert_eq!(normalize_key("ShiftRight"), "RShift");
+        assert_eq!(normalize_key("MetaLeft"), "Meta");
+        assert_eq!(normalize_key("AltGr"), "Alt");
+        assert_eq!(normalize_key("Return"), "Enter");
+        assert_eq!(normalize_key("Kp5"), "5");
+        // Single chars and function keys pass through.
+        assert_eq!(normalize_key("a"), "a");
+        assert_eq!(normalize_key("F5"), "F5");
+        // Whitespace-only is treated as the space bar.
+        assert_eq!(normalize_key(" "), "Space");
+    }
+
+    #[test]
+    fn parse_key_handles_hook_modifier_names() {
+        // Regression: hook-emitted modifier names must not be typed as a letter.
+        assert!(matches!(
+            parse_key("ControlLeft").unwrap(),
+            enigo::Key::Control
+        ));
+        assert!(matches!(
+            parse_key("ControlRight").unwrap(),
+            enigo::Key::RControl
+        ));
+        assert!(matches!(parse_key("ShiftLeft").unwrap(), enigo::Key::Shift));
+        assert!(matches!(parse_key("MetaLeft").unwrap(), enigo::Key::Meta));
+        assert!(matches!(parse_key("Return").unwrap(), enigo::Key::Return));
+        assert!(matches!(
+            parse_key("Kp5").unwrap(),
+            enigo::Key::Unicode('5')
+        ));
     }
 }
