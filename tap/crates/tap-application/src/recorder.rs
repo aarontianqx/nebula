@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tap_core::{Action, MouseButton, Point, TimedAction, Timeline};
+use tap_core::{normalize_key, Action, MouseButton, Point, TimedAction, Timeline};
 use tracing::{debug, info};
 
 /// A press/release closer than this in time *and* space becomes a `Click`.
@@ -277,6 +277,18 @@ impl Recorder {
         if self.state != RecorderState::Recording {
             return None;
         }
+
+        // Canonicalize key names at capture time so the saved macro uses a
+        // single vocabulary regardless of which platform hook produced it.
+        let event = match event {
+            RawEventType::KeyDown { key } => RawEventType::KeyDown {
+                key: normalize_key(&key),
+            },
+            RawEventType::KeyUp { key } => RawEventType::KeyUp {
+                key: normalize_key(&key),
+            },
+            other => other,
+        };
 
         // Adjust timestamp for paused time
         let adjusted_ts = timestamp_ms.saturating_sub(self.total_paused_ms);
@@ -830,14 +842,16 @@ mod tests {
     }
 
     #[test]
-    fn modifier_combo_keeps_modifier_raw_and_taps_inner_key() {
+    fn modifier_combo_normalizes_modifier_and_taps_inner_key() {
+        // Raw hook spellings are canonicalized at capture time, while the
+        // standalone modifier press/release stays a raw KeyDown/KeyUp pair.
         let actions = recorded(
             synth_config(),
             &[
                 (
                     0,
                     RawEventType::KeyDown {
-                        key: "shift".into(),
+                        key: "ShiftLeft".into(),
                     },
                 ),
                 (10, RawEventType::KeyDown { key: "a".into() }),
@@ -845,7 +859,7 @@ mod tests {
                 (
                     40,
                     RawEventType::KeyUp {
-                        key: "shift".into(),
+                        key: "ShiftLeft".into(),
                     },
                 ),
             ],
@@ -854,11 +868,11 @@ mod tests {
             actions,
             vec![
                 Action::KeyDown {
-                    key: "shift".into()
+                    key: "Shift".into()
                 },
                 Action::KeyTap { key: "a".into() },
                 Action::KeyUp {
-                    key: "shift".into()
+                    key: "Shift".into()
                 },
             ]
         );

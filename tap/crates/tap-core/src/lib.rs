@@ -6,6 +6,7 @@
 mod condition;
 mod dsl;
 mod expression;
+mod keys;
 mod schema;
 mod variables;
 
@@ -21,6 +22,7 @@ pub use expression::{
     create_expression_engine, resolve_expressions, ExpressionEngine, ExpressionEngineHandle,
     ExpressionError, ExpressionResult,
 };
+pub use keys::normalize_key;
 pub use schema::{validate_profile, ValidationError, ValidationResult};
 pub use variables::{VariableError, VariableResolver, VariableStore, VariableValue};
 
