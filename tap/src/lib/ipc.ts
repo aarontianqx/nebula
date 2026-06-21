@@ -9,9 +9,11 @@ import { listen as tauriListen, type EventCallback, type UnlistenFn } from "@tau
 
 import type {
   ColorResponse,
+  DocumentMeta,
   EngineState,
   Profile,
   RecordingStatus,
+  TemplateInfo,
   Timeline,
   ValidationErrorResponse,
   VariableDefinitionResponse,
@@ -37,6 +39,24 @@ export async function listen<T>(event: string, handler: EventCallback<T>): Promi
   return tauriListen<T>(event, handler);
 }
 
+const YAML_FILTER = [{ name: "Macro (YAML)", extensions: ["yaml", "yml"] }];
+
+/** Native "save file" dialog; returns the chosen path, or null if cancelled/unavailable. */
+export async function pickSavePath(defaultName: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const path = await save({ defaultPath: defaultName, filters: YAML_FILTER });
+  return path ?? null;
+}
+
+/** Native "open file" dialog; returns the chosen path, or null if cancelled/unavailable. */
+export async function pickOpenPath(): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({ multiple: false, directory: false, filters: YAML_FILTER });
+  return typeof result === "string" ? result : null;
+}
+
 export const api = {
   // === Engine lifecycle ===
   getState: () => invoke<EngineState>("get_state"),
@@ -54,6 +74,24 @@ export const api = {
   deleteProfile: (name: string) => invoke<void>("cmd_delete_profile", { name }),
   listProfiles: () => invoke<string[]>("cmd_list_profiles"),
   getLastUsed: () => invoke<string | null>("cmd_get_last_used"),
+  getRecentProfiles: () => invoke<string[]>("cmd_get_recent_profiles"),
+
+  // === Metadata (lossless) ===
+  getDocumentMeta: () => invoke<DocumentMeta>("cmd_get_document_meta"),
+  setDocumentMeta: (meta: DocumentMeta) =>
+    invoke<void>("cmd_set_document_meta", {
+      description: meta.description,
+      author: meta.author,
+      tags: meta.tags,
+    }),
+
+  // === Templates ===
+  listTemplates: () => invoke<TemplateInfo[]>("cmd_list_templates"),
+  applyTemplate: (id: string) => invoke<Profile>("cmd_apply_template", { id }),
+
+  // === Native file import / export ===
+  exportYamlToPath: (path: string) => invoke<void>("cmd_export_yaml_to_path", { path }),
+  importYamlFromPath: (path: string) => invoke<Profile>("cmd_import_yaml_from_path", { path }),
 
   setSimpleRepeat: (args: {
     actionType: string;

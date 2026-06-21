@@ -22,8 +22,11 @@ export default function App() {
       else cleanup = c;
     });
     // Seed the editor from the backend's canonical document.
-    void useDocumentStore.getState().loadProfiles();
-    void useDocumentStore.getState().refreshFromBackend();
+    const doc = useDocumentStore.getState();
+    void doc.loadProfiles();
+    void doc.loadRecents();
+    void doc.loadTemplates();
+    void doc.refreshFromBackend();
     return () => {
       cancelled = true;
       cleanup?.();

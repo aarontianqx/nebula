@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../../lib/ipc";
+import { startTimelineRun } from "../../lib/run";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
 
 export function VariableDialog() {
   const show = useUiStore((s) => s.showVariableDialog);
+  const dialogMode = useUiStore((s) => s.variableDialogMode);
   const variables = useDocumentStore((s) => s.variables);
   const close = () => useUiStore.getState().setShowVariableDialog(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -27,6 +29,9 @@ export function VariableDialog() {
       await api.setRuntimeVariables(values);
       useEngineStore.getState().addLog("Variables applied");
       close();
+      if (dialogMode === "run") {
+        await startTimelineRun();
+      }
     } catch (err) {
       useEngineStore.getState().addLog(`Failed to apply variables: ${String(err)}`);
     }
@@ -35,7 +40,7 @@ export function VariableDialog() {
   return (
     <div className="modal-overlay" onClick={close}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Set Variables</h3>
+        <h3>{dialogMode === "run" ? "Set Variables & Run" : "Set Variables"}</h3>
         <div className="variable-form">
           {variables.map((v) => (
             <div key={v.name} className="field">
@@ -75,7 +80,7 @@ export function VariableDialog() {
             Cancel
           </button>
           <button className="btn btn-primary" onClick={handleApply}>
-            Apply
+            {dialogMode === "run" ? "Apply & Run" : "Apply"}
           </button>
         </div>
       </div>
