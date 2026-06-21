@@ -1,5 +1,3 @@
-import type { ChangeEvent } from "react";
-
 import { defaultActionForKind } from "../../lib/actions";
 import { api } from "../../lib/ipc";
 import { useDocumentStore } from "../../stores/documentStore";
@@ -18,7 +16,6 @@ export function TimelineEditor() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
   const count = useDocumentStore((s) => s.timeline.length);
   const editable = useDocumentStore((s) => s.editable);
-  const name = useDocumentStore((s) => s.name);
   const variableCount = useDocumentStore((s) => s.variables.length);
   const view = useUiStore((s) => s.timelineView);
   const ui = useUiStore.getState;
@@ -32,35 +29,6 @@ export function TimelineEditor() {
     } catch (err) {
       log(`Export failed: ${String(err)}`);
     }
-  }
-
-  async function handleDownload() {
-    try {
-      const yaml = await api.exportYaml();
-      const blob = new Blob([yaml], { type: "text/yaml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${name || "macro"}.yaml`;
-      a.click();
-      URL.revokeObjectURL(url);
-      log(`Downloaded ${name}.yaml`);
-    } catch (err) {
-      log(`Download failed: ${String(err)}`);
-    }
-  }
-
-  function handleFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      ui().setYamlContent((ev.target?.result as string) ?? "");
-      ui().setTimelineView("code");
-      log(`Loaded file: ${file.name}`);
-    };
-    reader.readAsText(file);
-    e.target.value = "";
   }
 
   return (
@@ -96,15 +64,24 @@ export function TimelineEditor() {
           <button className="btn btn-sm" onClick={() => useDocumentStore.getState().batchAdjustDelay(50)} disabled={!canEdit} title="Shift all +50ms">
             All +50
           </button>
-          <button className="btn btn-sm" onClick={handleDownload} disabled={!isIdle} title="Download YAML">
+          <button
+            className="btn btn-sm"
+            onClick={() => useDocumentStore.getState().exportToFile()}
+            disabled={!isIdle}
+            title="Export to a YAML file"
+          >
             Export
           </button>
-          <label className="btn btn-sm" style={{ cursor: isIdle ? "pointer" : "not-allowed" }}>
+          <button
+            className="btn btn-sm"
+            onClick={() => useDocumentStore.getState().importFromFile()}
+            disabled={!isIdle}
+            title="Import from a YAML file"
+          >
             Import
-            <input type="file" accept=".yaml,.yml" onChange={handleFile} disabled={!isIdle} style={{ display: "none" }} />
-          </label>
+          </button>
           {variableCount > 0 && (
-            <button className="btn btn-sm" onClick={() => ui().setShowVariableDialog(true)} disabled={!isIdle} title="Set variables">
+            <button className="btn btn-sm" onClick={() => ui().openVariableDialog("edit")} disabled={!isIdle} title="Set variables">
               Variables
             </button>
           )}

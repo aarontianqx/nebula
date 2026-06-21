@@ -1,4 +1,4 @@
-import { api } from "../lib/ipc";
+import { startTimelineRun } from "../lib/run";
 import { useDocumentStore } from "../stores/documentStore";
 import { useEngineStore } from "../stores/engineStore";
 import { useRecorderStore } from "../stores/recorderStore";
@@ -24,6 +24,7 @@ export function RunPanel() {
   const tool = useToolStore;
 
   const timelineLength = useDocumentStore((s) => s.timeline.length);
+  const variableCount = useDocumentStore((s) => s.variables.length);
 
   const isIdle = engineState === "Idle";
   const isRunning = engineState === "Running";
@@ -43,16 +44,12 @@ export function RunPanel() {
       await tool.getState().startSimple();
       return;
     }
-    try {
-      engine.getState().resetRunStats();
-      // Force the latest edits to the canonical document before playing.
-      await useDocumentStore.getState().flush();
-      await api.startExecution();
-      engine.getState().addLog("Playing timeline");
-    } catch (err) {
-      engine.getState().setStatus(`Failed: ${String(err)}`);
-      engine.getState().addLog(`Error: ${String(err)}`);
+    // Parameterized macros: collect run-time values first, then the dialog starts.
+    if (variableCount > 0) {
+      useUiStore.getState().openVariableDialog("run");
+      return;
     }
+    await startTimelineRun();
   }
 
   return (

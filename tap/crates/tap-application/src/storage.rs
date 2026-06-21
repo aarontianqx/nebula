@@ -217,6 +217,47 @@ pub fn load_last_used() -> Option<String> {
     }
 }
 
+/// Maximum number of entries kept in the recently-used list.
+const RECENTS_CAP: usize = 8;
+
+/// Path to the recently-used profiles list.
+fn get_recents_path() -> PathBuf {
+    get_app_data_dir().join("recent_profiles.json")
+}
+
+/// Load the recently-used profile names (most recent first).
+pub fn load_recent() -> Vec<String> {
+    let path = get_recents_path();
+    if !path.exists() {
+        return Vec::new();
+    }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Promote `name` to the front of the recents list (de-duplicated, capped).
+fn promote_recent(mut recents: Vec<String>, name: &str) -> Vec<String> {
+    recents.retain(|n| n != name);
+    recents.insert(0, name.to_string());
+    recents.truncate(RECENTS_CAP);
+    recents
+}
+
+/// Record a profile as recently used (most recent first, de-duplicated, capped).
+pub fn save_recent(name: &str) -> StorageResult<()> {
+    let recents = promote_recent(load_recent(), name);
+
+    let path = get_recents_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_string(&recents)?)?;
+    debug!(?name, "Recorded recently-used profile");
+    Ok(())
+}
+
 /// Sanitize a profile name to be a valid filename.
 fn sanitize_filename(name: &str) -> String {
     name.chars()
@@ -290,6 +331,25 @@ mod tests {
             }],
             run: Default::default(),
         }
+    }
+
+    #[test]
+    fn test_promote_recent_orders_dedups_and_caps() {
+        // Fresh entry goes to the front.
+        let r = promote_recent(vec!["a".into(), "b".into()], "c");
+        assert_eq!(r, vec!["c", "a", "b"]);
+
+        // Re-using an existing entry moves it to the front without duplicating.
+        let r = promote_recent(vec!["a".into(), "b".into(), "c".into()], "c");
+        assert_eq!(r, vec!["c", "a", "b"]);
+
+        // The list is capped at RECENTS_CAP, dropping the oldest entries.
+        let mut acc: Vec<String> = Vec::new();
+        for i in 0..(RECENTS_CAP + 4) {
+            acc = promote_recent(acc, &format!("p{i}"));
+        }
+        assert_eq!(acc.len(), RECENTS_CAP);
+        assert_eq!(acc.first().unwrap(), &format!("p{}", RECENTS_CAP + 3));
     }
 
     #[test]

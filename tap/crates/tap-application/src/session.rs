@@ -51,6 +51,22 @@ impl SessionStore {
         self.document.name = name;
     }
 
+    /// Update the document's metadata in place.
+    ///
+    /// Unlike [`Self::apply_profile_edit`], this is lossless: it touches only the
+    /// metadata fields and leaves the timeline, variables and run config intact,
+    /// so it is safe to call even for parameterized macros.
+    pub fn set_metadata(
+        &mut self,
+        description: Option<String>,
+        author: Option<String>,
+        tags: Vec<String>,
+    ) {
+        self.document.description = description;
+        self.document.author = author;
+        self.document.tags = tags;
+    }
+
     /// Apply an edit coming from the Profile-based UI.
     ///
     /// `Profile` cannot carry variables or metadata, so this merges the edited
