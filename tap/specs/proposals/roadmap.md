@@ -50,7 +50,7 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 |------|------|----------|
 | 相对坐标 | 窗口矩形 API 就绪，录制/动作以窗口相对坐标存储待做 | Phase 3 |
 
-> 已在 Phase 6 打通：**变量运行时替换**（M3，Resolve 阶段 + 运行前覆盖）、**子宏调用 `call_macro`**（M4，引擎就地展开 + 环/深度保护 + 子作用域）、**macOS 平台对齐**（M5，`CGWindowList` 窗口枚举 / `CGWindowListCreateImage` 像素取色 / 真实 `backingScaleFactor`，并统一坐标系：mac 用 point、Win 用物理像素，拾取器经 `browser_to_injection_scale` 换算）、**录制降噪**（M6，合成 Click/DoubleClick/Drag/KeyTap + 合并共线移动）、**拖拽插值与安全硬化**（M7，按 `duration_ms` 可中断插值且异常必抬起、注入看门狗超时、连续失败自动停、子秒级倒计时）。
+> 已在 Phase 6 打通：**变量运行时替换**（M3，Resolve 阶段 + 运行前覆盖）、**子宏调用 `call_macro`**（M4，引擎就地展开 + 环/深度保护 + 子作用域）、**macOS 平台对齐**（M5，`CGWindowList` 窗口枚举 / `CGWindowListCreateImage` 像素取色 / 真实 `backingScaleFactor`，并统一坐标系：mac 用 point、Win 用物理像素，拾取器经 `browser_to_injection_scale` 换算）、**录制降噪**（M6，合成 Click/DoubleClick/Drag/KeyTap + 合并共线移动）、**拖拽插值与安全硬化**（M7，按 `duration_ms` 可中断插值且异常必抬起、注入看门狗超时、连续失败自动停、子秒级倒计时）、**前端重构与同步契约**（M8，Zustand store + 组件化；Timeline 编辑器 List/Rail/Code 三视图 + Inspector 参数编辑、增删/移动/复制/拖拽调时/批量调延时/note；编辑去抖回推 `update_profile` 且启动/保存前强制刷盘——彻底修复“前端编辑不落库”）。
 
 ### Quick Tools（跨阶段体验增强）
 
