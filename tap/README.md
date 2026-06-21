@@ -14,6 +14,19 @@ yarn install
 yarn tauri:dev
 ```
 
+### 代码检查（提交前 / CI）
+
+```bash
+# 前端：类型检查 + Lint
+yarn typecheck
+yarn lint
+
+# Rust：格式化 + Clippy + 测试
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p tap-core -p tap-application -p tap-platform -p tap-tauri
+```
+
 ### 构建（发布 / 打包）
 
 ```bash
