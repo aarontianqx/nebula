@@ -3,15 +3,26 @@
 use crossbeam_channel::{bounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tap_core::{
     create_expression_engine, Action, Condition, ConditionColor, ConditionEvaluator,
     ConditionResult, DslAction, DslTimedAction, DslValue, ExpressionEngineHandle, MacroDocument,
-    VariableStore, VariableValue,
+    MouseButton, Point, VariableStore, VariableValue,
 };
 use tracing::{debug, error, info, warn};
+
+/// Stop the whole run after this many consecutive injection failures, so a
+/// broken injector can never spin a forever-loop indefinitely.
+const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+/// Target interval between interpolated drag steps (~60 fps).
+const DRAG_STEP_MS: u64 = 16;
+/// Upper bound on interpolated drag steps, so very long drags stay cheap while
+/// remaining interruptible within one step.
+const MAX_DRAG_STEPS: u32 = 240;
 
 use crate::resolve::resolve_action;
 use crate::storage::load_document;
@@ -157,6 +168,9 @@ pub struct Player<E: ActionExecutor, P: PlatformConditionProvider> {
     variables: Arc<Mutex<VariableStore>>,
     expr_engine: ExpressionEngineHandle,
     loader: SubMacroLoader,
+    /// Consecutive injection failures in the current run (reset on success and
+    /// at the start of each run); drives the auto-stop safety net.
+    consecutive_failures: AtomicU32,
     cmd_rx: Receiver<EngineCommand>,
     event_tx: Sender<EngineEvent>,
 }
@@ -184,6 +198,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             variables: Arc::new(Mutex::new(VariableStore::new())),
             expr_engine: create_expression_engine(),
             loader,
+            consecutive_failures: AtomicU32::new(0),
             cmd_rx,
             event_tx,
         };
@@ -260,18 +275,13 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             }
         };
 
-        // Arming (countdown)
+        // Arming (countdown). Honors sub-second delays and is interruptible.
         self.transition_state(EngineState::Arming);
-
-        let countdown_secs = (document.run.start_delay_ms / 1000) as u32;
-        for remaining in (1..=countdown_secs).rev() {
-            if self.should_stop() {
-                return;
-            }
-            self.emit(EngineEvent::CountdownTick {
-                remaining_secs: remaining,
-            });
-            thread::sleep(Duration::from_secs(1));
+        if !self.arming_countdown(document.run.start_delay_ms) {
+            // Stopped during arming: should_stop already moved us to Stopped,
+            // so settle back to Idle like a normal stop would.
+            self.transition_state(EngineState::Idle);
+            return;
         }
 
         // Build the run scope: variable definition defaults, then run-time
@@ -283,6 +293,9 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             let runtime = self.runtime_vars.lock().unwrap().clone();
             vars.set_variables(runtime);
         }
+
+        // Fresh failure budget for this run.
+        self.consecutive_failures.store(0, Ordering::Relaxed);
 
         // Start running
         self.transition_state(EngineState::Running);
@@ -383,6 +396,23 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
 
             match self.execute_action(&action, index) {
                 ActionResult::Completed | ActionResult::Timeout => {
+                    self.consecutive_failures.store(0, Ordering::Relaxed);
+                    self.emit(EngineEvent::ActionCompleted { index });
+                }
+                ActionResult::Failed => {
+                    // The Error was already emitted by execute_action. Keep
+                    // going, but stop the whole run if failures pile up so a
+                    // broken injector cannot spin forever.
+                    let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+                    if failures >= MAX_CONSECUTIVE_FAILURES {
+                        self.emit(EngineEvent::Error {
+                            message: format!(
+                                "Stopping after {failures} consecutive injection failures"
+                            ),
+                        });
+                        self.transition_state(EngineState::Stopped);
+                        return false;
+                    }
                     self.emit(EngineEvent::ActionCompleted { index });
                 }
                 ActionResult::Stopped => return false,
@@ -665,6 +695,20 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 ActionResult::Completed
             }
 
+            // Drag is interpolated over its duration by the engine so it stays
+            // interruptible (and releases the button safely on stop/failure).
+            Action::Drag {
+                from,
+                to,
+                duration_ms,
+            } => {
+                self.emit(EngineEvent::ActionStarting {
+                    index,
+                    action: action.clone(),
+                });
+                self.execute_drag(*from, *to, *duration_ms)
+            }
+
             // All other actions: delegate to executor
             _ => {
                 self.emit(EngineEvent::ActionStarting {
@@ -672,15 +716,115 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                     action: action.clone(),
                 });
 
-                if let Err(e) = self.executor.execute(action) {
-                    error!(index, error = %e, "action execution failed");
-                    self.emit(EngineEvent::Error {
-                        message: format!("Action {} failed: {}", index, e),
-                    });
+                match self.executor.execute(action) {
+                    Ok(()) => ActionResult::Completed,
+                    Err(e) => {
+                        error!(index, error = %e, "action execution failed");
+                        self.emit(EngineEvent::Error {
+                            message: format!("Action {index} failed: {e}"),
+                        });
+                        ActionResult::Failed
+                    }
                 }
-
-                ActionResult::Completed
             }
+        }
+    }
+
+    /// Perform a drag as MouseDown → interpolated MouseMoves → MouseUp.
+    ///
+    /// The cursor is stepped from `from` to `to` over `duration_ms`, checking
+    /// for stop requests between steps. On a stop or an injection failure the
+    /// button is always released first, so a half-finished drag can never leave
+    /// the mouse stuck in a pressed state.
+    fn execute_drag(&self, from: Point, to: Point, duration_ms: u64) -> ActionResult {
+        if let Err(e) = self.inject(&Action::MouseDown {
+            x: from.x,
+            y: from.y,
+            button: MouseButton::Left,
+        }) {
+            self.emit(EngineEvent::Error {
+                message: format!("Drag press failed: {e}"),
+            });
+            return ActionResult::Failed;
+        }
+
+        let steps = drag_steps(duration_ms);
+        let step_ms = duration_ms / steps as u64;
+
+        for k in 1..=steps {
+            if step_ms > 0 {
+                self.interruptible_sleep(step_ms);
+            }
+            let (x, y) = lerp_point(from, to, k, steps);
+
+            if self.should_stop() {
+                // Release where we are, then abort.
+                let _ = self.inject(&Action::MouseUp {
+                    x,
+                    y,
+                    button: MouseButton::Left,
+                });
+                return ActionResult::Stopped;
+            }
+
+            if let Err(e) = self.inject(&Action::MouseMove { x, y }) {
+                self.emit(EngineEvent::Error {
+                    message: format!("Drag move failed: {e}"),
+                });
+                let _ = self.inject(&Action::MouseUp {
+                    x,
+                    y,
+                    button: MouseButton::Left,
+                });
+                return ActionResult::Failed;
+            }
+        }
+
+        if let Err(e) = self.inject(&Action::MouseUp {
+            x: to.x,
+            y: to.y,
+            button: MouseButton::Left,
+        }) {
+            self.emit(EngineEvent::Error {
+                message: format!("Drag release failed: {e}"),
+            });
+            return ActionResult::Failed;
+        }
+
+        ActionResult::Completed
+    }
+
+    /// Send a primitive action to the injector.
+    fn inject(&self, action: &Action) -> Result<(), String> {
+        self.executor.execute(action)
+    }
+
+    /// Run the arming countdown for `total_ms`, sleeping in small interruptible
+    /// chunks and emitting a [`EngineEvent::CountdownTick`] whenever the
+    /// whole-second value changes. Returns `false` if a stop was requested.
+    fn arming_countdown(&self, total_ms: u64) -> bool {
+        if total_ms == 0 {
+            return true;
+        }
+        let start = Instant::now();
+        let mut last_secs: Option<u32> = None;
+        loop {
+            if self.should_stop() {
+                return false;
+            }
+            let elapsed = start.elapsed().as_millis() as u64;
+            if elapsed >= total_ms {
+                return true;
+            }
+            let remaining = total_ms - elapsed;
+            let secs = remaining.div_ceil(1000) as u32;
+            if last_secs != Some(secs) {
+                self.emit(EngineEvent::CountdownTick {
+                    remaining_secs: secs,
+                });
+                last_secs = Some(secs);
+            }
+            thread::sleep(Duration::from_millis(remaining.min(50)));
         }
     }
 
@@ -719,6 +863,23 @@ enum ActionResult {
     Stopped,
     Timeout,
     Exit,
+    /// The injector reported a failure for this action.
+    Failed,
+}
+
+/// Number of interpolation steps for a drag of the given duration.
+fn drag_steps(duration_ms: u64) -> u32 {
+    let by_time = (duration_ms / DRAG_STEP_MS) as u32;
+    by_time.clamp(1, MAX_DRAG_STEPS)
+}
+
+/// Linearly interpolate the cursor position at step `k` of `steps` from
+/// `from` to `to` (rounded to the nearest pixel).
+fn lerp_point(from: Point, to: Point, k: u32, steps: u32) -> (i32, i32) {
+    let t = k as f64 / steps as f64;
+    let x = from.x as f64 + (to.x - from.x) as f64 * t;
+    let y = from.y as f64 + (to.y - from.y) as f64 * t;
+    (x.round() as i32, y.round() as i32)
 }
 
 /// Runtime condition evaluator combining platform APIs and variable store.

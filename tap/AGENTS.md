@@ -66,7 +66,7 @@ tap/
 - **Single source of truth**: The canonical macro is the `MacroDocument` held by `SessionStore`; the runtime `Profile` is a resolved projection for display/IPC. Edits and execution always go through the document, never a lossy side copy.
 - **Serial execution**: Timeline actions execute sequentially within a single macro. No concurrent injection.
 - **Cancellability**: All long-running operations (replay, record) must support immediate cancellation via stop signal.
-- **Global coordinate system**: All mouse coordinates use full-screen physical pixels, never WebView-relative coordinates.
+- **Global coordinate system**: Mouse coordinates use the OS *injection* space — full-screen **physical pixels on Windows**, **points on macOS** — never WebView-relative coordinates. The picker converts browser CSS pixels via `browser_to_injection_scale()` so recording, playback and picking stay consistent. `get_primary_scale_factor()` reports the display backing scale and is informational only.
 - **Safety first**: Emergency stop (global hotkey `Ctrl+Shift+Backspace`) has the highest priority and must work regardless of window focus.
 
 ### Platform abstraction (`tap-platform`)
@@ -77,9 +77,9 @@ tap/
 | `events/`        | Global event listener (singleton) | N/A       | CGEventTap + subscriptions |
 | `input_hook/`    | Global input hook (recording)| rdev           | Subscribes to events singleton |
 | `mouse_tracker/` | Global mouse position        | rdev           | Subscribes to events singleton |
-| `window/`        | Window API                   | Win32 API      | (pending)               |
-| `pixel/`         | Pixel color reading          | GDI            | (pending)               |
-| `dpi/`           | High DPI handling            | SetProcessDpiAwareness | NSScreen scale |
+| `window/`        | Window API                   | Win32 API      | Quartz `CGWindowList`   |
+| `pixel/`         | Pixel color reading          | GDI            | `CGWindowListCreateImage` |
+| `dpi/`           | High DPI handling            | SetProcessDpiAwareness | backing scale via `CGDisplayMode` |
 
 macOS uses a CGEventTap singleton shared across `mouse_tracker` and `input_hook` to avoid multiple event tap conflicts.
 

@@ -7,7 +7,7 @@
 //!
 //! Platform implementations:
 //! - Windows: Uses Win32 API (`windows.rs`)
-//! - macOS: Stub implementation (`macos.rs`, TODO)
+//! - macOS: Uses Quartz window services / `CGWindowList` (`macos.rs`)
 
 use serde::{Deserialize, Serialize};
 

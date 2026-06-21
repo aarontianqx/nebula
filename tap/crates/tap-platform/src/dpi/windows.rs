@@ -44,3 +44,13 @@ pub fn get_primary_scale_factor() -> f64 {
         dpi as f64 / 96.0
     }
 }
+
+/// Factor to convert browser CSS pixels (`window.screenX/Y`) into the OS
+/// injection coordinate space.
+///
+/// With Per-Monitor V2 DPI awareness, injection happens in physical pixels
+/// while the browser reports logical (CSS) pixels, so the conversion factor is
+/// the system DPI scale.
+pub fn browser_to_injection_scale() -> f64 {
+    get_primary_scale_factor()
+}

@@ -48,10 +48,9 @@ tap 采用"渐进增强"的演进策略：从最简单的"重复点击"开始，
 
 | 功能 | 说明 | 原属阶段 |
 |------|------|----------|
-| 相对坐标 | API 就绪，Action 集成待做 | Phase 3 |
-| macOS 窗口 API | 需实现 `get_foreground_window` 等 | Phase 5 / Phase 6 (M5) |
+| 相对坐标 | 窗口矩形 API 就绪，录制/动作以窗口相对坐标存储待做 | Phase 3 |
 
-> 已在 Phase 6 打通：**变量运行时替换**（M3，Resolve 阶段 + 运行前覆盖）与**子宏调用 `call_macro`**（M4，引擎就地展开 + 环/深度保护 + 子作用域）。
+> 已在 Phase 6 打通：**变量运行时替换**（M3，Resolve 阶段 + 运行前覆盖）、**子宏调用 `call_macro`**（M4，引擎就地展开 + 环/深度保护 + 子作用域）、**macOS 平台对齐**（M5，`CGWindowList` 窗口枚举 / `CGWindowListCreateImage` 像素取色 / 真实 `backingScaleFactor`，并统一坐标系：mac 用 point、Win 用物理像素，拾取器经 `browser_to_injection_scale` 换算）、**录制降噪**（M6，合成 Click/DoubleClick/Drag/KeyTap + 合并共线移动）、**拖拽插值与安全硬化**（M7，按 `duration_ms` 可中断插值且异常必抬起、注入看门狗超时、连续失败自动停、子秒级倒计时）。
 
 ### Quick Tools（跨阶段体验增强）
 

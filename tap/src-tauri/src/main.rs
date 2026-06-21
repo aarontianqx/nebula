@@ -497,24 +497,26 @@ async fn picker_position_selected(app: AppHandle, x: i32, y: i32) -> Result<(), 
         let _ = window.close();
     }
 
-    // Convert logical pixels (from browser) to physical pixels (for enigo/rdev)
-    // On high DPI screens, the browser's screenX/screenY are in logical pixels,
-    // but enigo and rdev work with physical pixels after we set DPI awareness.
-    let scale = tap_platform::get_primary_scale_factor();
-    let physical_x = (x as f64 * scale).round() as i32;
-    let physical_y = (y as f64 * scale).round() as i32;
+    // Convert the browser's CSS pixels (window.screenX/Y) into the canonical
+    // injection coordinate space. On Windows that means scaling logical pixels
+    // up to physical pixels; on macOS both spaces are points, so the factor is
+    // 1.0. Recording, injection and picking therefore share one coordinate
+    // system.
+    let scale = tap_platform::browser_to_injection_scale();
+    let inject_x = (x as f64 * scale).round() as i32;
+    let inject_y = (y as f64 * scale).round() as i32;
 
     info!(
-        "Position picked: logical ({}, {}), physical ({}, {}), scale {}",
-        x, y, physical_x, physical_y, scale
+        "Position picked: css ({}, {}), injection ({}, {}), scale {}",
+        x, y, inject_x, inject_y, scale
     );
 
-    // Emit the physical coordinates to the main window
+    // Emit the injection-space coordinates to the main window
     app.emit(
         "position-picked",
         PositionPickedEvent {
-            x: physical_x,
-            y: physical_y,
+            x: inject_x,
+            y: inject_y,
         },
     )
     .map_err(|e| format!("Failed to emit position-picked: {}", e))?;

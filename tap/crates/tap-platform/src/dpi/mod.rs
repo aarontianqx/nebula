@@ -1,12 +1,20 @@
-//! DPI scaling utilities for high-resolution display support.
+//! DPI / coordinate-system utilities for high-resolution display support.
 //!
-//! This module provides functions to handle DPI scaling,
-//! ensuring that coordinates from rdev (which may be physical pixels)
-//! are compatible with enigo (which may use logical pixels).
+//! ## Canonical injection coordinate space
 //!
-//! Platform implementations:
-//! - Windows: Uses Per-Monitor V2 DPI awareness (`windows.rs`)
-//! - macOS: Relies on system-handled Retina display support (`macos.rs`)
+//! Each platform has a single coordinate space shared by injection (`enigo`),
+//! recording (`rdev`/native event tap), window bounds and pixel capture:
+//!
+//! - **Windows**: physical pixels (the process opts into Per-Monitor V2 DPI
+//!   awareness so the system stops scaling coordinates).
+//! - **macOS**: points (the window server abstracts physical pixels away).
+//!
+//! Browser overlays (the picker) report positions in CSS pixels via
+//! `window.screenX/Y`. [`browser_to_injection_scale`] converts those into the
+//! canonical injection space: the DPI scale on Windows, `1.0` on macOS.
+//!
+//! [`get_primary_scale_factor`] reports the display's backing scale factor and
+//! is informational only -- do not use it to convert picker coordinates.
 
 #[cfg(windows)]
 mod windows;
@@ -16,10 +24,10 @@ mod macos;
 
 // Re-export platform-specific functions
 #[cfg(windows)]
-pub use windows::{get_primary_scale_factor, set_dpi_aware};
+pub use windows::{browser_to_injection_scale, get_primary_scale_factor, set_dpi_aware};
 
 #[cfg(target_os = "macos")]
-pub use macos::{get_primary_scale_factor, set_dpi_aware};
+pub use macos::{browser_to_injection_scale, get_primary_scale_factor, set_dpi_aware};
 
 #[cfg(not(any(windows, target_os = "macos")))]
 mod fallback {
@@ -30,10 +38,15 @@ mod fallback {
     pub fn get_primary_scale_factor() -> f64 {
         1.0
     }
+
+    /// Factor to convert browser CSS pixels into injection coordinates.
+    pub fn browser_to_injection_scale() -> f64 {
+        1.0
+    }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-pub use fallback::{get_primary_scale_factor, set_dpi_aware};
+pub use fallback::{browser_to_injection_scale, get_primary_scale_factor, set_dpi_aware};
 
 /// Coordinates that can be converted between physical and logical pixels.
 #[derive(Debug, Clone, Copy)]
