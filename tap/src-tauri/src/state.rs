@@ -1,15 +1,18 @@
 //! Application state for Tauri backend.
 
 use crate::key_click::KeyClickHandle;
-use tap_core::{EngineState, PlayerHandle, Profile, Recorder, RecorderState, VariableStore};
+use tap_application::{Coordinator, Recorder, RecorderState};
 use tap_platform::{InputHookHandle, MouseTrackerHandle};
 
 /// Global application state.
+///
+/// The adapter is intentionally thin: the engine state machine and the canonical
+/// macro document live in the application-layer [`Coordinator`]. `AppState` only
+/// holds the Tauri-side bits the event pump touches directly (recorder, input
+/// hook, mouse tracker, key-click handle).
 pub struct AppState {
-    // Playback state
-    pub engine_state: EngineState,
-    pub profile: Profile,
-    pub player_handle: Option<PlayerHandle>,
+    /// Application-layer entry point: owns the player + canonical document.
+    pub coordinator: Coordinator,
     pub executed_count: u64,
     pub current_action_index: Option<usize>,
 
@@ -19,10 +22,6 @@ pub struct AppState {
 
     // Global mouse tracking
     pub mouse_tracker: Option<MouseTrackerHandle>,
-
-    // Phase 3: Variables (stored here for potential future direct access from UI)
-    #[allow(dead_code)]
-    pub variables: VariableStore,
 
     // Key-to-Click tool mode
     pub key_click_handle: Option<KeyClickHandle>,

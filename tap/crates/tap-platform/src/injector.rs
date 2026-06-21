@@ -8,7 +8,7 @@ use crossbeam_channel::{bounded, Sender};
 use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use tap_core::{Action, ActionExecutorAdapter, MouseButton};
+use tap_core::{Action, MouseButton};
 use tracing::{debug, error, warn};
 
 /// Trait for injecting mouse/keyboard actions into the OS.
@@ -374,19 +374,6 @@ fn parse_key(key: &str) -> PlatformResult<enigo::Key> {
     };
 
     Ok(parsed)
-}
-
-// Implement ActionExecutorAdapter so EnigoInjector can be used with Player.
-impl ActionExecutorAdapter for EnigoInjector {
-    fn inject(&self, action: &Action) -> Result<(), String> {
-        InputInjector::inject(self, action).map_err(|e| e.to_string())
-    }
-}
-
-impl ActionExecutorAdapter for NoopInjector {
-    fn inject(&self, action: &Action) -> Result<(), String> {
-        InputInjector::inject(self, action).map_err(|e| e.to_string())
-    }
 }
 
 #[cfg(test)]

@@ -8,10 +8,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::dsl::{DslValue, MacroDocument};
 use crate::storage::load_profile;
-use crate::variables::{VariableStore, VariableValue};
-use crate::Profile;
+use tap_core::{DslValue, MacroDocument};
+use tap_core::{Profile, VariableStore, VariableValue};
 
 /// Maximum call stack depth to prevent infinite recursion.
 pub const MAX_CALL_DEPTH: usize = 10;

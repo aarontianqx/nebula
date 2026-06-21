@@ -17,19 +17,20 @@ tap (Timed Action Performer) is a cross-platform desktop automation tool built w
                │ Commands (Start/Stop/Record/Replay)
                ▼
 ┌───────────────────────────┐
-│   Application (Engine)    │
-│  - Coordinator            │  Execution task / recording state
-│  - Player (Replay)        │  Timeline playback (interruptible)
+│ Application (tap-application) │
+│  - Coordinator            │  Entry point: owns player + session
+│  - SessionStore           │  Canonical MacroDocument (single source of truth)
+│  - Player (Replay)        │  Document playback + Resolve stage (interruptible)
 │  - Recorder (Record)      │  Global event capture (pausable)
-│  - EventBus               │  Event broadcast to UI
+│  - Storage                │  YAML persistence (+ legacy JSON read)
 └──────────────┬────────────┘
-               │ Ports (traits)
+               │ Ports (traits: ActionExecutor / PlatformConditionProvider)
                ▼
 ┌───────────────────────────┐
 │ Infrastructure (OS I/O)   │
 │  - InputInjector           │  Mouse/keyboard injection
 │  - InputHook               │  Global event listener
-│  - Storage                 │  Config persistence
+│  - Window / Pixel / DPI    │  Platform queries
 └──────────────┬────────────┘
                ▼
 ┌───────────────────────────┐
@@ -49,8 +50,9 @@ tap/
 ├── src/                          # React frontend (Vite)
 ├── src-tauri/src/                # Tauri backend (IPC commands)
 ├── crates/
-│   ├── tap-core/                 # Domain model + engine logic (platform-independent)
-│   └── tap-platform/             # Platform abstraction (input injection, hooks, DPI)
+│   ├── tap-core/                 # Pure domain: model, DSL, conditions, variables, expression, schema
+│   ├── tap-application/          # Application layer: Coordinator, SessionStore, Player, Recorder, Resolve, storage, ports
+│   └── tap-platform/             # Platform abstraction (input injection, hooks, window/pixel/DPI)
 ├── templates/                    # YAML macro templates
 ├── specs/
 │   ├── features/                 # Feature specifications
@@ -60,7 +62,8 @@ tap/
 
 ### Key conventions
 
-- **Engine decoupling**: The automation engine (`tap-core`) must remain independent of the UI framework. Tauri is the adapter; swapping UI should not affect core capabilities.
+- **Engine decoupling**: The automation engine lives in `tap-application` and depends only on the pure domain (`tap-core`) plus trait *ports*; it must stay independent of the UI framework and the OS. `src-tauri` is a thin adapter that wires up concrete port implementations (the `tap-platform` injector / window queries) and forwards IPC + events. Swapping UI or platform should not affect engine logic.
+- **Single source of truth**: The canonical macro is the `MacroDocument` held by `SessionStore`; the runtime `Profile` is a resolved projection for display/IPC. Edits and execution always go through the document, never a lossy side copy.
 - **Serial execution**: Timeline actions execute sequentially within a single macro. No concurrent injection.
 - **Cancellability**: All long-running operations (replay, record) must support immediate cancellation via stop signal.
 - **Global coordinate system**: All mouse coordinates use full-screen physical pixels, never WebView-relative coordinates.
