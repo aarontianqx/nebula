@@ -98,6 +98,18 @@ export interface VariableDefinitionResponse {
   description: string | null;
 }
 
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface DocumentMeta {
+  description: string | null;
+  author: string | null;
+  tags: string[];
+}
+
 export interface RecordingStatus {
   state: RecorderState;
   event_count: number;

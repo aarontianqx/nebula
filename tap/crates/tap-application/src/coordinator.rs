@@ -122,6 +122,16 @@ impl Coordinator {
         self.session.apply_profile_edit(profile);
     }
 
+    /// Update the document's metadata (description / author / tags) losslessly.
+    pub fn set_metadata(
+        &mut self,
+        description: Option<String>,
+        author: Option<String>,
+        tags: Vec<String>,
+    ) {
+        self.session.set_metadata(description, author, tags);
+    }
+
     /// Lenient resolved Profile projection for display/IPC.
     pub fn profile_view(&self) -> Profile {
         self.session.profile_view()
