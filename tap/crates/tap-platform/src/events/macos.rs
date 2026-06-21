@@ -15,7 +15,9 @@
 
 use core_foundation::base::TCFType;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
-use core_graphics::event::{CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType};
+use core_graphics::event::{
+    CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::ffi::c_void;
 use std::ptr;
@@ -56,7 +58,7 @@ extern "C" {
     ) -> CFMachPortRef;
 
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-    
+
     fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
     fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
     fn CGEventGetFlags(event: CGEventRef) -> CGEventFlags;
@@ -115,12 +117,12 @@ struct GlobalEventListener {
 impl GlobalEventListener {
     fn new() -> Arc<Self> {
         let (broadcast_tx, broadcast_rx) = bounded::<MacOSEvent>(2048);
-        
+
         let listener = Arc::new(Self {
             _broadcast_rx: broadcast_rx.clone(),
             subscribers: Mutex::new(Vec::new()),
         });
-        
+
         // Spawn the broadcast thread that distributes events to subscribers
         let subscribers_ref = Arc::downgrade(&listener);
         let rx = broadcast_rx;
@@ -136,7 +138,7 @@ impl GlobalEventListener {
                 }
             }
         });
-        
+
         // Spawn the event tap thread
         let tx = broadcast_tx;
         thread::spawn(move || {
@@ -146,17 +148,17 @@ impl GlobalEventListener {
             }
             info!("Global macOS event listener thread exiting");
         });
-        
+
         listener
     }
-    
+
     fn subscribe(&self) -> Receiver<MacOSEvent> {
         let (tx, rx) = bounded::<MacOSEvent>(1024);
         let mut subs = self.subscribers.lock().unwrap();
         subs.push(tx);
         rx
     }
-    
+
     fn cleanup_dead_subscribers(&self) {
         let mut subs = self.subscribers.lock().unwrap();
         subs.retain(|s| !s.is_full());
@@ -165,7 +167,9 @@ impl GlobalEventListener {
 
 /// Get or create the global event listener
 fn get_global_listener() -> Arc<GlobalEventListener> {
-    GLOBAL_LISTENER.get_or_init(GlobalEventListener::new).clone()
+    GLOBAL_LISTENER
+        .get_or_init(GlobalEventListener::new)
+        .clone()
 }
 
 // Thread-local storage for the event tap callback
@@ -204,49 +208,80 @@ fn convert_event_raw(event_type: CGEventType, event: CGEventRef) -> Option<MacOS
         .unwrap_or(0);
 
     let evt_type = match event_type {
-        CGEventType::MouseMoved | CGEventType::LeftMouseDragged | CGEventType::RightMouseDragged => {
+        CGEventType::MouseMoved
+        | CGEventType::LeftMouseDragged
+        | CGEventType::RightMouseDragged => {
             let loc = unsafe { CGEventGetLocation(event) };
             Some(MacOSEventType::MouseMove { x: loc.x, y: loc.y })
         }
         CGEventType::LeftMouseDown => {
             let loc = unsafe { CGEventGetLocation(event) };
-            Some(MacOSEventType::MouseDown { x: loc.x, y: loc.y, button: 0 })
+            Some(MacOSEventType::MouseDown {
+                x: loc.x,
+                y: loc.y,
+                button: 0,
+            })
         }
         CGEventType::LeftMouseUp => {
             let loc = unsafe { CGEventGetLocation(event) };
-            Some(MacOSEventType::MouseUp { x: loc.x, y: loc.y, button: 0 })
+            Some(MacOSEventType::MouseUp {
+                x: loc.x,
+                y: loc.y,
+                button: 0,
+            })
         }
         CGEventType::RightMouseDown => {
             let loc = unsafe { CGEventGetLocation(event) };
-            Some(MacOSEventType::MouseDown { x: loc.x, y: loc.y, button: 1 })
+            Some(MacOSEventType::MouseDown {
+                x: loc.x,
+                y: loc.y,
+                button: 1,
+            })
         }
         CGEventType::RightMouseUp => {
             let loc = unsafe { CGEventGetLocation(event) };
-            Some(MacOSEventType::MouseUp { x: loc.x, y: loc.y, button: 1 })
+            Some(MacOSEventType::MouseUp {
+                x: loc.x,
+                y: loc.y,
+                button: 1,
+            })
         }
         CGEventType::OtherMouseDown => {
             let loc = unsafe { CGEventGetLocation(event) };
-            Some(MacOSEventType::MouseDown { x: loc.x, y: loc.y, button: 2 })
+            Some(MacOSEventType::MouseDown {
+                x: loc.x,
+                y: loc.y,
+                button: 2,
+            })
         }
         CGEventType::OtherMouseUp => {
             let loc = unsafe { CGEventGetLocation(event) };
-            Some(MacOSEventType::MouseUp { x: loc.x, y: loc.y, button: 2 })
+            Some(MacOSEventType::MouseUp {
+                x: loc.x,
+                y: loc.y,
+                button: 2,
+            })
         }
         CGEventType::ScrollWheel => {
-            let delta_y = unsafe { CGEventGetIntegerValueField(event, SCROLL_WHEEL_EVENT_DELTA_AXIS_1) };
-            let delta_x = unsafe { CGEventGetIntegerValueField(event, SCROLL_WHEEL_EVENT_DELTA_AXIS_2) };
+            let delta_y =
+                unsafe { CGEventGetIntegerValueField(event, SCROLL_WHEEL_EVENT_DELTA_AXIS_1) };
+            let delta_x =
+                unsafe { CGEventGetIntegerValueField(event, SCROLL_WHEEL_EVENT_DELTA_AXIS_2) };
             Some(MacOSEventType::Scroll { delta_x, delta_y })
         }
         CGEventType::KeyDown => {
-            let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
+            let keycode =
+                unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
             Some(MacOSEventType::KeyDown { keycode })
         }
         CGEventType::KeyUp => {
-            let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
+            let keycode =
+                unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
             Some(MacOSEventType::KeyUp { keycode })
         }
         CGEventType::FlagsChanged => {
-            let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
+            let keycode =
+                unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) } as u16;
             let flags = unsafe { CGEventGetFlags(event) };
             Some(MacOSEventType::FlagsChanged { keycode, flags })
         }
@@ -301,9 +336,7 @@ fn run_event_tap(sender: Sender<MacOSEvent>) -> Result<(), String> {
     debug!("Event tap created successfully");
 
     // Create a run loop source from the event tap
-    let run_loop_source = unsafe {
-        CFMachPortCreateRunLoopSource(ptr::null(), tap, 0)
-    };
+    let run_loop_source = unsafe { CFMachPortCreateRunLoopSource(ptr::null(), tap, 0) };
 
     if run_loop_source.is_null() {
         error!("Failed to create run loop source");
@@ -311,9 +344,7 @@ fn run_event_tap(sender: Sender<MacOSEvent>) -> Result<(), String> {
     }
 
     // Wrap as CFRunLoopSource
-    let cf_source = unsafe {
-        CFRunLoopSource::wrap_under_create_rule(run_loop_source as *mut _)
-    };
+    let cf_source = unsafe { CFRunLoopSource::wrap_under_create_rule(run_loop_source as *mut _) };
 
     // Add the source to the current run loop
     let run_loop = CFRunLoop::get_current();
@@ -345,7 +376,10 @@ pub struct MacOSEventSubscription {
 
 impl MacOSEventSubscription {
     /// Receive with timeout.
-    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Result<MacOSEvent, crossbeam_channel::RecvTimeoutError> {
+    pub fn recv_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<MacOSEvent, crossbeam_channel::RecvTimeoutError> {
         self.receiver.recv_timeout(timeout)
     }
 }
@@ -423,13 +457,13 @@ pub fn keycode_to_name(keycode: u16) -> String {
         0x32 => "`".into(),
         0x33 => "Backspace".into(),
         0x35 => "Escape".into(),
-        0x37 => "MetaLeft".into(),  // Command
+        0x37 => "MetaLeft".into(), // Command
         0x38 => "ShiftLeft".into(),
         0x39 => "CapsLock".into(),
-        0x3A => "Alt".into(),       // Option
+        0x3A => "Alt".into(), // Option
         0x3B => "ControlLeft".into(),
         0x3C => "ShiftRight".into(),
-        0x3D => "AltGr".into(),     // Right Option
+        0x3D => "AltGr".into(), // Right Option
         0x3E => "ControlRight".into(),
         0x3F => "Function".into(),
         0x60 => "F5".into(),
@@ -479,4 +513,3 @@ pub fn keycode_to_name(keycode: u16) -> String {
         _ => format!("Unknown(0x{:02X})", keycode),
     }
 }
-

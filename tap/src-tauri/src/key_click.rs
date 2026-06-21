@@ -90,7 +90,11 @@ impl Default for KeyClickConfig {
 }
 
 fn is_az_key(key: &str) -> bool {
-    key.len() == 1 && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+    key.len() == 1
+        && key
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_alphabetic())
 }
 
 pub fn start_key_click_runner(
@@ -110,7 +114,16 @@ pub fn start_key_click_runner(
     let count_clone = click_count.clone();
 
     let thread = thread::spawn(move || {
-        run_loop(config, input_hook, injector, get_mouse_position, stop_clone, event_tx, running_clone, count_clone);
+        run_loop(
+            config,
+            input_hook,
+            injector,
+            get_mouse_position,
+            stop_clone,
+            event_tx,
+            running_clone,
+            count_clone,
+        );
     });
 
     KeyClickHandle {
@@ -138,7 +151,10 @@ fn run_loop(
     running: Arc<AtomicBool>,
     click_count: Arc<AtomicU64>,
 ) {
-    info!("Key-click started (interval={}ms, hold_delay={}ms)", config.interval_ms, config.hold_delay_ms);
+    info!(
+        "Key-click started (interval={}ms, hold_delay={}ms)",
+        config.interval_ms, config.hold_delay_ms
+    );
     let _ = event_tx.send(KeyClickEvent::Started);
 
     let hold_delay = Duration::from_millis(config.hold_delay_ms);
@@ -157,7 +173,7 @@ fn run_loop(
             match &raw_event.event {
                 InputEventType::KeyDown { key } => {
                     debug!(key, "KeyDown received");
-                    
+
                     // Space stops immediately
                     if key == "Space" {
                         info!("Key-click stopped by Space");
@@ -180,7 +196,7 @@ fn run_loop(
                 }
                 InputEventType::KeyUp { key } => {
                     debug!(key, "KeyUp received");
-                    
+
                     // Clear active key if it matches
                     if let Some(ref state) = active {
                         if state.key.eq_ignore_ascii_case(key) {
@@ -220,7 +236,11 @@ fn do_click(
     click_count: &AtomicU64,
     event_tx: &Sender<KeyClickEvent>,
 ) -> bool {
-    let action = Action::Click { x, y, button: MouseButton::Left };
+    let action = Action::Click {
+        x,
+        y,
+        button: MouseButton::Left,
+    };
     match injector.inject(&action) {
         Ok(()) => {
             let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -242,8 +262,9 @@ fn cleanup(
 ) {
     running.store(false, Ordering::SeqCst);
     let total = click_count.load(Ordering::SeqCst);
-    let _ = event_tx.send(KeyClickEvent::Stopped { total_clicks: total });
+    let _ = event_tx.send(KeyClickEvent::Stopped {
+        total_clicks: total,
+    });
     input_hook.stop();
     info!("Key-click exited, total clicks: {}", total);
 }
-

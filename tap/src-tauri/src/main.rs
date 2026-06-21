@@ -11,7 +11,7 @@ use tap_core::{
     load_last_used, load_profile, parse_yaml, save_last_used, save_profile, validate_profile,
     Action, ConditionColor, EngineCommand, EngineEvent, EngineState, InjectorExecutor,
     MouseButtonRaw, PlatformConditionProvider, Player, Profile, RawEventType, Recorder,
-    RecorderState, Repeat, RunConfig, Timeline, TimedAction, ValidationError, VariableStore,
+    RecorderState, Repeat, RunConfig, TimedAction, Timeline, ValidationError, VariableStore,
 };
 use tap_platform::{
     get_pixel_color, is_window_focused, list_windows, set_dpi_aware, start_input_hook,
@@ -221,8 +221,8 @@ fn start_key_click(
         // Use platform-specific mouse position query
         #[cfg(target_os = "windows")]
         {
-            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
             use windows::Win32::Foundation::POINT;
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
             let mut point = POINT::default();
             unsafe {
                 let _ = GetCursorPos(&mut point);
@@ -250,7 +250,7 @@ fn start_key_click(
 
     let actual_interval_ms = interval_ms.max(20); // Minimum 20ms interval
     let actual_hold_delay_ms = hold_delay_ms.unwrap_or(150); // Default 150ms hold delay
-    
+
     let config = KeyClickConfig {
         interval_ms: actual_interval_ms,
         hold_delay_ms: actual_hold_delay_ms,
@@ -299,27 +299,30 @@ fn get_key_click_status(state: State<'_, Mutex<AppState>>) -> KeyClickStatus {
 // === Profile Persistence Commands ===
 
 #[tauri::command]
-fn cmd_save_profile(state: State<'_, Mutex<AppState>>, name: Option<String>) -> Result<String, String> {
+fn cmd_save_profile(
+    state: State<'_, Mutex<AppState>>,
+    name: Option<String>,
+) -> Result<String, String> {
     let mut app_state = state.lock().unwrap();
-    
+
     if let Some(n) = name {
         app_state.profile.name = n;
     }
-    
+
     let path = save_profile(&app_state.profile).map_err(|e| e.to_string())?;
     let _ = save_last_used(&app_state.profile.name);
-    
+
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 fn cmd_load_profile(state: State<'_, Mutex<AppState>>, name: String) -> Result<Profile, String> {
     let profile = load_profile(&name).map_err(|e| e.to_string())?;
-    
+
     let mut app_state = state.lock().unwrap();
     app_state.profile = profile.clone();
     let _ = save_last_used(&name);
-    
+
     Ok(profile)
 }
 
@@ -414,7 +417,10 @@ fn stop_recording(state: State<'_, Mutex<AppState>>) -> Result<Timeline, String>
         _ => Timeline { actions: vec![] },
     };
 
-    info!("Recording stopped, {} actions captured", timeline.actions.len());
+    info!(
+        "Recording stopped, {} actions captured",
+        timeline.actions.len()
+    );
 
     // Update the profile with the recorded timeline
     app_state.profile.timeline = timeline.clone();
@@ -474,23 +480,20 @@ async fn open_picker_window(app: AppHandle) -> Result<(), String> {
     }
 
     // Create a new fullscreen transparent overlay window
-    let picker_window = WebviewWindowBuilder::new(
-        &app,
-        "picker",
-        WebviewUrl::App("picker.html".into()),
-    )
-    .title("Pick Position")
-    .fullscreen(true)
-    .transparent(true)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .focused(true)
-    .build()
-    .map_err(|e| format!("Failed to create picker window: {}", e))?;
+    let picker_window =
+        WebviewWindowBuilder::new(&app, "picker", WebviewUrl::App("picker.html".into()))
+            .title("Pick Position")
+            .fullscreen(true)
+            .transparent(true)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(true)
+            .build()
+            .map_err(|e| format!("Failed to create picker window: {}", e))?;
 
     info!("Picker window opened");
-    
+
     // The picker window will handle its own close when position is selected
     let _ = picker_window;
 
@@ -500,7 +503,9 @@ async fn open_picker_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn close_picker_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("picker") {
-        window.close().map_err(|e| format!("Failed to close picker window: {}", e))?;
+        window
+            .close()
+            .map_err(|e| format!("Failed to close picker window: {}", e))?;
         info!("Picker window closed");
     }
     Ok(())
@@ -526,8 +531,14 @@ async fn picker_position_selected(app: AppHandle, x: i32, y: i32) -> Result<(), 
     );
 
     // Emit the physical coordinates to the main window
-    app.emit("position-picked", PositionPickedEvent { x: physical_x, y: physical_y })
-        .map_err(|e| format!("Failed to emit position-picked: {}", e))?;
+    app.emit(
+        "position-picked",
+        PositionPickedEvent {
+            x: physical_x,
+            y: physical_y,
+        },
+    )
+    .map_err(|e| format!("Failed to emit position-picked: {}", e))?;
 
     Ok(())
 }
@@ -659,7 +670,7 @@ fn cmd_import_yaml(
 ) -> Result<Profile, String> {
     // Parse and validate
     let dsl_profile = parse_yaml(&yaml_content).map_err(|e| e.to_string())?;
-    
+
     // Validate
     validate_profile(&dsl_profile).map_err(|errors| {
         errors
@@ -668,14 +679,14 @@ fn cmd_import_yaml(
             .collect::<Vec<_>>()
             .join("; ")
     })?;
-    
+
     // Convert to Profile
     let profile = import_from_yaml(&yaml_content).map_err(|e| e.to_string())?;
-    
+
     // Update app state
     let mut app_state = state.lock().unwrap();
     app_state.profile = profile.clone();
-    
+
     Ok(profile)
 }
 
@@ -688,16 +699,14 @@ fn cmd_validate_yaml(yaml_content: String) -> Result<(), Vec<ValidationErrorResp
             line: None,
         }]
     })?;
-    
-    validate_profile(&dsl_profile).map_err(|errors| {
-        errors.into_iter().map(|e| e.into()).collect()
-    })
+
+    validate_profile(&dsl_profile).map_err(|errors| errors.into_iter().map(|e| e.into()).collect())
 }
 
 #[tauri::command]
 fn cmd_get_macro_variables(state: State<'_, Mutex<AppState>>) -> Vec<VariableDefinitionResponse> {
     let app_state = state.lock().unwrap();
-    
+
     // Export to YAML and parse to get variable definitions
     if let Ok(yaml) = export_to_yaml(&app_state.profile) {
         if let Ok(dsl_profile) = parse_yaml(&yaml) {
@@ -717,7 +726,7 @@ fn cmd_get_macro_variables(state: State<'_, Mutex<AppState>>) -> Vec<VariableDef
                 .collect();
         }
     }
-    
+
     Vec::new()
 }
 
@@ -727,7 +736,7 @@ fn cmd_set_runtime_variables(
     vars: std::collections::HashMap<String, serde_json::Value>,
 ) -> Result<(), String> {
     let mut app_state = state.lock().unwrap();
-    
+
     for (key, value) in vars {
         if let Some(s) = value.as_str() {
             app_state.variables.set_variable(&key, s.to_string());
@@ -737,7 +746,7 @@ fn cmd_set_runtime_variables(
             app_state.variables.set_variable(&key, b);
         }
     }
-    
+
     Ok(())
 }
 
@@ -747,23 +756,26 @@ fn cmd_get_runtime_variables(
 ) -> std::collections::HashMap<String, serde_json::Value> {
     let app_state = state.lock().unwrap();
     let mut result = std::collections::HashMap::new();
-    
+
     for (key, value) in app_state.variables.all_variables() {
         let json_val = match value {
             tap_core::VariableValue::String(s) => serde_json::Value::String(s.clone()),
-            tap_core::VariableValue::Number(n) => {
-                serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)))
-            }
+            tap_core::VariableValue::Number(n) => serde_json::Value::Number(
+                serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
+            ),
             tap_core::VariableValue::Boolean(b) => serde_json::Value::Bool(*b),
         };
         result.insert(key.clone(), json_val);
     }
-    
+
     // Also include counters
     for (key, value) in app_state.variables.all_counters() {
-        result.insert(key.clone(), serde_json::Value::Number(serde_json::Number::from(value)));
+        result.insert(
+            key.clone(),
+            serde_json::Value::Number(serde_json::Number::from(value)),
+        );
     }
-    
+
     result
 }
 
@@ -791,8 +803,9 @@ impl PlatformConditionProvider for TauriPlatformProvider {
 fn init_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "tap_tauri=debug,tap_core=debug,tap_platform=debug,tauri=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "tap_tauri=debug,tap_core=debug,tap_platform=debug,tauri=info".into()
+            }),
         )
         .try_init();
 }
@@ -908,9 +921,16 @@ fn poll_events(app: AppHandle) {
                 let core_event = convert_input_event(&raw_event.event, last_pos);
 
                 // Push to recorder
-                if let Some(recorder_event) = app_state.recorder.push_event(raw_event.timestamp_ms, core_event) {
+                if let Some(recorder_event) = app_state
+                    .recorder
+                    .push_event(raw_event.timestamp_ms, core_event)
+                {
                     // Emit recording status to frontend
-                    if let tap_core::RecorderEvent::EventCaptured { event_count, duration_ms } = recorder_event {
+                    if let tap_core::RecorderEvent::EventCaptured {
+                        event_count,
+                        duration_ms,
+                    } = recorder_event
+                    {
                         let status = RecordingStatus {
                             state: app_state.recorder.state(),
                             event_count,
@@ -980,7 +1000,12 @@ fn poll_events(app: AppHandle) {
         // Clean up handle if stopped (separate lock acquisition)
         if should_cleanup {
             let mut app_state = state.lock().unwrap();
-            if app_state.key_click_handle.as_ref().map(|h| !h.is_running()).unwrap_or(false) {
+            if app_state
+                .key_click_handle
+                .as_ref()
+                .map(|h| !h.is_running())
+                .unwrap_or(false)
+            {
                 app_state.key_click_handle = None;
                 debug!("Key-click handle cleaned up");
             }
@@ -993,7 +1018,11 @@ fn convert_input_event(event: &InputEventType, last_pos: (i32, i32)) -> RawEvent
     match event {
         InputEventType::MouseMove { x, y } => RawEventType::MouseMove { x: *x, y: *y },
         InputEventType::MouseDown { x, y, button } => {
-            let (px, py) = if *x == 0 && *y == 0 { last_pos } else { (*x, *y) };
+            let (px, py) = if *x == 0 && *y == 0 {
+                last_pos
+            } else {
+                (*x, *y)
+            };
             RawEventType::MouseDown {
                 x: px,
                 y: py,
@@ -1001,7 +1030,11 @@ fn convert_input_event(event: &InputEventType, last_pos: (i32, i32)) -> RawEvent
             }
         }
         InputEventType::MouseUp { x, y, button } => {
-            let (px, py) = if *x == 0 && *y == 0 { last_pos } else { (*x, *y) };
+            let (px, py) = if *x == 0 && *y == 0 {
+                last_pos
+            } else {
+                (*x, *y)
+            };
             RawEventType::MouseUp {
                 x: px,
                 y: py,
