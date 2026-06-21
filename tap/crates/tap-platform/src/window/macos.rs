@@ -22,4 +22,3 @@ pub fn get_window_rect(handle: usize) -> Option<WindowRect> {
     // TODO: Implement
     None
 }
-

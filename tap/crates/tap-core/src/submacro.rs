@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::dsl::{DslProfile, DslValue};
+use crate::dsl::{DslValue, MacroDocument};
 use crate::storage::load_profile;
 use crate::variables::{VariableStore, VariableValue};
 use crate::Profile;
@@ -147,7 +147,7 @@ pub fn prepare_submacro_args(
 /// The child inherits the parent's variables but can override them with args.
 pub fn create_child_variable_store(
     parent: &VariableStore,
-    profile: &DslProfile,
+    profile: &MacroDocument,
     args: HashMap<String, VariableValue>,
 ) -> VariableStore {
     let mut child = parent.clone();
@@ -219,10 +219,7 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("a".to_string(), DslValue::Int(42));
         args.insert("b".to_string(), DslValue::String("{{ x }}".to_string()));
-        args.insert(
-            "c".to_string(),
-            DslValue::String("{{ count }}".to_string()),
-        );
+        args.insert("c".to_string(), DslValue::String("{{ count }}".to_string()));
 
         let result = prepare_submacro_args(&args, &parent).unwrap();
 
@@ -231,4 +228,3 @@ mod tests {
         assert!(matches!(result.get("c"), Some(VariableValue::Number(n)) if *n == 5.0));
     }
 }
-

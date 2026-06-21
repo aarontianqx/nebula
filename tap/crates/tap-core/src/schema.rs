@@ -3,9 +3,7 @@
 //! Provides validation logic to ensure imported YAML profiles are valid
 //! before converting them to internal Profile format.
 
-use crate::dsl::{
-    DslAction, DslCondition, DslProfile, DslRunConfig, DslTimedAction, DslValue,
-};
+use crate::dsl::{DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue, MacroDocument};
 use serde::{Deserialize, Serialize};
 
 /// Validation error with context.
@@ -32,8 +30,8 @@ impl std::fmt::Display for ValidationError {
 /// Validation result.
 pub type ValidationResult = Result<(), Vec<ValidationError>>;
 
-/// Validate a DslProfile.
-pub fn validate_profile(profile: &DslProfile) -> ValidationResult {
+/// Validate a [`MacroDocument`].
+pub fn validate_profile(profile: &MacroDocument) -> ValidationResult {
     let mut errors = Vec::new();
 
     // Validate name
@@ -63,7 +61,7 @@ pub fn validate_profile(profile: &DslProfile) -> ValidationResult {
     validate_run_config(&profile.run, "run", &mut errors);
 
     // Validate variables
-    for (name, _var_def) in &profile.variables {
+    for name in profile.variables.keys() {
         if name.trim().is_empty() {
             errors.push(ValidationError {
                 path: format!("variables.{}", name),
@@ -425,14 +423,15 @@ fn is_valid_compare_op(op: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{DslMouseButton, DslProfile, DslRunConfig, DslTimedAction, DslValue};
+    use crate::dsl::{DslMouseButton, DslRunConfig, DslTimedAction, DslValue, MacroDocument};
 
-    fn minimal_profile() -> DslProfile {
-        DslProfile {
+    fn minimal_profile() -> MacroDocument {
+        MacroDocument {
             name: "Test".to_string(),
             description: None,
             version: "1.0".to_string(),
             author: None,
+            tags: Vec::new(),
             variables: std::collections::HashMap::new(),
             target_window: None,
             timeline: vec![DslTimedAction {
@@ -500,4 +499,3 @@ mod tests {
         assert!(!is_valid_identifier(""));
     }
 }
-

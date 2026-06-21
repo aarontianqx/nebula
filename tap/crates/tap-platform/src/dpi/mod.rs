@@ -69,4 +69,3 @@ impl ScaledCoords {
         (self.physical_x, self.physical_y)
     }
 }
-

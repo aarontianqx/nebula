@@ -10,4 +10,3 @@ pub fn get_pixel_color(x: i32, y: i32) -> Option<Color> {
     // TODO: Implement using Core Graphics
     None
 }
-

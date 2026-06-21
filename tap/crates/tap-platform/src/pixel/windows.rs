@@ -3,9 +3,9 @@
 use super::Color;
 use std::ptr;
 use windows_sys::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-    GetDC, GetDIBits, GetPixel, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
-    BI_RGB, CLR_INVALID, DIB_RGB_COLORS, RGBQUAD, SRCCOPY,
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    GetPixel, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CLR_INVALID,
+    DIB_RGB_COLORS, RGBQUAD, SRCCOPY,
 };
 
 pub fn get_pixel_color(x: i32, y: i32) -> Option<Color> {
@@ -120,4 +120,3 @@ fn get_pixel_screenshot(x: i32, y: i32) -> Option<Color> {
         Some(Color::new(pixel[2], pixel[1], pixel[0]))
     }
 }
-

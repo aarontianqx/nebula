@@ -145,4 +145,3 @@ mod tests {
         assert_eq!(config.throttle_ms, 50);
     }
 }
-

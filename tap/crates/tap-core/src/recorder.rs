@@ -28,9 +28,10 @@ impl Default for RecorderConfig {
 }
 
 /// State of the recorder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecorderState {
     /// Not recording.
+    #[default]
     Idle,
     /// Recording in progress.
     Recording,
@@ -38,19 +39,19 @@ pub enum RecorderState {
     Paused,
 }
 
-impl Default for RecorderState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
 /// Events emitted by the recorder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecorderEvent {
     /// State changed.
-    StateChanged { old: RecorderState, new: RecorderState },
+    StateChanged {
+        old: RecorderState,
+        new: RecorderState,
+    },
     /// Event captured (for UI feedback).
-    EventCaptured { event_count: usize, duration_ms: u64 },
+    EventCaptured {
+        event_count: usize,
+        duration_ms: u64,
+    },
     /// Recording completed, timeline generated.
     RecordingCompleted { timeline: Timeline },
 }
@@ -65,12 +66,30 @@ pub struct BufferedEvent {
 /// Raw event types from input hook.
 #[derive(Debug, Clone)]
 pub enum RawEventType {
-    MouseMove { x: i32, y: i32 },
-    MouseDown { x: i32, y: i32, button: MouseButtonRaw },
-    MouseUp { x: i32, y: i32, button: MouseButtonRaw },
-    Scroll { delta_x: i32, delta_y: i32 },
-    KeyDown { key: String },
-    KeyUp { key: String },
+    MouseMove {
+        x: i32,
+        y: i32,
+    },
+    MouseDown {
+        x: i32,
+        y: i32,
+        button: MouseButtonRaw,
+    },
+    MouseUp {
+        x: i32,
+        y: i32,
+        button: MouseButtonRaw,
+    },
+    Scroll {
+        delta_x: i32,
+        delta_y: i32,
+    },
+    KeyDown {
+        key: String,
+    },
+    KeyUp {
+        key: String,
+    },
 }
 
 /// Raw mouse button (from platform layer).
@@ -101,7 +120,9 @@ pub struct Recorder {
     start_time: Option<Instant>,
     pause_time: Option<Instant>,
     total_paused_ms: u64,
-    last_move_time_ms: u64,
+    /// Timestamp of the last recorded mouse-move sample. `None` until the first
+    /// move is captured so that the initial position is never throttled away.
+    last_move_time_ms: Option<u64>,
     last_mouse_pos: (i32, i32),
 }
 
@@ -115,7 +136,7 @@ impl Recorder {
             start_time: None,
             pause_time: None,
             total_paused_ms: 0,
-            last_move_time_ms: 0,
+            last_move_time_ms: None,
             last_mouse_pos: (0, 0),
         }
     }
@@ -158,7 +179,7 @@ impl Recorder {
         self.start_time = Some(Instant::now());
         self.pause_time = None;
         self.total_paused_ms = 0;
-        self.last_move_time_ms = 0;
+        self.last_move_time_ms = None;
         self.last_mouse_pos = (0, 0);
 
         info!("Recording started");
@@ -238,18 +259,16 @@ impl Recorder {
             if !self.config.record_mouse_move {
                 return None;
             }
-            // Sample rate limiting
-            if adjusted_ts < self.last_move_time_ms + self.config.move_sample_interval_ms {
-                // Still update last known position for button events
-                self.last_mouse_pos = (*x, *y);
-                return None;
+            // Sample-rate limiting: always record the first move so the initial
+            // cursor position is captured, then throttle subsequent samples.
+            if let Some(last) = self.last_move_time_ms {
+                if adjusted_ts < last + self.config.move_sample_interval_ms {
+                    // Still update last known position for button events.
+                    self.last_mouse_pos = (*x, *y);
+                    return None;
+                }
             }
-            self.last_move_time_ms = adjusted_ts;
-            self.last_mouse_pos = (*x, *y);
-        }
-
-        // Update mouse position from move events
-        if let RawEventType::MouseMove { x, y } = &event {
+            self.last_move_time_ms = Some(adjusted_ts);
             self.last_mouse_pos = (*x, *y);
         }
 
@@ -391,4 +410,3 @@ mod tests {
         assert_eq!(recorder.event_count(), 2);
     }
 }
-

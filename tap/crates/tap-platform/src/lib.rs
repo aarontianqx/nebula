@@ -21,10 +21,10 @@
 //! - `pixel` - Pixel color reading
 //! - `dpi` - DPI scaling utilities
 
-mod error;
-mod injector;
 mod dpi;
+mod error;
 mod events;
+mod injector;
 mod input_hook;
 mod mouse_tracker;
 mod pixel;
@@ -46,8 +46,8 @@ pub use input_hook::{
 
 // Re-export mouse tracker
 pub use mouse_tracker::{
-    start_mouse_tracker, MousePosition, MouseTrackerCommand, MouseTrackerConfig,
-    MouseTrackerEvent, MouseTrackerHandle,
+    start_mouse_tracker, MousePosition, MouseTrackerCommand, MouseTrackerConfig, MouseTrackerEvent,
+    MouseTrackerHandle,
 };
 
 // Re-export pixel detection

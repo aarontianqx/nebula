@@ -10,8 +10,8 @@ use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindowRect as WinGetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    EnumWindows, GetForegroundWindow, GetWindowRect as WinGetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
 };
 
 pub fn get_foreground_window() -> Option<WindowInfo> {
@@ -150,4 +150,3 @@ pub fn get_window_rect(handle: usize) -> Option<WindowRect> {
         })
     }
 }
-

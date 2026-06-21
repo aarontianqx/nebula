@@ -39,7 +39,7 @@ impl CompareOp {
 }
 
 /// RGB color for pixel conditions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConditionColor {
     pub r: u8,
     pub g: u8,
@@ -65,14 +65,8 @@ impl ConditionColor {
     }
 }
 
-impl Default for ConditionColor {
-    fn default() -> Self {
-        Self { r: 0, g: 0, b: 0 }
-    }
-}
-
 /// A condition that can be evaluated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Condition {
     /// Check if a window with the given title/process is focused.
     WindowFocused {
@@ -98,6 +92,7 @@ pub enum Condition {
         value: i32,
     },
     /// Always true.
+    #[default]
     Always,
     /// Always false.
     Never,
@@ -107,12 +102,6 @@ pub enum Condition {
     Or(Vec<Condition>),
     /// Logical NOT of a condition.
     Not(Box<Condition>),
-}
-
-impl Default for Condition {
-    fn default() -> Self {
-        Condition::Always
-    }
 }
 
 /// Result of condition evaluation.
@@ -306,4 +295,3 @@ mod tests {
         assert!(eval.evaluate(&cond).is_satisfied());
     }
 }
-

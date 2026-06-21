@@ -11,9 +11,10 @@ use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 /// Engine state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EngineState {
     /// Idle, waiting for start command.
+    #[default]
     Idle,
     /// Arming (countdown before execution).
     Arming,
@@ -23,12 +24,6 @@ pub enum EngineState {
     Paused,
     /// Stopped (terminal state for current run).
     Stopped,
-}
-
-impl Default for EngineState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// Commands sent to the player thread.
@@ -74,7 +69,10 @@ pub enum EngineEvent {
     /// Counter value changed.
     CounterChanged { key: String, value: i32 },
     /// Target window not focused (pausing).
-    TargetWindowUnfocused { title: Option<String>, process: Option<String> },
+    TargetWindowUnfocused {
+        title: Option<String>,
+        process: Option<String>,
+    },
     /// Target window focused again (resuming).
     TargetWindowFocused,
 }
@@ -174,18 +172,10 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
     fn run_loop(self) {
         info!("Player thread started");
 
-        loop {
-            // Wait for a command
-            match self.cmd_rx.recv() {
-                Ok(cmd) => {
-                    if !self.handle_command(cmd) {
-                        break;
-                    }
-                }
-                Err(_) => {
-                    // Channel closed, exit
-                    break;
-                }
+        // Wait for commands until the channel closes or a command requests exit.
+        while let Ok(cmd) = self.cmd_rx.recv() {
+            if !self.handle_command(cmd) {
+                break;
             }
         }
 
@@ -390,7 +380,10 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         };
 
         if let Some(old) = old {
-            self.emit(EngineEvent::StateChanged { old, new: new_state });
+            self.emit(EngineEvent::StateChanged {
+                old,
+                new: new_state,
+            });
         }
     }
 
@@ -404,10 +397,9 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
     fn check_target_window(&self, profile: &Profile) -> bool {
         if let Some(ref target) = profile.target_window {
             if target.pause_when_unfocused {
-                return self.platform.is_window_focused(
-                    target.title.as_deref(),
-                    target.process.as_deref(),
-                );
+                return self
+                    .platform
+                    .is_window_focused(target.title.as_deref(), target.process.as_deref());
             }
         }
         true // No target window binding, always OK
@@ -645,4 +637,3 @@ where
 pub trait ActionExecutorAdapter {
     fn inject(&self, action: &Action) -> Result<(), String>;
 }
-

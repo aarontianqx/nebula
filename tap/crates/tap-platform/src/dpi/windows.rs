@@ -15,7 +15,7 @@ pub fn set_dpi_aware() {
         unsafe {
             // Define constants inline to avoid windows-sys dependency just for this
             const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
-            
+
             #[link(name = "user32")]
             extern "system" {
                 fn SetProcessDpiAwarenessContext(value: isize) -> i32;
@@ -44,4 +44,3 @@ pub fn get_primary_scale_factor() -> f64 {
         dpi as f64 / 96.0
     }
 }
-

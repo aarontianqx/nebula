@@ -15,4 +15,3 @@ pub enum PlatformError {
 
 /// Result type for platform operations.
 pub type PlatformResult<T> = Result<T, PlatformError>;
-

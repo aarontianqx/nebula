@@ -1,0 +1,74 @@
+name: CI tap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tap/**"
+      - ".github/workflows/tap-ci.yml"
+  pull_request:
+    paths:
+      - "tap/**"
+      - ".github/workflows/tap-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tap-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: tap-core (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tap -> target
+
+      - name: Format check (workspace)
+        working-directory: tap
+        run: cargo fmt --all --check
+
+      - name: Clippy (tap-core)
+        working-directory: tap
+        run: cargo clippy -p tap-core --all-targets -- -D warnings
+
+      - name: Test (tap-core)
+        working-directory: tap
+        run: cargo test -p tap-core
+
+  platform:
+    name: tap-platform + app (macOS compile + lint)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tap -> target
+
+      - name: Clippy (tap-platform)
+        working-directory: tap
+        run: cargo clippy -p tap-platform --all-targets -- -D warnings
+
+      - name: Check (tap-tauri)
+        working-directory: tap
+        run: cargo check -p tap-tauri

@@ -17,7 +17,7 @@ mod windows;
 mod macos;
 
 /// RGB color value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -61,12 +61,6 @@ impl Color {
     /// Tolerance is the maximum allowed sum of channel differences.
     pub fn matches(&self, other: &Color, tolerance: u8) -> bool {
         self.difference(other) <= tolerance as u32
-    }
-}
-
-impl Default for Color {
-    fn default() -> Self {
-        Self { r: 0, g: 0, b: 0 }
     }
 }
 
@@ -138,4 +132,3 @@ mod tests {
         assert!(!c1.matches(&c2, 4));
     }
 }
-

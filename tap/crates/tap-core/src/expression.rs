@@ -84,12 +84,12 @@ impl ExpressionEngine {
         variables: &VariableStore,
     ) -> Result<i32, ExpressionError> {
         let result = self.evaluate(expr, variables)?;
-        result.as_i32().ok_or_else(|| {
-            ExpressionError::TypeMismatch {
+        result
+            .as_i32()
+            .ok_or_else(|| ExpressionError::TypeMismatch {
                 expected: "integer".to_string(),
                 got: result.type_name().to_string(),
-            }
-        })
+            })
     }
 
     /// Evaluate an expression and return as string.
@@ -109,12 +109,12 @@ impl ExpressionEngine {
         variables: &VariableStore,
     ) -> Result<bool, ExpressionError> {
         let result = self.evaluate(expr, variables)?;
-        result.as_bool().ok_or_else(|| {
-            ExpressionError::TypeMismatch {
+        result
+            .as_bool()
+            .ok_or_else(|| ExpressionError::TypeMismatch {
                 expected: "boolean".to_string(),
                 got: result.type_name().to_string(),
-            }
-        })
+            })
     }
 }
 
@@ -346,7 +346,9 @@ mod tests {
         let mut vars = VariableStore::new();
         vars.set_variable("name", "World");
 
-        let result = engine.evaluate_to_string("\"Hello, \" + name", &vars).unwrap();
+        let result = engine
+            .evaluate_to_string("\"Hello, \" + name", &vars)
+            .unwrap();
         assert_eq!(result, "Hello, World");
     }
 
@@ -370,8 +372,9 @@ mod tests {
         vars.set_variable("x", 100);
         vars.set_counter("count", 5);
 
-        let result = resolve_expressions("Click at {{ x }}, count: {{ count + 1 }}", &vars, &engine)
-            .unwrap();
+        let result =
+            resolve_expressions("Click at {{ x }}, count: {{ count + 1 }}", &vars, &engine)
+                .unwrap();
         assert_eq!(result, "Click at 100, count: 6");
     }
 
@@ -385,4 +388,3 @@ mod tests {
         assert!(!is_simple_identifier(""));
     }
 }
-

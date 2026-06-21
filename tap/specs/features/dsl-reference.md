@@ -11,6 +11,7 @@ name: My Macro
 description: Optional description
 version: "1.0"
 author: user
+tags: [example, demo]
 
 variables:
   # Parameterized variables
@@ -43,6 +44,7 @@ Examples of tool modes:
 | `description` | string | No | Human-readable description |
 | `version` | string | No | DSL schema version (default: "1.0") |
 | `author` | string | No | Author name |
+| `tags` | string[] | No | Free-form tags for organization and filtering |
 
 ## Variables
 

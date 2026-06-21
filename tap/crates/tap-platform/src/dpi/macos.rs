@@ -19,4 +19,3 @@ pub fn get_primary_scale_factor() -> f64 {
     // TODO: Could use NSScreen.backingScaleFactor for accurate per-display info
     1.0
 }
-

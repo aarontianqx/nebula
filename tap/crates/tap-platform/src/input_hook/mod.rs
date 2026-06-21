@@ -34,9 +34,17 @@ pub enum InputEventType {
     /// Mouse moved to position.
     MouseMove { x: i32, y: i32 },
     /// Mouse button pressed.
-    MouseDown { x: i32, y: i32, button: MouseButtonType },
+    MouseDown {
+        x: i32,
+        y: i32,
+        button: MouseButtonType,
+    },
     /// Mouse button released.
-    MouseUp { x: i32, y: i32, button: MouseButtonType },
+    MouseUp {
+        x: i32,
+        y: i32,
+        button: MouseButtonType,
+    },
     /// Mouse wheel scrolled.
     Scroll { delta_x: i32, delta_y: i32 },
     /// Key pressed.
@@ -83,7 +91,7 @@ impl InputHookHandle {
 
     /// Check if the hook thread is still running.
     pub fn is_running(&self) -> bool {
-        self.thread.as_ref().map_or(false, |t| !t.is_finished())
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
 }
 
@@ -129,4 +137,3 @@ pub fn start_input_hook() -> InputHookHandle {
         thread: Some(thread),
     }
 }
-

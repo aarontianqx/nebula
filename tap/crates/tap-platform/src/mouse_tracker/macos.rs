@@ -20,12 +20,12 @@ pub fn start_tracker(
     info!("Mouse tracker thread started (macOS native, using global listener)");
 
     let throttle_duration = Duration::from_millis(config.throttle_ms);
-    
+
     // Subscribe to the global event listener
     let subscription = subscribe_events();
-    
+
     let mut last_emit_time = Instant::now();
-    
+
     while running.load(Ordering::SeqCst) {
         match subscription.recv_timeout(Duration::from_millis(100)) {
             Ok(event) => {
@@ -52,4 +52,3 @@ pub fn start_tracker(
     running.store(false, Ordering::SeqCst);
     info!("Mouse tracker thread exiting");
 }
-

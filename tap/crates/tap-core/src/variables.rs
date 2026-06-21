@@ -221,9 +221,7 @@ impl VariableStore {
                     VariableType::String => {
                         VariableValue::String(json_val.as_str().unwrap_or("").to_string())
                     }
-                    VariableType::Number => {
-                        VariableValue::Number(json_val.as_f64().unwrap_or(0.0))
-                    }
+                    VariableType::Number => VariableValue::Number(json_val.as_f64().unwrap_or(0.0)),
                     VariableType::Boolean => {
                         VariableValue::Boolean(json_val.as_bool().unwrap_or(false))
                     }
@@ -270,11 +268,11 @@ impl<'a> VariableResolver<'a> {
         while let Some(c) = chars.next() {
             if c == '{' && chars.peek() == Some(&'{') {
                 chars.next(); // consume second '{'
-                
+
                 // Find the closing }}
                 let mut var_name = String::new();
                 let mut found_close = false;
-                
+
                 while let Some(c2) = chars.next() {
                     if c2 == '}' && chars.peek() == Some(&'}') {
                         chars.next(); // consume second '}'
@@ -289,7 +287,7 @@ impl<'a> VariableResolver<'a> {
                 }
 
                 let var_name = var_name.trim();
-                
+
                 // Try to get from variables first, then counters
                 if let Some(value) = self.store.get_variable(var_name) {
                     result.push_str(&value.as_string());
@@ -335,12 +333,12 @@ impl<'a> VariableResolver<'a> {
     /// Resolve a DslValue to i32.
     pub fn resolve_to_i32(&self, value: &DslValue) -> Result<i32, VariableError> {
         let resolved = self.resolve_dsl_value(value)?;
-        resolved.as_i32().ok_or_else(|| {
-            VariableError::TypeMismatch {
+        resolved
+            .as_i32()
+            .ok_or_else(|| VariableError::TypeMismatch {
                 expected: "number".to_string(),
                 got: format!("{:?}", resolved),
-            }
-        })
+            })
     }
 
     /// Resolve a DslValue to string.
@@ -411,7 +409,7 @@ mod tests {
 
         store.set_variable("str", "hello");
         store.set_variable("num", 42);
-        store.set_variable("float", 3.14);
+        store.set_variable("float", 1.5);
         store.set_variable("bool", true);
 
         assert_eq!(store.get_variable_string("str"), Some("hello".to_string()));
@@ -471,4 +469,3 @@ mod tests {
         assert!(matches!(resolved, DslValue::Int(100)));
     }
 }
-
