@@ -1,21 +1,46 @@
-//! macOS DPI handling implementation.
+//! macOS DPI / coordinate handling.
 //!
-//! macOS handles DPI scaling automatically through Retina display support.
-//! The system abstracts physical vs logical pixels, so we don't need
-//! manual DPI awareness like on Windows.
+//! macOS exposes a single *point*-based coordinate space across the APIs this
+//! crate uses: `CGEvent` injection (`enigo`), the recording event tap
+//! (`rdev`/`CGEventTap`), `CGWindowList` bounds and `CGWindowListCreateImage`
+//! all speak points (logical, density-independent). High-resolution ("Retina")
+//! displays are handled transparently by the window server.
+//!
+//! Therefore the canonical injection coordinate space on macOS is *points*, and
+//! no scaling is needed to convert browser CSS pixels (also points) into
+//! injection coordinates -- see [`browser_to_injection_scale`].
+//!
+//! [`get_primary_scale_factor`] still reports the true backing scale of the
+//! main display (e.g. 2.0 on Retina) for diagnostics and density-aware UI.
+
+use core_graphics::display::CGDisplay;
 
 /// Set DPI awareness (no-op on macOS).
 ///
-/// macOS handles DPI scaling automatically through Retina display support.
+/// macOS handles display scaling automatically; there is no per-process DPI
+/// awareness to opt into like on Windows.
 pub fn set_dpi_aware() {
-    // No-op: macOS handles this automatically
+    // No-op: macOS uses a point-based coordinate system end-to-end.
 }
 
-/// Get the current DPI scale factor.
+/// Backing scale factor of the main display (2.0 on Retina, 1.0 otherwise).
 ///
-/// On macOS, this returns 1.0 as the system handles scaling transparently.
-/// Note: For accurate per-display scale factors, use NSScreen.backingScaleFactor.
+/// Derived from the active display mode's pixel width versus its point width,
+/// which avoids a dependency on AppKit/`NSScreen`.
 pub fn get_primary_scale_factor() -> f64 {
-    // TODO: Could use NSScreen.backingScaleFactor for accurate per-display info
+    if let Some(mode) = CGDisplay::main().display_mode() {
+        let points = mode.width();
+        if points > 0 {
+            return mode.pixel_width() as f64 / points as f64;
+        }
+    }
+    1.0
+}
+
+/// Factor to convert browser CSS pixels (`window.screenX/Y`) into the OS
+/// injection coordinate space.
+///
+/// On macOS both spaces are points, so the factor is always `1.0`.
+pub fn browser_to_injection_scale() -> f64 {
     1.0
 }

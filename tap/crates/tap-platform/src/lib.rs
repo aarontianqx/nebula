@@ -34,7 +34,7 @@ mod window;
 pub use error::{PlatformError, PlatformResult};
 
 // Re-export DPI utilities
-pub use dpi::{get_primary_scale_factor, set_dpi_aware, ScaledCoords};
+pub use dpi::{browser_to_injection_scale, get_primary_scale_factor, set_dpi_aware, ScaledCoords};
 
 // Re-export input injection
 pub use injector::{EnigoInjector, InputInjector, NoopInjector};

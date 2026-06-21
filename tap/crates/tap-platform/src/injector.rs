@@ -8,8 +8,14 @@ use crossbeam_channel::{bounded, Sender};
 use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 use tap_core::{Action, MouseButton};
 use tracing::{debug, error, warn};
+
+/// Watchdog: fail an injection if the dedicated thread does not answer within
+/// this window, so a hung injection can never block the execution engine
+/// indefinitely. Generous enough for slow `TextInput` of long strings.
+const INJECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Trait for injecting mouse/keyboard actions into the OS.
 pub trait InputInjector: Send + Sync {
@@ -103,10 +109,17 @@ impl InputInjector for EnigoInjector {
             })
             .map_err(|e| PlatformError::InjectionFailed(format!("channel send failed: {}", e)))?;
 
-        // Wait for response
-        response_rx
-            .recv()
-            .map_err(|e| PlatformError::InjectionFailed(format!("channel recv failed: {}", e)))?
+        // Wait for the response, but never block the caller forever: a hung
+        // injection thread must surface as a failure the engine can react to.
+        match response_rx.recv_timeout(INJECT_TIMEOUT) {
+            Ok(result) => result,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(
+                PlatformError::InjectionFailed("injection timed out".to_string()),
+            ),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(
+                PlatformError::InjectionFailed("injection thread gone".to_string()),
+            ),
+        }
     }
 }
 
