@@ -1,4 +1,4 @@
-import type { SimpleActionType } from "../../lib/types";
+import type { KeyClickLocationMode, MouseButton, SimpleActionType } from "../../lib/types";
 import { useEngineStore } from "../../stores/engineStore";
 import { useToolStore } from "../../stores/toolStore";
 
@@ -16,6 +16,9 @@ export function SimpleConfig() {
   const keyClickCount = useToolStore((s) => s.keyClickCount);
   const keyClickInterval = useToolStore((s) => s.keyClickInterval);
   const keyClickHoldDelay = useToolStore((s) => s.keyClickHoldDelay);
+  const keyClickButton = useToolStore((s) => s.keyClickButton);
+  const keyClickLocationMode = useToolStore((s) => s.keyClickLocationMode);
+  const keyClickOnlyTargetFocused = useToolStore((s) => s.keyClickOnlyTargetFocused);
   const tool = useToolStore.getState;
 
   return (
@@ -83,6 +86,76 @@ export function SimpleConfig() {
         {actionType === "key-to-click" && (
           <>
             <div className="field">
+              <label className="label">Mouse Button</label>
+              <select
+                value={keyClickButton}
+                onChange={(e) => tool().setKeyClickButton(e.target.value as MouseButton)}
+                disabled={keyClickRunning}
+                className="input"
+              >
+                <option value="Left">Left</option>
+                <option value="Right">Right</option>
+                <option value="Middle">Middle</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="label">Click Location</label>
+              <select
+                value={keyClickLocationMode}
+                onChange={(e) => tool().setKeyClickLocationMode(e.target.value as KeyClickLocationMode)}
+                disabled={keyClickRunning}
+                className="input"
+              >
+                <option value="cursor">Cursor (follow mouse)</option>
+                <option value="fixed">Fixed position</option>
+              </select>
+            </div>
+            {keyClickLocationMode === "fixed" && (
+              <>
+                <div className="field">
+                  <label className="label">X</label>
+                  <input
+                    type="number"
+                    value={clickX}
+                    onChange={(e) => tool().setClickX(parseInt(e.target.value, 10) || 0)}
+                    disabled={keyClickRunning}
+                    className="input"
+                  />
+                </div>
+                <div className="field">
+                  <label className="label">Y</label>
+                  <div className="input-with-button">
+                    <input
+                      type="number"
+                      value={clickY}
+                      onChange={(e) => tool().setClickY(parseInt(e.target.value, 10) || 0)}
+                      disabled={keyClickRunning}
+                      className="input"
+                    />
+                    <button className="btn btn-pick" onClick={() => tool().openPicker()} disabled={keyClickRunning}>
+                      Pick
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="field">
+              <label className="label">Min Interval</label>
+              <div className="input-suffix">
+                <input
+                  type="number"
+                  value={keyClickInterval}
+                  onChange={(e) => tool().setKeyClickInterval(parseInt(e.target.value, 10) || 40)}
+                  disabled={keyClickRunning}
+                  className="input"
+                  min={10}
+                  max={1000}
+                />
+                <span>ms</span>
+              </div>
+              <span className="field-hint">Rate limit between repeated clicks</span>
+            </div>
+            <div className="field">
               <label className="label">Hold Delay</label>
               <div className="input-suffix">
                 <input
@@ -91,26 +164,21 @@ export function SimpleConfig() {
                   onChange={(e) => tool().setKeyClickHoldDelay(parseInt(e.target.value, 10) || 150)}
                   disabled={keyClickRunning}
                   className="input"
-                  min={50}
+                  min={0}
                 />
                 <span>ms</span>
               </div>
               <span className="field-hint">Time before repeat starts</span>
             </div>
-            <div className="field">
-              <label className="label">Repeat Interval</label>
-              <div className="input-suffix">
-                <input
-                  type="number"
-                  value={keyClickInterval}
-                  onChange={(e) => tool().setKeyClickInterval(parseInt(e.target.value, 10) || 50)}
-                  disabled={keyClickRunning}
-                  className="input"
-                  min={20}
-                />
-                <span>ms</span>
-              </div>
-            </div>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={keyClickOnlyTargetFocused}
+                onChange={(e) => tool().setKeyClickOnlyTargetFocused(e.target.checked)}
+                disabled={keyClickRunning}
+              />
+              <span>Only click in the active window at start</span>
+            </label>
             <div className="info-box">
               <strong>How it works</strong>
               <ul>

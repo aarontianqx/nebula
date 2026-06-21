@@ -11,6 +11,7 @@ import type {
   ColorResponse,
   DocumentMeta,
   EngineState,
+  KeyClickRequest,
   PermissionStatus,
   Profile,
   RecordingStatus,
@@ -135,7 +136,6 @@ export const api = {
     invoke<void>("cmd_set_runtime_variables", { vars }),
 
   // === Key-to-Click ===
-  startKeyClick: (intervalMs: number, holdDelayMs: number) =>
-    invoke<void>("start_key_click", { intervalMs, holdDelayMs }),
+  startKeyClick: (request: KeyClickRequest) => invoke<void>("start_key_click", { request }),
   stopKeyClick: () => invoke<void>("stop_key_click"),
 };

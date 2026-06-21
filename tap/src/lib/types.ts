@@ -145,7 +145,19 @@ export type EngineEvent =
   | { TargetWindowUnfocused: { title: string | null; process: string | null } }
   | "TargetWindowFocused";
 
+export type KeyClickLocationMode = "cursor" | "fixed";
+
+export interface KeyClickRequest {
+  minIntervalMs: number;
+  holdDelayMs: number;
+  button: "left" | "right" | "middle";
+  locationMode: KeyClickLocationMode;
+  fixedX: number;
+  fixedY: number;
+  onlyTargetFocused: boolean;
+}
+
 export type KeyClickEvent =
   | "Started"
   | { Click: { count: number; x: number; y: number } }
-  | { Stopped: { total_clicks: number } };
+  | { Stopped: { total_clicks: number; reason: string } };
