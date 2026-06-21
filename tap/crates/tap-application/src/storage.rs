@@ -1,10 +1,7 @@
 //! Profile storage and persistence.
 //!
-//! The canonical on-disk format is YAML carrying a full `MacroDocument`
-//! (metadata + variables + timeline), which round-trips losslessly. Legacy
-//! profiles serialized as JSON (the resolved runtime `Profile`) are still
-//! readable for backward compatibility and are migrated to YAML on the next
-//! save.
+//! The on-disk format is YAML carrying a full `MacroDocument` (metadata +
+//! variables + timeline), which round-trips losslessly.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,8 +12,6 @@ use tracing::{debug, info};
 
 /// Canonical document extension.
 const DOC_EXT: &str = "yaml";
-/// Legacy runtime-profile extension (read-only, migrated on save).
-const LEGACY_EXT: &str = "json";
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -66,9 +61,6 @@ pub fn save_document(doc: &MacroDocument) -> StorageResult<PathBuf> {
 }
 
 /// Load a macro document from disk by name.
-///
-/// Prefers the canonical YAML form; falls back to a legacy JSON-serialized
-/// runtime profile (lifted into a document) for backward compatibility.
 pub fn load_document(name: &str) -> StorageResult<MacroDocument> {
     load_document_from(&get_profiles_dir(), name)
 }
@@ -79,12 +71,6 @@ fn save_document_to(dir: &Path, doc: &MacroDocument) -> StorageResult<PathBuf> {
 
     let yaml = document_to_yaml(doc).map_err(|e| StorageError::Yaml(e.to_string()))?;
     fs::write(&path, yaml)?;
-
-    // Migrate away from a stale legacy JSON file with the same stem.
-    let legacy = dir.join(format!("{}.{}", filename, LEGACY_EXT));
-    if legacy.exists() {
-        let _ = fs::remove_file(&legacy);
-    }
 
     info!(?path, "Saved macro document");
     Ok(path)
@@ -102,29 +88,12 @@ fn load_document_from(dir: &Path, name: &str) -> StorageResult<MacroDocument> {
         return Ok(doc);
     }
 
-    // Backward compatibility: a legacy runtime profile serialized as JSON.
-    let json_path = dir.join(format!("{}.{}", filename, LEGACY_EXT));
-    if json_path.exists() {
-        let json = fs::read_to_string(&json_path)?;
-        let profile: Profile = serde_json::from_str(&json)?;
-        debug!(
-            ?json_path,
-            "Loaded legacy profile (json) and lifted to document"
-        );
-        return Ok(MacroDocument::from(&profile));
-    }
-
     Err(StorageError::NotFound(name.to_string()))
 }
 
 // ============================================================================
 // Profile API (resolved runtime form, thin adapters over the document API)
 // ============================================================================
-
-/// Save a runtime profile to disk (as a canonical YAML document).
-pub fn save_profile(profile: &Profile) -> StorageResult<PathBuf> {
-    save_document(&MacroDocument::from(profile))
-}
 
 /// Load a runtime profile from disk by name.
 ///
@@ -136,32 +105,25 @@ pub fn load_profile(name: &str) -> StorageResult<Profile> {
     Profile::try_from(&doc).map_err(|e| StorageError::Conversion(e.to_string()))
 }
 
-/// Delete a profile from disk (both canonical and legacy files).
+/// Delete a profile from disk.
 pub fn delete_profile(name: &str) -> StorageResult<()> {
     delete_profile_in(&get_profiles_dir(), name)
 }
 
 fn delete_profile_in(dir: &Path, name: &str) -> StorageResult<()> {
     let filename = sanitize_filename(name);
-    let mut removed = false;
+    let path = dir.join(format!("{}.{}", filename, DOC_EXT));
 
-    for ext in [DOC_EXT, LEGACY_EXT] {
-        let path = dir.join(format!("{}.{}", filename, ext));
-        if path.exists() {
-            fs::remove_file(&path)?;
-            removed = true;
-        }
-    }
-
-    if !removed {
+    if !path.exists() {
         return Err(StorageError::NotFound(name.to_string()));
     }
 
+    fs::remove_file(&path)?;
     info!(%name, "Deleted profile");
     Ok(())
 }
 
-/// List all saved profiles (canonical + legacy, deduplicated by name).
+/// List all saved profiles, sorted by name.
 pub fn list_profiles() -> StorageResult<Vec<String>> {
     list_profiles_in(&get_profiles_dir())
 }
@@ -171,16 +133,12 @@ fn list_profiles_in(dir: &Path) -> StorageResult<Vec<String>> {
         return Ok(vec![]);
     }
 
-    // BTreeSet dedups names shared between a YAML and a legacy JSON file and
-    // yields a stable, sorted ordering.
+    // BTreeSet yields a stable, sorted ordering.
     let mut names = std::collections::BTreeSet::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        let is_profile = path
-            .extension()
-            .map(|e| e == DOC_EXT || e == LEGACY_EXT)
-            .unwrap_or(false);
+        let is_profile = path.extension().map(|e| e == DOC_EXT).unwrap_or(false);
         if is_profile {
             if let Some(stem) = path.file_stem() {
                 names.insert(stem.to_string_lossy().to_string());
@@ -374,87 +332,40 @@ mod tests {
     }
 
     #[test]
-    fn test_load_legacy_json_profile() {
-        let dir = temp_dir("legacy");
-
-        // Simulate an old install: a runtime Profile serialized as JSON.
-        let profile = Profile::default();
-        let json = serde_json::to_string_pretty(&profile).unwrap();
-        let legacy_path = dir.join(format!(
-            "{}.{}",
-            sanitize_filename(&profile.name),
-            LEGACY_EXT
-        ));
-        fs::write(&legacy_path, json).unwrap();
-
-        let doc = load_document_from(&dir, &profile.name).unwrap();
-        assert_eq!(doc.name, profile.name);
-        assert_eq!(doc.timeline.len(), profile.timeline.actions.len());
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn test_save_migrates_legacy_json() {
-        let dir = temp_dir("migrate");
-
-        let profile = Profile::default();
-        let stem = sanitize_filename(&profile.name);
-        let legacy_path = dir.join(format!("{}.{}", stem, LEGACY_EXT));
-        fs::write(&legacy_path, serde_json::to_string(&profile).unwrap()).unwrap();
-        assert!(legacy_path.exists());
-
-        // Saving the same name as a document should remove the legacy file.
-        save_document_to(&dir, &MacroDocument::from(&profile)).unwrap();
-        assert!(!legacy_path.exists(), "legacy JSON should be migrated away");
-        assert!(dir.join(format!("{}.{}", stem, DOC_EXT)).exists());
-
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn test_list_profiles_dedups_yaml_and_json() {
+    fn test_list_profiles_sorted() {
         let dir = temp_dir("list");
 
-        // "Shared" exists as both YAML and JSON; "OnlyYaml" only as YAML.
-        save_document_to(
-            &dir,
-            &MacroDocument {
-                name: "Shared".to_string(),
-                ..rich_document()
-            },
-        )
-        .unwrap();
-        fs::write(dir.join("Shared.json"), "{}").unwrap();
-        save_document_to(
-            &dir,
-            &MacroDocument {
-                name: "OnlyYaml".to_string(),
-                ..rich_document()
-            },
-        )
-        .unwrap();
+        for name in ["Charlie", "Alpha", "Bravo"] {
+            save_document_to(
+                &dir,
+                &MacroDocument {
+                    name: name.to_string(),
+                    ..rich_document()
+                },
+            )
+            .unwrap();
+        }
+        // A non-profile file is ignored.
+        fs::write(dir.join("notes.txt"), "ignore me").unwrap();
 
         let names = list_profiles_in(&dir).unwrap();
-        assert_eq!(names, vec!["OnlyYaml".to_string(), "Shared".to_string()]);
+        assert_eq!(names, vec!["Alpha", "Bravo", "Charlie"]);
 
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn test_delete_removes_both_formats() {
+    fn test_delete_profile() {
         let dir = temp_dir("delete");
-        let stem = "Both";
+        let stem = "Doomed";
         fs::write(
             dir.join(format!("{stem}.{DOC_EXT}")),
-            "name: Both\ntimeline: []\n",
+            "name: Doomed\ntimeline: []\n",
         )
         .unwrap();
-        fs::write(dir.join(format!("{stem}.{LEGACY_EXT}")), "{}").unwrap();
 
         delete_profile_in(&dir, stem).unwrap();
         assert!(!dir.join(format!("{stem}.{DOC_EXT}")).exists());
-        assert!(!dir.join(format!("{stem}.{LEGACY_EXT}")).exists());
 
         // Deleting a missing profile reports NotFound.
         assert!(matches!(
