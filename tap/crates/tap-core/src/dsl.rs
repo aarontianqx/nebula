@@ -16,10 +16,15 @@ use crate::{
 /// DSL schema version.
 pub const DSL_VERSION: &str = "1.0";
 
-/// DSL representation of a macro profile.
-/// This is the user-facing YAML format with metadata and human-readable structure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DslProfile {
+/// Canonical macro document.
+///
+/// This is the single source of truth for a macro: the user-facing YAML format
+/// carrying metadata, parameterized variables, target-window binding, and the
+/// action timeline. It is lossless across save/load and is the type persisted to
+/// disk. The runtime [`crate::Profile`] is a *resolved* projection used by the
+/// execution engine (coordinates resolved to concrete integers).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MacroDocument {
     /// Name of the macro.
     pub name: String,
     /// Optional description.
@@ -31,6 +36,9 @@ pub struct DslProfile {
     /// Author name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Free-form tags for organization and filtering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 
     /// Parameterized variables (filled in before execution).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -53,7 +61,7 @@ fn default_version() -> String {
 }
 
 /// Variable definition for parameterized macros.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VariableDefinition {
     /// Variable type: "string", "number", "boolean".
     #[serde(rename = "type")]
@@ -76,7 +84,7 @@ pub enum VariableType {
 }
 
 /// Target window binding in DSL format.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DslTargetWindow {
     /// Window title pattern (partial match).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,7 +102,7 @@ fn default_pause() -> bool {
 }
 
 /// Timed action in DSL format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DslTimedAction {
     /// Milliseconds since the start of the timeline.
     pub at_ms: u64,
@@ -117,7 +125,7 @@ fn is_true(b: &bool) -> bool {
 }
 
 /// Action in DSL format (more human-readable than internal format).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DslAction {
     /// Single click.
@@ -225,7 +233,7 @@ fn default_poll_interval() -> u64 {
 }
 
 /// A value that can be either a literal or a variable reference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DslValue {
     /// Integer literal.
@@ -275,7 +283,7 @@ impl DslValue {
 }
 
 /// Mouse button in DSL format.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DslMouseButton {
     #[default]
@@ -285,7 +293,7 @@ pub enum DslMouseButton {
 }
 
 /// Condition in DSL format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DslCondition {
     /// Check if window is focused.
@@ -312,11 +320,7 @@ pub enum DslCondition {
         tolerance: u8,
     },
     /// Check counter value.
-    Counter {
-        key: String,
-        op: String,
-        value: i32,
-    },
+    Counter { key: String, op: String, value: i32 },
     /// Always true.
     Always,
     /// Always false.
@@ -334,7 +338,7 @@ fn default_tolerance() -> u8 {
 }
 
 /// Run configuration in DSL format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DslRunConfig {
     /// Number of times to repeat (0 = forever).
     #[serde(default = "default_repeat")]
@@ -366,16 +370,17 @@ impl Default for DslRunConfig {
 }
 
 // ============================================================================
-// Conversion: Profile -> DslProfile (Export)
+// Conversion: Profile -> MacroDocument (Export)
 // ============================================================================
 
-impl From<&Profile> for DslProfile {
+impl From<&Profile> for MacroDocument {
     fn from(profile: &Profile) -> Self {
-        DslProfile {
+        MacroDocument {
             name: profile.name.clone(),
             description: None,
             version: DSL_VERSION.to_string(),
             author: None,
+            tags: Vec::new(),
             variables: HashMap::new(),
             target_window: profile.target_window.as_ref().map(|tw| DslTargetWindow {
                 title: tw.title.clone(),
@@ -431,7 +436,11 @@ impl From<&Action> for DslAction {
                 x: DslValue::Int(*x as i64),
                 y: DslValue::Int(*y as i64),
             },
-            Action::Drag { from, to, duration_ms } => DslAction::Drag {
+            Action::Drag {
+                from,
+                to,
+                duration_ms,
+            } => DslAction::Drag {
                 from_x: DslValue::Int(from.x as i64),
                 from_y: DslValue::Int(from.y as i64),
                 to_x: DslValue::Int(to.x as i64),
@@ -555,10 +564,14 @@ impl From<&RunConfig> for DslRunConfig {
 // Export to YAML
 // ============================================================================
 
+/// Serialize a [`MacroDocument`] to its canonical YAML representation.
+pub fn document_to_yaml(doc: &MacroDocument) -> Result<String, DslError> {
+    serde_yaml::to_string(doc).map_err(|e| DslError::SerializationError(e.to_string()))
+}
+
 /// Export a Profile to YAML string.
 pub fn export_to_yaml(profile: &Profile) -> Result<String, DslError> {
-    let dsl_profile = DslProfile::from(profile);
-    serde_yaml::to_string(&dsl_profile).map_err(|e| DslError::SerializationError(e.to_string()))
+    document_to_yaml(&MacroDocument::from(profile))
 }
 
 /// Export a Profile to YAML with additional metadata.
@@ -567,36 +580,36 @@ pub fn export_to_yaml_with_metadata(
     description: Option<String>,
     author: Option<String>,
 ) -> Result<String, DslError> {
-    let mut dsl_profile = DslProfile::from(profile);
-    dsl_profile.description = description;
-    dsl_profile.author = author;
-    serde_yaml::to_string(&dsl_profile).map_err(|e| DslError::SerializationError(e.to_string()))
+    let mut document = MacroDocument::from(profile);
+    document.description = description;
+    document.author = author;
+    document_to_yaml(&document)
 }
 
 // ============================================================================
 // Import from YAML
 // ============================================================================
 
-/// Parse YAML string to DslProfile.
-pub fn parse_yaml(yaml: &str) -> Result<DslProfile, DslError> {
+/// Parse a YAML string into a [`MacroDocument`].
+pub fn parse_yaml(yaml: &str) -> Result<MacroDocument, DslError> {
     serde_yaml::from_str(yaml).map_err(|e| DslError::ParseError(e.to_string()))
 }
 
 /// Import YAML string to Profile (with validation).
 pub fn import_from_yaml(yaml: &str) -> Result<Profile, DslError> {
-    let dsl_profile = parse_yaml(yaml)?;
+    let document = parse_yaml(yaml)?;
     // Note: Full validation is done by schema.rs
-    Profile::try_from(&dsl_profile)
+    Profile::try_from(&document)
 }
 
 // ============================================================================
-// Conversion: DslProfile -> Profile (Import)
+// Conversion: MacroDocument -> Profile (Import / resolve)
 // ============================================================================
 
-impl TryFrom<&DslProfile> for Profile {
+impl TryFrom<&MacroDocument> for Profile {
     type Error = DslError;
 
-    fn try_from(dsl: &DslProfile) -> Result<Self, Self::Error> {
+    fn try_from(dsl: &MacroDocument) -> Result<Self, Self::Error> {
         let timeline = Timeline {
             actions: dsl
                 .timeline
@@ -932,7 +945,53 @@ mod tests {
         let yaml = export_to_yaml(&profile).unwrap();
         let imported = import_from_yaml(&yaml).unwrap();
         assert_eq!(profile.name, imported.name);
-        assert_eq!(profile.timeline.actions.len(), imported.timeline.actions.len());
+        assert_eq!(
+            profile.timeline.actions.len(),
+            imported.timeline.actions.len()
+        );
+    }
+
+    #[test]
+    fn test_document_yaml_roundtrip_preserves_metadata_and_variables() {
+        let mut variables = HashMap::new();
+        variables.insert(
+            "count".to_string(),
+            VariableDefinition {
+                var_type: VariableType::Number,
+                default: Some(serde_json::json!(3)),
+                description: Some("iteration count".to_string()),
+            },
+        );
+
+        let doc = MacroDocument {
+            name: "Param Macro".to_string(),
+            description: Some("uses variables".to_string()),
+            version: DSL_VERSION.to_string(),
+            author: Some("qa".to_string()),
+            tags: vec!["smoke".to_string()],
+            variables,
+            target_window: None,
+            // A coordinate that is an unresolved variable reference must survive.
+            timeline: vec![DslTimedAction {
+                at_ms: 0,
+                action: DslAction::Click {
+                    x: DslValue::String("{{ count }}".to_string()),
+                    y: DslValue::Int(10),
+                    button: DslMouseButton::Right,
+                },
+                enabled: false,
+                note: None,
+            }],
+            run: DslRunConfig {
+                repeat: 0,
+                start_delay_ms: 250,
+                speed: 1.5,
+            },
+        };
+
+        let yaml = document_to_yaml(&doc).unwrap();
+        let parsed = parse_yaml(&yaml).unwrap();
+        assert_eq!(parsed, doc, "YAML round-trip must be lossless");
     }
 
     #[test]
@@ -957,4 +1016,3 @@ mod tests {
         assert!(parse_compare_op("invalid").is_err());
     }
 }
-

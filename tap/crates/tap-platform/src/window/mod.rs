@@ -148,4 +148,3 @@ pub fn window_exists(title: Option<&str>, process: Option<&str>) -> bool {
         title_match && process_match
     })
 }
-

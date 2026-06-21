@@ -13,7 +13,7 @@ use tracing::{info, warn};
 /// Start the input hook using macOS native API.
 pub fn start_hook(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
     info!("Input hook thread started (macOS native, using global listener)");
-    
+
     // Record start time for relative timestamps (using same time source as MacOSEvent)
     let start_timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -22,7 +22,7 @@ pub fn start_hook(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
 
     // Track last flags for detecting key up/down on FlagsChanged
     static LAST_FLAGS: AtomicU64 = AtomicU64::new(0);
-    
+
     // Subscribe to the global event listener
     let subscription = subscribe_events();
 
@@ -32,7 +32,7 @@ pub fn start_hook(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
             info!("Input hook received stop signal");
             break;
         }
-        
+
         // Try to receive an event with timeout
         match subscription.recv_timeout(Duration::from_millis(50)) {
             Ok(event) => {
@@ -109,8 +109,7 @@ pub fn start_hook(event_tx: Sender<RawInputEvent>, stop_rx: Receiver<()>) {
             }
         }
     }
-    
+
     // Subscription is dropped here, automatically unsubscribing from global listener
     info!("Input hook thread exiting");
 }
-
