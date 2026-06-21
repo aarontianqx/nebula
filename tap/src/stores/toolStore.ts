@@ -1,7 +1,13 @@
 import { create } from "zustand";
 
 import { api } from "../lib/ipc";
-import type { ColorResponse, KeyClickEvent, SimpleActionType } from "../lib/types";
+import type {
+  ColorResponse,
+  KeyClickEvent,
+  KeyClickLocationMode,
+  MouseButton,
+  SimpleActionType,
+} from "../lib/types";
 import { useEngineStore } from "./engineStore";
 
 interface ToolStore {
@@ -19,6 +25,9 @@ interface ToolStore {
   keyClickCount: number;
   keyClickInterval: number;
   keyClickHoldDelay: number;
+  keyClickButton: MouseButton;
+  keyClickLocationMode: KeyClickLocationMode;
+  keyClickOnlyTargetFocused: boolean;
 
   // Color sampling
   pickedColor: ColorResponse | null;
@@ -32,6 +41,9 @@ interface ToolStore {
   setCountdownSecs: (secs: number) => void;
   setKeyClickInterval: (ms: number) => void;
   setKeyClickHoldDelay: (ms: number) => void;
+  setKeyClickButton: (button: MouseButton) => void;
+  setKeyClickLocationMode: (mode: KeyClickLocationMode) => void;
+  setKeyClickOnlyTargetFocused: (value: boolean) => void;
   setPickedPosition: (x: number, y: number) => void;
   handleKeyClickEvent: (event: KeyClickEvent) => void;
 
@@ -57,8 +69,11 @@ export const useToolStore = create<ToolStore>((set, get) => ({
 
   keyClickRunning: false,
   keyClickCount: 0,
-  keyClickInterval: 50,
+  keyClickInterval: 40,
   keyClickHoldDelay: 150,
+  keyClickButton: "Left",
+  keyClickLocationMode: "cursor",
+  keyClickOnlyTargetFocused: false,
 
   pickedColor: null,
 
@@ -71,6 +86,9 @@ export const useToolStore = create<ToolStore>((set, get) => ({
   setCountdownSecs: (countdownSecs) => set({ countdownSecs }),
   setKeyClickInterval: (keyClickInterval) => set({ keyClickInterval }),
   setKeyClickHoldDelay: (keyClickHoldDelay) => set({ keyClickHoldDelay }),
+  setKeyClickButton: (keyClickButton) => set({ keyClickButton }),
+  setKeyClickLocationMode: (keyClickLocationMode) => set({ keyClickLocationMode }),
+  setKeyClickOnlyTargetFocused: (keyClickOnlyTargetFocused) => set({ keyClickOnlyTargetFocused }),
 
   setPickedPosition: (clickX, clickY) => {
     set({ clickX, clickY });
@@ -81,12 +99,13 @@ export const useToolStore = create<ToolStore>((set, get) => ({
   handleKeyClickEvent: (e) => {
     if (e === "Started") {
       set({ keyClickRunning: true, keyClickCount: 0 });
-      log("Key->Click mode started");
+      log("Key->Click active - hold A-Z to click, Space to stop");
     } else if (typeof e === "object" && "Click" in e) {
       set({ keyClickCount: e.Click.count });
     } else if (typeof e === "object" && "Stopped" in e) {
       set({ keyClickRunning: false });
-      log(`Key->Click stopped (${e.Stopped.total_clicks} clicks)`);
+      const how = e.Stopped.reason === "space" ? "Space" : "Stop";
+      log(`Key->Click stopped by ${how} (${e.Stopped.total_clicks} clicks)`);
     }
   },
 
@@ -115,8 +134,22 @@ export const useToolStore = create<ToolStore>((set, get) => ({
     const s = get();
     try {
       set({ keyClickCount: 0 });
-      await api.startKeyClick(s.keyClickInterval, s.keyClickHoldDelay);
-      log("Key->Click mode starting...");
+      const button = s.keyClickButton.toLowerCase() as "left" | "right" | "middle";
+      const location =
+        s.keyClickLocationMode === "fixed" ? `Fixed (${s.clickX}, ${s.clickY})` : "Cursor";
+      log(
+        `Key->Click: button=${s.keyClickButton}, location=${location}, min interval=${s.keyClickInterval}ms` +
+          (s.keyClickOnlyTargetFocused ? ", locked to active window" : ""),
+      );
+      await api.startKeyClick({
+        minIntervalMs: s.keyClickInterval,
+        holdDelayMs: s.keyClickHoldDelay,
+        button,
+        locationMode: s.keyClickLocationMode,
+        fixedX: s.clickX,
+        fixedY: s.clickY,
+        onlyTargetFocused: s.keyClickOnlyTargetFocused,
+      });
     } catch (err) {
       useEngineStore.getState().setStatus(`Failed: ${String(err)}`);
       log(`Error: ${String(err)}`);

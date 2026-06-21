@@ -4,7 +4,9 @@ mod key_click;
 mod state;
 mod templates;
 
-use key_click::{start_key_click_runner, KeyClickConfig, KeyClickEvent, KeyClickStatus};
+use key_click::{
+    start_key_click_runner, FocusGate, KeyClickEvent, KeyClickRequest, KeyClickStatus,
+};
 use state::{AppState, MousePositionUpdate, PositionPickedEvent, RecordingStatus};
 use std::sync::{Arc, Mutex};
 use tap_application::{
@@ -162,8 +164,7 @@ fn get_or_create_injector() -> Arc<EnigoInjector> {
 #[tauri::command]
 fn start_key_click(
     state: State<'_, Mutex<AppState>>,
-    interval_ms: u64,
-    hold_delay_ms: Option<u64>,
+    request: KeyClickRequest,
 ) -> Result<(), String> {
     let mut app_state = state.lock().unwrap();
 
@@ -179,6 +180,32 @@ fn start_key_click(
     if app_state.key_click_handle.is_some() {
         return Err("Key-click mode is already running".into());
     }
+
+    // Optionally lock clicks to the window focused right now, so alt-tabbing
+    // away never leaks clicks into another app. Match on process name (stable
+    // across title changes), falling back to title when the process is unknown.
+    let focus_gate: Option<FocusGate> = if request.only_target_focused {
+        match tap_platform::get_foreground_window() {
+            Some(w) => {
+                let process = w.process_name.clone();
+                let title = w.title.clone();
+                info!(target_process = %process, target_title = %title, "Key-click gated to active window");
+                Some(Box::new(move || {
+                    if !process.is_empty() {
+                        is_window_focused(None, Some(&process))
+                    } else {
+                        is_window_focused(Some(&title), None)
+                    }
+                }) as FocusGate)
+            }
+            None => {
+                warn!("only_target_focused set but no foreground window; gate disabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Get or create the shared injector
     let injector = get_or_create_injector();
@@ -221,20 +248,14 @@ fn start_key_click(
         }
     };
 
-    let actual_interval_ms = interval_ms.max(20); // Minimum 20ms interval
-    let actual_hold_delay_ms = hold_delay_ms.unwrap_or(150); // Default 150ms hold delay
-
-    let config = KeyClickConfig {
-        interval_ms: actual_interval_ms,
-        hold_delay_ms: actual_hold_delay_ms,
-    };
-
-    let handle = start_key_click_runner(config, input_hook, injector, get_position);
+    let config = request.to_config();
+    let handle = start_key_click_runner(config, input_hook, injector, get_position, focus_gate);
     app_state.key_click_handle = Some(handle);
 
     info!(
-        interval_ms = actual_interval_ms,
-        hold_delay_ms = actual_hold_delay_ms,
+        min_interval_ms = config.min_interval_ms,
+        hold_delay_ms = config.hold_delay_ms,
+        only_target_focused = request.only_target_focused,
         "Key-click mode started"
     );
 
@@ -1093,8 +1114,11 @@ fn poll_events(app: AppHandle) {
                 KeyClickEvent::Click { count, x, y } => {
                     debug!(count, x, y, "Key-click: click performed");
                 }
-                KeyClickEvent::Stopped { total_clicks } => {
-                    debug!(total_clicks, "Key-click mode stopped event");
+                KeyClickEvent::Stopped {
+                    total_clicks,
+                    reason,
+                } => {
+                    debug!(total_clicks, reason, "Key-click mode stopped event");
                 }
             }
 

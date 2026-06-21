@@ -392,6 +392,12 @@ select.input {
   font-size: 12px;
 }
 
+.status-keyclick {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+}
+
 /* ===== Mouse Position Display ===== */
 .mouse-pos {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
