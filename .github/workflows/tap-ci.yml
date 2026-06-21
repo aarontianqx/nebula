@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   core:
-    name: tap-core (fmt + clippy + test)
+    name: tap-core + tap-application (fmt + clippy + test)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,13 +40,15 @@ jobs:
         working-directory: tap
         run: cargo fmt --all --check
 
-      - name: Clippy (tap-core)
+      # tap-core (pure domain) and tap-application (engine) are platform-agnostic
+      # and build/test on Linux.
+      - name: Clippy (tap-core + tap-application)
         working-directory: tap
-        run: cargo clippy -p tap-core --all-targets -- -D warnings
+        run: cargo clippy -p tap-core -p tap-application --all-targets -- -D warnings
 
-      - name: Test (tap-core)
+      - name: Test (tap-core + tap-application)
         working-directory: tap
-        run: cargo test -p tap-core
+        run: cargo test -p tap-core -p tap-application
 
   platform:
     name: tap-platform + app (macOS compile + lint)
@@ -69,6 +71,6 @@ jobs:
         working-directory: tap
         run: cargo clippy -p tap-platform --all-targets -- -D warnings
 
-      - name: Check (tap-tauri)
+      - name: Clippy (tap-tauri)
         working-directory: tap
-        run: cargo check -p tap-tauri
+        run: cargo clippy -p tap-tauri --all-targets -- -D warnings

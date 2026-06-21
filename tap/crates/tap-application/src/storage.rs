@@ -1,15 +1,15 @@
 //! Profile storage and persistence.
 //!
-//! The canonical on-disk format is YAML carrying a full [`MacroDocument`]
+//! The canonical on-disk format is YAML carrying a full `MacroDocument`
 //! (metadata + variables + timeline), which round-trips losslessly. Legacy
-//! profiles serialized as JSON (the resolved runtime [`Profile`]) are still
+//! profiles serialized as JSON (the resolved runtime `Profile`) are still
 //! readable for backward compatibility and are migrated to YAML on the next
 //! save.
 
-use crate::dsl::{document_to_yaml, MacroDocument};
-use crate::Profile;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tap_core::Profile;
+use tap_core::{document_to_yaml, MacroDocument};
 use thiserror::Error;
 use tracing::{debug, info};
 
@@ -230,9 +230,9 @@ fn sanitize_filename(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{DslAction, DslMouseButton, DslTimedAction, DslValue, VariableDefinition};
-    use crate::VariableType;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use tap_core::VariableType;
+    use tap_core::{DslAction, DslMouseButton, DslTimedAction, DslValue, VariableDefinition};
 
     /// Create a unique, isolated temporary directory for a test.
     fn temp_dir(tag: &str) -> PathBuf {
@@ -273,7 +273,7 @@ mod tests {
             author: Some("tester".to_string()),
             tags: vec!["game".to_string(), "demo".to_string()],
             variables,
-            target_window: Some(crate::dsl::DslTargetWindow {
+            target_window: Some(tap_core::DslTargetWindow {
                 title: Some("Notepad".to_string()),
                 process: None,
                 pause_when_unfocused: true,

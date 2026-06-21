@@ -1,14 +1,24 @@
 //! Execution engine: state machine + player thread.
 
-use crate::condition::{Condition, ConditionColor, ConditionEvaluator, ConditionResult};
-use crate::variables::VariableStore;
-use crate::{Action, Profile, Repeat, TimedAction};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use tap_core::{
+    create_expression_engine, Action, Condition, ConditionColor, ConditionEvaluator,
+    ConditionResult, DslAction, DslTimedAction, DslValue, ExpressionEngineHandle, MacroDocument,
+    VariableStore, VariableValue,
+};
 use tracing::{debug, error, info, warn};
+
+use crate::resolve::resolve_action;
+use crate::storage::load_document;
+use crate::submacro::{
+    create_child_variable_store, create_submacro_context, prepare_submacro_args,
+    SubMacroContextHandle,
+};
 
 /// Engine state machine.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,8 +49,10 @@ pub enum EngineCommand {
     Stop,
     /// Emergency stop (highest priority).
     EmergencyStop,
-    /// Update the profile to execute.
-    SetProfile(Profile),
+    /// Replace the document to execute.
+    SetDocument(Box<MacroDocument>),
+    /// Replace the run-time variable overrides applied on the next `Start`.
+    SetRuntimeVars(HashMap<String, VariableValue>),
 }
 
 /// Events emitted by the player.
@@ -112,7 +124,11 @@ impl PlayerHandle {
     }
 }
 
-/// Trait for injecting actions (implemented by tap-platform).
+/// Port for performing actions against the OS.
+///
+/// The application layer depends only on this trait; the concrete injector is
+/// supplied by an outer layer (the `src-tauri` adapter wires up the
+/// `tap-platform` injector).
 pub trait ActionExecutor: Send + Sync {
     fn execute(&self, action: &Action) -> Result<(), String>;
 }
@@ -127,32 +143,47 @@ pub trait PlatformConditionProvider: Send + Sync {
     fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor>;
 }
 
-/// Player: runs in a separate thread, executes timeline actions.
+/// Loads a sub-macro document by name. Defaults to disk storage; injectable in
+/// tests so `call_macro` can be exercised without touching the filesystem.
+pub type SubMacroLoader = Arc<dyn Fn(&str) -> Result<MacroDocument, String> + Send + Sync>;
+
+/// Player: runs in a separate thread, executes the document timeline.
 pub struct Player<E: ActionExecutor, P: PlatformConditionProvider> {
     executor: Arc<E>,
     platform: Arc<P>,
-    profile: Arc<Mutex<Option<Profile>>>,
+    document: Arc<Mutex<Option<MacroDocument>>>,
+    runtime_vars: Arc<Mutex<HashMap<String, VariableValue>>>,
     state: Arc<Mutex<EngineState>>,
     variables: Arc<Mutex<VariableStore>>,
+    expr_engine: ExpressionEngineHandle,
+    loader: SubMacroLoader,
     cmd_rx: Receiver<EngineCommand>,
     event_tx: Sender<EngineEvent>,
 }
 
 impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player<E, P> {
-    /// Create a new player and return a handle to control it.
+    /// Create a new player (sub-macros loaded from disk) and return a handle.
     pub fn spawn(executor: E, platform: P) -> PlayerHandle {
+        let loader: SubMacroLoader =
+            Arc::new(|name: &str| load_document(name).map_err(|e| e.to_string()));
+        Self::spawn_with_loader(executor, platform, loader)
+    }
+
+    /// Create a new player with a custom sub-macro loader (used by tests).
+    pub fn spawn_with_loader(executor: E, platform: P, loader: SubMacroLoader) -> PlayerHandle {
         let (cmd_tx, cmd_rx) = bounded(32);
         let (event_tx, event_rx) = bounded(256);
         let state = Arc::new(Mutex::new(EngineState::Idle));
-        let profile = Arc::new(Mutex::new(None));
-        let variables = Arc::new(Mutex::new(VariableStore::new()));
 
         let player = Player {
             executor: Arc::new(executor),
             platform: Arc::new(platform),
-            profile: profile.clone(),
+            document: Arc::new(Mutex::new(None)),
+            runtime_vars: Arc::new(Mutex::new(HashMap::new())),
             state: state.clone(),
-            variables,
+            variables: Arc::new(Mutex::new(VariableStore::new())),
+            expr_engine: create_expression_engine(),
+            loader,
             cmd_rx,
             event_tx,
         };
@@ -204,8 +235,11 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 // Don't exit thread, just reset to idle after processing
                 self.transition_state(EngineState::Idle);
             }
-            EngineCommand::SetProfile(profile) => {
-                *self.profile.lock().unwrap() = Some(profile);
+            EngineCommand::SetDocument(document) => {
+                *self.document.lock().unwrap() = Some(*document);
+            }
+            EngineCommand::SetRuntimeVars(vars) => {
+                *self.runtime_vars.lock().unwrap() = vars;
             }
         }
 
@@ -213,13 +247,13 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
     }
 
     fn start_execution(&self) {
-        let profile = {
-            let guard = self.profile.lock().unwrap();
+        let document = {
+            let guard = self.document.lock().unwrap();
             match guard.clone() {
-                Some(p) => p,
+                Some(d) => d,
                 None => {
                     self.emit(EngineEvent::Error {
-                        message: "No profile set".into(),
+                        message: "No document set".into(),
                     });
                     return;
                 }
@@ -229,7 +263,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         // Arming (countdown)
         self.transition_state(EngineState::Arming);
 
-        let countdown_secs = (profile.run.start_delay_ms / 1000) as u32;
+        let countdown_secs = (document.run.start_delay_ms / 1000) as u32;
         for remaining in (1..=countdown_secs).rev() {
             if self.should_stop() {
                 return;
@@ -240,35 +274,39 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             thread::sleep(Duration::from_secs(1));
         }
 
-        // Reset variables at start
-        self.variables.lock().unwrap().clear();
+        // Build the run scope: variable definition defaults, then run-time
+        // overrides on top (overrides win, per the resolution precedence rules).
+        {
+            let mut vars = self.variables.lock().unwrap();
+            *vars = VariableStore::new();
+            vars.init_from_definitions(&document.variables);
+            let runtime = self.runtime_vars.lock().unwrap().clone();
+            vars.set_variables(runtime);
+        }
 
         // Start running
         self.transition_state(EngineState::Running);
 
-        let repeat = profile.run.repeat;
-        let speed = profile.run.speed;
+        let speed = document.run.speed;
+        let repeat = document.run.repeat; // 0 == forever
+        let sub_ctx = create_submacro_context();
         let mut iteration = 0u32;
 
         loop {
             iteration += 1;
 
             // Execute one iteration of the timeline
-            if !self.execute_timeline(&profile.timeline.actions, speed, &profile) {
+            if !self.execute_timeline(&document.timeline, speed, &document, &sub_ctx) {
                 // Stopped during execution
                 break;
             }
 
             self.emit(EngineEvent::IterationCompleted { iteration });
 
-            // Check repeat condition
-            match repeat {
-                Repeat::Times(n) if iteration >= n => {
-                    self.emit(EngineEvent::Completed);
-                    break;
-                }
-                Repeat::Times(_) => continue,
-                Repeat::Forever => continue,
+            // Check repeat condition (0 == forever).
+            if repeat != 0 && iteration >= repeat {
+                self.emit(EngineEvent::Completed);
+                break;
             }
         }
 
@@ -276,11 +314,18 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         self.transition_state(EngineState::Idle);
     }
 
-    /// Execute a timeline. Returns false if stopped.
-    fn execute_timeline(&self, actions: &[TimedAction], speed: f32, profile: &Profile) -> bool {
+    /// Execute one pass over the document timeline. Returns false when the run
+    /// should stop (global Stop/EmergencyStop); `Exit` only ends this macro.
+    fn execute_timeline(
+        &self,
+        timeline: &[DslTimedAction],
+        speed: f32,
+        doc: &MacroDocument,
+        sub_ctx: &SubMacroContextHandle,
+    ) -> bool {
         let start = Instant::now();
 
-        for (index, timed_action) in actions.iter().enumerate() {
+        for (index, timed_action) in timeline.iter().enumerate() {
             // Check for stop/pause
             loop {
                 if self.should_stop() {
@@ -298,7 +343,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             }
 
             // Check target window if configured
-            if !self.wait_for_target_window(profile) {
+            if !self.wait_for_target_window(doc) {
                 return false;
             }
 
@@ -313,26 +358,110 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 }
             }
 
-            // Execute the action using the new execute_action method
-            let result = self.execute_action(&timed_action.action, index);
-
-            match result {
-                ActionResult::Completed => {
-                    self.emit(EngineEvent::ActionCompleted { index });
-                }
-                ActionResult::Stopped => {
+            // `call_macro` is expanded inline by the engine. Everything else is
+            // resolved against the current scope before being dispatched.
+            if let DslAction::CallMacro { name, args } = &timed_action.action {
+                if !self.execute_call_macro(name, args, speed, sub_ctx) {
                     return false;
                 }
-                ActionResult::Exit => {
-                    return false; // Exit macro
+                self.emit(EngineEvent::ActionCompleted { index });
+                continue;
+            }
+
+            let action = {
+                let vars = self.variables.lock().unwrap();
+                match resolve_action(&timed_action.action, &vars, &self.expr_engine) {
+                    Ok(action) => action,
+                    Err(e) => {
+                        self.emit(EngineEvent::Error {
+                            message: format!("Failed to resolve action {}: {}", index, e),
+                        });
+                        return false;
+                    }
                 }
-                ActionResult::Timeout => {
-                    // Continue to next action on timeout
+            };
+
+            match self.execute_action(&action, index) {
+                ActionResult::Completed | ActionResult::Timeout => {
                     self.emit(EngineEvent::ActionCompleted { index });
                 }
+                ActionResult::Stopped => return false,
+                ActionResult::Exit => return false, // Exit ends this macro only
             }
         }
 
+        true
+    }
+
+    /// Expand and execute a `call_macro` step with cycle/depth protection.
+    ///
+    /// Returns false only when the whole run should stop; sub-macro guard
+    /// violations (cycle, max depth, load/arg errors) are reported as `Error`
+    /// events and skipped so the parent timeline keeps running.
+    fn execute_call_macro(
+        &self,
+        name: &str,
+        args: &HashMap<String, DslValue>,
+        speed: f32,
+        sub_ctx: &SubMacroContextHandle,
+    ) -> bool {
+        if let Err(e) = sub_ctx.lock().unwrap().push(name) {
+            self.emit(EngineEvent::Error {
+                message: e.to_string(),
+            });
+            return true; // skip this call, keep running the parent
+        }
+
+        let keep_running = self.run_submacro(name, args, speed, sub_ctx);
+
+        sub_ctx.lock().unwrap().pop();
+        keep_running
+    }
+
+    /// Inner body of a sub-macro call. Kept separate so the call-stack `pop` in
+    /// [`Self::execute_call_macro`] always runs, even on early return.
+    fn run_submacro(
+        &self,
+        name: &str,
+        args: &HashMap<String, DslValue>,
+        speed: f32,
+        sub_ctx: &SubMacroContextHandle,
+    ) -> bool {
+        let child_doc = match (self.loader)(name) {
+            Ok(doc) => doc,
+            Err(e) => {
+                self.emit(EngineEvent::Error {
+                    message: format!("Failed to load macro '{}': {}", name, e),
+                });
+                return true; // skip this call, keep running the parent
+            }
+        };
+
+        // Snapshot-and-swap: build an isolated child scope (parent snapshot +
+        // child defaults + resolved args), run the child, then restore the
+        // parent so sibling/parent scopes stay clean.
+        let parent_scope = self.variables.lock().unwrap().clone();
+        let resolved_args = match prepare_submacro_args(args, &parent_scope) {
+            Ok(a) => a,
+            Err(e) => {
+                self.emit(EngineEvent::Error {
+                    message: format!("Failed to prepare args for '{}': {}", name, e),
+                });
+                return true;
+            }
+        };
+        let child_scope = create_child_variable_store(&parent_scope, &child_doc, resolved_args);
+        *self.variables.lock().unwrap() = child_scope;
+
+        let keep_running = self.execute_timeline(&child_doc.timeline, speed, &child_doc, sub_ctx);
+
+        *self.variables.lock().unwrap() = parent_scope;
+
+        // The child returns false on `Exit` as well; only propagate an actual
+        // stop request to the parent.
+        if !keep_running && self.should_stop() {
+            return false;
+        }
         true
     }
 
@@ -356,8 +485,11 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                         self.transition_state(EngineState::Running);
                     }
                 }
-                EngineCommand::SetProfile(p) => {
-                    *self.profile.lock().unwrap() = Some(p);
+                EngineCommand::SetDocument(document) => {
+                    *self.document.lock().unwrap() = Some(*document);
+                }
+                EngineCommand::SetRuntimeVars(vars) => {
+                    *self.runtime_vars.lock().unwrap() = vars;
                 }
                 _ => {}
             }
@@ -394,8 +526,8 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
     }
 
     /// Check if target window is focused (if target_window is set).
-    fn check_target_window(&self, profile: &Profile) -> bool {
-        if let Some(ref target) = profile.target_window {
+    fn check_target_window(&self, doc: &MacroDocument) -> bool {
+        if let Some(ref target) = doc.target_window {
             if target.pause_when_unfocused {
                 return self
                     .platform
@@ -406,9 +538,9 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
     }
 
     /// Wait for target window to be focused.
-    fn wait_for_target_window(&self, profile: &Profile) -> bool {
-        if let Some(ref target) = profile.target_window {
-            if !self.check_target_window(profile) {
+    fn wait_for_target_window(&self, doc: &MacroDocument) -> bool {
+        if let Some(ref target) = doc.target_window {
+            if !self.check_target_window(doc) {
                 self.emit(EngineEvent::TargetWindowUnfocused {
                     title: target.title.clone(),
                     process: target.process.clone(),
@@ -419,7 +551,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                     if self.should_stop() {
                         return false;
                     }
-                    if self.check_target_window(profile) {
+                    if self.check_target_window(doc) {
                         self.emit(EngineEvent::TargetWindowFocused);
                         return true;
                     }
@@ -611,29 +743,4 @@ impl<'a, P: PlatformConditionProvider> ConditionEvaluator for RuntimeConditionEv
     fn get_counter(&self, key: &str) -> i32 {
         self.variables.lock().unwrap().get_counter(key)
     }
-}
-
-/// Adapter to use tap-platform's InputInjector as ActionExecutor.
-pub struct InjectorExecutor<I> {
-    injector: I,
-}
-
-impl<I> InjectorExecutor<I> {
-    pub fn new(injector: I) -> Self {
-        Self { injector }
-    }
-}
-
-impl<I> ActionExecutor for InjectorExecutor<I>
-where
-    I: crate::ActionExecutorAdapter + Send + Sync,
-{
-    fn execute(&self, action: &Action) -> Result<(), String> {
-        self.injector.inject(action)
-    }
-}
-
-/// Adapter trait for external injectors (to avoid circular dependency).
-pub trait ActionExecutorAdapter {
-    fn inject(&self, action: &Action) -> Result<(), String>;
 }

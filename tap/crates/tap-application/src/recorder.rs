@@ -1,8 +1,8 @@
 //! Recording engine: captures input events and converts to Timeline.
 
-use crate::{Action, MouseButton, TimedAction, Timeline};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use tap_core::{Action, MouseButton, TimedAction, Timeline};
 use tracing::{debug, info};
 
 /// Configuration for the recorder.

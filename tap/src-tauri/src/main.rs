@@ -6,17 +6,19 @@ mod state;
 use key_click::{start_key_click_runner, KeyClickConfig, KeyClickEvent, KeyClickStatus};
 use state::{AppState, MousePositionUpdate, PositionPickedEvent, RecordingStatus};
 use std::sync::{Arc, Mutex};
+use tap_application::{
+    delete_profile, list_profiles, load_document, load_last_used, save_document, save_last_used,
+    ActionExecutor, Coordinator, EngineEvent, EngineState, MouseButtonRaw,
+    PlatformConditionProvider, Player, RawEventType, Recorder, RecorderState,
+};
 use tap_core::{
-    delete_profile, export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, list_profiles,
-    load_last_used, load_profile, parse_yaml, save_last_used, save_profile, validate_profile,
-    Action, ConditionColor, EngineCommand, EngineEvent, EngineState, InjectorExecutor,
-    MouseButtonRaw, PlatformConditionProvider, Player, Profile, RawEventType, Recorder,
-    RecorderState, Repeat, RunConfig, TimedAction, Timeline, ValidationError, VariableStore,
+    document_to_yaml, parse_yaml, validate_profile, Action, ConditionColor, MacroDocument, Profile,
+    Repeat, RunConfig, TimedAction, Timeline, ValidationError, VariableValue,
 };
 use tap_platform::{
     get_pixel_color, is_window_focused, list_windows, set_dpi_aware, start_input_hook,
-    start_mouse_tracker, window_exists, Color, EnigoInjector, InputEventType, MouseButtonType,
-    MouseTrackerConfig, MouseTrackerEvent, WindowInfo,
+    start_mouse_tracker, window_exists, Color, EnigoInjector, InputEventType, InputInjector,
+    MouseButtonType, MouseTrackerConfig, MouseTrackerEvent, WindowInfo,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -31,65 +33,30 @@ fn get_default_profile() -> Profile {
 
 #[tauri::command]
 fn get_state(state: State<'_, Mutex<AppState>>) -> EngineState {
-    state.lock().unwrap().engine_state
+    state.lock().unwrap().coordinator.engine_state()
 }
 
 #[tauri::command]
 fn start_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
     let app_state = state.lock().unwrap();
-
-    if app_state.engine_state != EngineState::Idle {
-        return Err("Cannot start: not in idle state".into());
-    }
-
-    // Send the current profile to the player
-    if let Some(ref handle) = app_state.player_handle {
-        handle.send(EngineCommand::SetProfile(app_state.profile.clone()));
-        handle.send(EngineCommand::Start);
-        info!("Sent start command to player");
-    }
-
+    app_state.coordinator.start()?;
+    info!("Sent start command to player");
     Ok(())
 }
 
 #[tauri::command]
 fn pause_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app_state = state.lock().unwrap();
-
-    if app_state.engine_state != EngineState::Running {
-        return Err("Cannot pause: not running".into());
-    }
-
-    if let Some(ref handle) = app_state.player_handle {
-        handle.send(EngineCommand::Pause);
-    }
-
-    Ok(())
+    state.lock().unwrap().coordinator.pause()
 }
 
 #[tauri::command]
 fn resume_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app_state = state.lock().unwrap();
-
-    if app_state.engine_state != EngineState::Paused {
-        return Err("Cannot resume: not paused".into());
-    }
-
-    if let Some(ref handle) = app_state.player_handle {
-        handle.send(EngineCommand::Resume);
-    }
-
-    Ok(())
+    state.lock().unwrap().coordinator.resume()
 }
 
 #[tauri::command]
 fn stop_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app_state = state.lock().unwrap();
-
-    if let Some(ref handle) = app_state.player_handle {
-        handle.send(EngineCommand::Stop);
-    }
-
+    state.lock().unwrap().coordinator.stop();
     Ok(())
 }
 
@@ -97,11 +64,8 @@ fn stop_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
 fn emergency_stop(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
     let app_state = state.lock().unwrap();
 
-    // Stop player if running
-    if let Some(ref handle) = app_state.player_handle {
-        handle.send(EngineCommand::EmergencyStop);
-        warn!("Emergency stop triggered!");
-    }
+    app_state.coordinator.emergency_stop();
+    warn!("Emergency stop triggered!");
 
     // Also stop key-click mode if running (just signal, don't take)
     if let Some(ref handle) = app_state.key_click_handle {
@@ -115,11 +79,12 @@ fn emergency_stop(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
 #[tauri::command]
 fn update_profile(state: State<'_, Mutex<AppState>>, profile: Profile) -> Result<(), String> {
     let mut app_state = state.lock().unwrap();
-    app_state.profile = profile;
+    app_state.coordinator.apply_profile_edit(&profile);
     Ok(())
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: arguments mirror the UI form fields.
 fn set_simple_repeat(
     state: State<'_, Mutex<AppState>>,
     action_type: String,
@@ -158,7 +123,7 @@ fn set_simple_repeat(
         None => Repeat::Forever,
     };
 
-    app_state.profile = Profile {
+    let profile = Profile {
         name: "Simple Repeat".into(),
         timeline,
         run: RunConfig {
@@ -169,7 +134,13 @@ fn set_simple_repeat(
         target_window: None,
     };
 
-    info!(?app_state.profile, "Updated profile for simple repeat");
+    // Simple Repeat is a brand-new macro (no variables), so replace the
+    // canonical document outright rather than merging over the current one.
+    app_state
+        .coordinator
+        .set_document(MacroDocument::from(&profile));
+
+    info!(?profile, "Updated document for simple repeat");
 
     Ok(())
 }
@@ -195,7 +166,7 @@ fn start_key_click(
     let mut app_state = state.lock().unwrap();
 
     // Check mutual exclusion: must be idle
-    if app_state.engine_state != EngineState::Idle {
+    if app_state.coordinator.engine_state() != EngineState::Idle {
         return Err("Cannot start key-click: engine is not idle".into());
     }
 
@@ -306,24 +277,26 @@ fn cmd_save_profile(
     let mut app_state = state.lock().unwrap();
 
     if let Some(n) = name {
-        app_state.profile.name = n;
+        app_state.coordinator.session_mut().set_name(n);
     }
 
-    let path = save_profile(&app_state.profile).map_err(|e| e.to_string())?;
-    let _ = save_last_used(&app_state.profile.name);
+    // Persist the lossless canonical document (variables + metadata included).
+    let document = app_state.coordinator.document().clone();
+    let path = save_document(&document).map_err(|e| e.to_string())?;
+    let _ = save_last_used(&document.name);
 
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 fn cmd_load_profile(state: State<'_, Mutex<AppState>>, name: String) -> Result<Profile, String> {
-    let profile = load_profile(&name).map_err(|e| e.to_string())?;
+    let document = load_document(&name).map_err(|e| e.to_string())?;
 
     let mut app_state = state.lock().unwrap();
-    app_state.profile = profile.clone();
+    app_state.coordinator.set_document(document);
     let _ = save_last_used(&name);
 
-    Ok(profile)
+    Ok(app_state.coordinator.profile_view())
 }
 
 #[tauri::command]
@@ -343,7 +316,7 @@ fn cmd_get_last_used() -> Option<String> {
 
 #[tauri::command]
 fn get_current_profile(state: State<'_, Mutex<AppState>>) -> Profile {
-    state.lock().unwrap().profile.clone()
+    state.lock().unwrap().coordinator.profile_view()
 }
 
 // === Recording Commands ===
@@ -356,7 +329,7 @@ fn start_recording(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
         return Err("Recording already in progress".into());
     }
 
-    if app_state.engine_state != EngineState::Idle {
+    if app_state.coordinator.engine_state() != EngineState::Idle {
         return Err("Cannot record while playing".into());
     }
 
@@ -413,7 +386,7 @@ fn stop_recording(state: State<'_, Mutex<AppState>>) -> Result<Timeline, String>
     // Stop the recorder and get the timeline
     let event = app_state.recorder.stop();
     let timeline = match event {
-        Some(tap_core::RecorderEvent::RecordingCompleted { timeline }) => timeline,
+        Some(tap_application::RecorderEvent::RecordingCompleted { timeline }) => timeline,
         _ => Timeline { actions: vec![] },
     };
 
@@ -422,9 +395,15 @@ fn stop_recording(state: State<'_, Mutex<AppState>>) -> Result<Timeline, String>
         timeline.actions.len()
     );
 
-    // Update the profile with the recorded timeline
-    app_state.profile.timeline = timeline.clone();
-    app_state.profile.name = "Recorded".into();
+    // Update the canonical document with the recorded timeline.
+    app_state
+        .coordinator
+        .session_mut()
+        .set_recorded_timeline(timeline.clone());
+    app_state
+        .coordinator
+        .session_mut()
+        .set_name("Recorded".into());
 
     Ok(timeline)
 }
@@ -650,7 +629,8 @@ impl From<ValidationError> for ValidationErrorResponse {
 #[tauri::command]
 fn cmd_export_yaml(state: State<'_, Mutex<AppState>>) -> Result<String, String> {
     let app_state = state.lock().unwrap();
-    export_to_yaml(&app_state.profile).map_err(|e| e.to_string())
+    // Serialize the lossless canonical document directly (keeps variables/metadata).
+    document_to_yaml(app_state.coordinator.document()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -660,7 +640,14 @@ fn cmd_export_yaml_with_metadata(
     author: Option<String>,
 ) -> Result<String, String> {
     let app_state = state.lock().unwrap();
-    export_to_yaml_with_metadata(&app_state.profile, description, author).map_err(|e| e.to_string())
+    let mut document = app_state.coordinator.document().clone();
+    if description.is_some() {
+        document.description = description;
+    }
+    if author.is_some() {
+        document.author = author;
+    }
+    document_to_yaml(&document).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -668,11 +655,11 @@ fn cmd_import_yaml(
     state: State<'_, Mutex<AppState>>,
     yaml_content: String,
 ) -> Result<Profile, String> {
-    // Parse and validate
-    let dsl_profile = parse_yaml(&yaml_content).map_err(|e| e.to_string())?;
+    // Parse into the canonical document (lossless: keeps variables + metadata).
+    let document = parse_yaml(&yaml_content).map_err(|e| e.to_string())?;
 
     // Validate
-    validate_profile(&dsl_profile).map_err(|errors| {
+    validate_profile(&document).map_err(|errors| {
         errors
             .iter()
             .map(|e| e.to_string())
@@ -680,14 +667,11 @@ fn cmd_import_yaml(
             .join("; ")
     })?;
 
-    // Convert to Profile
-    let profile = import_from_yaml(&yaml_content).map_err(|e| e.to_string())?;
-
-    // Update app state
+    // Update app state and return the resolved Profile view for display.
     let mut app_state = state.lock().unwrap();
-    app_state.profile = profile.clone();
+    app_state.coordinator.set_document(document);
 
-    Ok(profile)
+    Ok(app_state.coordinator.profile_view())
 }
 
 #[tauri::command]
@@ -707,27 +691,23 @@ fn cmd_validate_yaml(yaml_content: String) -> Result<(), Vec<ValidationErrorResp
 fn cmd_get_macro_variables(state: State<'_, Mutex<AppState>>) -> Vec<VariableDefinitionResponse> {
     let app_state = state.lock().unwrap();
 
-    // Export to YAML and parse to get variable definitions
-    if let Ok(yaml) = export_to_yaml(&app_state.profile) {
-        if let Ok(dsl_profile) = parse_yaml(&yaml) {
-            return dsl_profile
-                .variables
-                .into_iter()
-                .map(|(name, def)| VariableDefinitionResponse {
-                    name,
-                    var_type: match def.var_type {
-                        tap_core::VariableType::String => "string".to_string(),
-                        tap_core::VariableType::Number => "number".to_string(),
-                        tap_core::VariableType::Boolean => "boolean".to_string(),
-                    },
-                    default: def.default,
-                    description: def.description,
-                })
-                .collect();
-        }
-    }
-
-    Vec::new()
+    // Read variable definitions straight off the canonical document.
+    app_state
+        .coordinator
+        .document()
+        .variables
+        .iter()
+        .map(|(name, def)| VariableDefinitionResponse {
+            name: name.clone(),
+            var_type: match def.var_type {
+                tap_core::VariableType::String => "string".to_string(),
+                tap_core::VariableType::Number => "number".to_string(),
+                tap_core::VariableType::Boolean => "boolean".to_string(),
+            },
+            default: def.default.clone(),
+            description: def.description.clone(),
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -735,17 +715,27 @@ fn cmd_set_runtime_variables(
     state: State<'_, Mutex<AppState>>,
     vars: std::collections::HashMap<String, serde_json::Value>,
 ) -> Result<(), String> {
-    let mut app_state = state.lock().unwrap();
-
+    // Convert the JSON payload into typed run-time overrides applied on the next
+    // run (these win over the document's variable defaults in the Resolve stage).
+    let mut overrides = std::collections::HashMap::new();
     for (key, value) in vars {
-        if let Some(s) = value.as_str() {
-            app_state.variables.set_variable(&key, s.to_string());
+        let typed = if let Some(s) = value.as_str() {
+            VariableValue::String(s.to_string())
         } else if let Some(n) = value.as_f64() {
-            app_state.variables.set_variable(&key, n);
+            VariableValue::Number(n)
         } else if let Some(b) = value.as_bool() {
-            app_state.variables.set_variable(&key, b);
-        }
+            VariableValue::Boolean(b)
+        } else {
+            continue;
+        };
+        overrides.insert(key, typed);
     }
+
+    state
+        .lock()
+        .unwrap()
+        .coordinator
+        .set_runtime_vars(overrides);
 
     Ok(())
 }
@@ -757,29 +747,39 @@ fn cmd_get_runtime_variables(
     let app_state = state.lock().unwrap();
     let mut result = std::collections::HashMap::new();
 
-    for (key, value) in app_state.variables.all_variables() {
+    for (key, value) in app_state.coordinator.runtime_vars() {
         let json_val = match value {
-            tap_core::VariableValue::String(s) => serde_json::Value::String(s.clone()),
-            tap_core::VariableValue::Number(n) => serde_json::Value::Number(
+            VariableValue::String(s) => serde_json::Value::String(s.clone()),
+            VariableValue::Number(n) => serde_json::Value::Number(
                 serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
             ),
-            tap_core::VariableValue::Boolean(b) => serde_json::Value::Bool(*b),
+            VariableValue::Boolean(b) => serde_json::Value::Bool(*b),
         };
         result.insert(key.clone(), json_val);
-    }
-
-    // Also include counters
-    for (key, value) in app_state.variables.all_counters() {
-        result.insert(
-            key.clone(),
-            serde_json::Value::Number(serde_json::Number::from(value)),
-        );
     }
 
     result
 }
 
-// === Platform Condition Provider ===
+// === Engine Ports (adapter bridges) ===
+
+/// Bridges the `tap-platform` injector to the application-layer [`ActionExecutor`]
+/// port, keeping `tap-application` free of any platform dependency.
+struct EnigoExecutor {
+    injector: EnigoInjector,
+}
+
+impl EnigoExecutor {
+    fn new(injector: EnigoInjector) -> Self {
+        Self { injector }
+    }
+}
+
+impl ActionExecutor for EnigoExecutor {
+    fn execute(&self, action: &Action) -> Result<(), String> {
+        InputInjector::inject(&self.injector, action).map_err(|e| e.to_string())
+    }
+}
 
 /// Platform condition provider for the engine.
 pub struct TauriPlatformProvider;
@@ -823,9 +823,11 @@ fn setup_app(app: &AppHandle) {
     // Create the platform condition provider
     let platform_provider = TauriPlatformProvider;
 
-    // Create the player with executor and platform provider
-    let executor = InjectorExecutor::new(injector);
+    // Create the player with executor and platform provider, wrapped in the
+    // application-layer coordinator (owns the engine state machine + document).
+    let executor = EnigoExecutor::new(injector);
     let player_handle = Player::spawn(executor, platform_provider);
+    let coordinator = Coordinator::new(player_handle);
 
     // Create the recorder
     let recorder = Recorder::with_defaults();
@@ -835,15 +837,12 @@ fn setup_app(app: &AppHandle) {
 
     // Store handles in app state
     let state = AppState {
-        engine_state: EngineState::Idle,
-        profile: Profile::default(),
-        player_handle: Some(player_handle),
+        coordinator,
         executed_count: 0,
         current_action_index: None,
         recorder,
         input_hook: None,
         mouse_tracker: Some(mouse_tracker),
-        variables: VariableStore::new(),
         key_click_handle: None,
     };
 
@@ -867,11 +866,7 @@ fn poll_events(app: AppHandle) {
         // Collect player events
         let player_events: Vec<_> = {
             let app_state = state.lock().unwrap();
-            app_state
-                .player_handle
-                .as_ref()
-                .map(|h| std::iter::from_fn(|| h.try_recv()).collect())
-                .unwrap_or_default()
+            app_state.coordinator.drain_events()
         };
 
         // Process player events
@@ -883,7 +878,7 @@ fn poll_events(app: AppHandle) {
                 let mut app_state = state.lock().unwrap();
                 match &event {
                     EngineEvent::StateChanged { new, .. } => {
-                        app_state.engine_state = *new;
+                        app_state.coordinator.set_engine_state(*new);
                     }
                     EngineEvent::ActionCompleted { index } => {
                         app_state.current_action_index = Some(*index);
@@ -920,28 +915,24 @@ fn poll_events(app: AppHandle) {
                 // Convert platform event to core event
                 let core_event = convert_input_event(&raw_event.event, last_pos);
 
-                // Push to recorder
-                if let Some(recorder_event) = app_state
+                // Push to recorder; emit recording status to the frontend.
+                if let Some(tap_application::RecorderEvent::EventCaptured {
+                    event_count,
+                    duration_ms,
+                }) = app_state
                     .recorder
                     .push_event(raw_event.timestamp_ms, core_event)
                 {
-                    // Emit recording status to frontend
-                    if let tap_core::RecorderEvent::EventCaptured {
+                    let status = RecordingStatus {
+                        state: app_state.recorder.state(),
                         event_count,
                         duration_ms,
-                    } = recorder_event
-                    {
-                        let status = RecordingStatus {
-                            state: app_state.recorder.state(),
-                            event_count,
-                            duration_ms,
-                        };
-                        drop(app_state);
-                        if let Err(e) = app.emit("recording-status", &status) {
-                            warn!("Failed to emit recording status: {}", e);
-                        }
-                        app_state = state.lock().unwrap();
+                    };
+                    drop(app_state);
+                    if let Err(e) = app.emit("recording-status", &status) {
+                        warn!("Failed to emit recording status: {}", e);
                     }
+                    app_state = state.lock().unwrap();
                 }
             }
         }
@@ -1066,9 +1057,7 @@ fn handle_emergency_stop(app: &AppHandle) {
     let app_state = state.lock().unwrap();
 
     // Stop player if running
-    if let Some(ref player) = app_state.player_handle {
-        player.send(EngineCommand::EmergencyStop);
-    }
+    app_state.coordinator.emergency_stop();
 
     // Stop key-click mode if running (just signal, don't take)
     if let Some(ref handle) = app_state.key_click_handle {
@@ -1104,7 +1093,7 @@ fn main() {
         )
         .setup(move |app| {
             // Register the shortcut
-            if let Err(e) = app.global_shortcut().register(emergency_shortcut.clone()) {
+            if let Err(e) = app.global_shortcut().register(emergency_shortcut) {
                 error!("Failed to register emergency shortcut: {:?}", e);
             } else {
                 info!("Emergency stop shortcut registered: Ctrl+Shift+Backspace");

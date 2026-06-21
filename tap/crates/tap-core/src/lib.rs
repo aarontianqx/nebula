@@ -5,12 +5,8 @@
 
 mod condition;
 mod dsl;
-mod engine;
 mod expression;
-mod recorder;
 mod schema;
-mod storage;
-mod submacro;
 mod variables;
 
 pub use condition::{
@@ -21,28 +17,11 @@ pub use dsl::{
     DslAction, DslCondition, DslError, DslMouseButton, DslRunConfig, DslTargetWindow,
     DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType, DSL_VERSION,
 };
-pub use engine::{
-    ActionExecutor, ActionExecutorAdapter, EngineCommand, EngineEvent, EngineState,
-    InjectorExecutor, PlatformConditionProvider, Player, PlayerHandle,
-};
 pub use expression::{
     create_expression_engine, resolve_expressions, ExpressionEngine, ExpressionEngineHandle,
     ExpressionError, ExpressionResult,
 };
-pub use recorder::{
-    BufferedEvent, MouseButtonRaw, RawEventType, Recorder, RecorderConfig, RecorderEvent,
-    RecorderState,
-};
 pub use schema::{validate_profile, ValidationError, ValidationResult};
-pub use storage::{
-    delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
-    load_document, load_last_used, load_profile, save_document, save_last_used, save_profile,
-    StorageError, StorageResult,
-};
-pub use submacro::{
-    create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,
-    SubMacroContextHandle, SubMacroError, MAX_CALL_DEPTH,
-};
 pub use variables::{VariableError, VariableResolver, VariableStore, VariableValue};
 
 use serde::{Deserialize, Serialize};

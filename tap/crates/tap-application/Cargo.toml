@@ -1,0 +1,19 @@
+[package]
+name = "tap-application"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "tap application layer: playback engine, recording, persistence, and session orchestration."
+
+[dependencies]
+tap-core = { path = "../tap-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tracing = "0.1"
+crossbeam-channel = "0.5"
+dirs-next = "2"
+
+[dev-dependencies]
+serde_json = "1"

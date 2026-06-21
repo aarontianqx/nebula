@@ -90,11 +90,7 @@ impl Default for KeyClickConfig {
 }
 
 fn is_az_key(key: &str) -> bool {
-    key.len() == 1
-        && key
-            .chars()
-            .next()
-            .map_or(false, |c| c.is_ascii_alphabetic())
+    key.len() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
 }
 
 pub fn start_key_click_runner(
@@ -141,6 +137,7 @@ struct ActiveKey {
     next_repeat_at: Instant,
 }
 
+#[allow(clippy::too_many_arguments)] // internal worker: shares the runner's handles directly.
 fn run_loop(
     config: KeyClickConfig,
     input_hook: InputHookHandle,
