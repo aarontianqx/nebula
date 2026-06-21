@@ -841,9 +841,9 @@ impl TryFrom<&DslCondition> for Condition {
                     .map(Condition::try_from)
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            DslCondition::Not { condition } => {
-                Ok(Condition::Not(Box::new(Condition::try_from(condition.as_ref())?)))
-            }
+            DslCondition::Not { condition } => Ok(Condition::Not(Box::new(Condition::try_from(
+                condition.as_ref(),
+            )?))),
         }
     }
 }
