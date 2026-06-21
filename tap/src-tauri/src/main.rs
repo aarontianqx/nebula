@@ -17,9 +17,10 @@ use tap_core::{
     Repeat, RunConfig, TimedAction, Timeline, ValidationError, VariableValue,
 };
 use tap_platform::{
-    get_pixel_color, is_window_focused, list_windows, set_dpi_aware, start_input_hook,
-    start_mouse_tracker, window_exists, Color, EnigoInjector, InputEventType, InputInjector,
-    MouseButtonType, MouseTrackerConfig, MouseTrackerEvent, WindowInfo,
+    check_permissions, get_pixel_color, is_window_focused, list_windows, open_permission_settings,
+    request_screen_recording, set_dpi_aware, start_input_hook, start_mouse_tracker, window_exists,
+    Color, EnigoInjector, InputEventType, InputInjector, MouseButtonType, MouseTrackerConfig,
+    MouseTrackerEvent, PermissionStatus, WindowInfo,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -320,6 +321,23 @@ fn cmd_get_last_used() -> Option<String> {
 #[tauri::command]
 fn cmd_get_recent_profiles() -> Vec<String> {
     load_recent()
+}
+
+// === Permissions ===
+
+#[tauri::command]
+fn cmd_check_permissions() -> PermissionStatus {
+    check_permissions()
+}
+
+#[tauri::command]
+fn cmd_request_screen_recording() -> PermissionStatus {
+    request_screen_recording()
+}
+
+#[tauri::command]
+fn cmd_open_permission_settings(which: String) -> Result<(), String> {
+    open_permission_settings(&which)
 }
 
 /// Document metadata exposed to the frontend (lossless edit surface).
@@ -1216,6 +1234,9 @@ fn main() {
             cmd_list_profiles,
             cmd_get_last_used,
             cmd_get_recent_profiles,
+            cmd_check_permissions,
+            cmd_request_screen_recording,
+            cmd_open_permission_settings,
             cmd_get_document_meta,
             cmd_set_document_meta,
             cmd_list_templates,
