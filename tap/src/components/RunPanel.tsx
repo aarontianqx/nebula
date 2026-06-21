@@ -1,9 +1,12 @@
 import { startTimelineRun } from "../lib/run";
 import { useDocumentStore } from "../stores/documentStore";
 import { useEngineStore } from "../stores/engineStore";
+import { selectInputReady, usePermissionStore } from "../stores/permissionStore";
 import { useRecorderStore } from "../stores/recorderStore";
 import { useToolStore } from "../stores/toolStore";
 import { useUiStore } from "../stores/uiStore";
+
+const INPUT_BLOCKED_HINT = "Grant macOS Accessibility to record and replay (see the banner above).";
 
 export function RunPanel() {
   const mode = useUiStore((s) => s.mode);
@@ -25,6 +28,8 @@ export function RunPanel() {
 
   const timelineLength = useDocumentStore((s) => s.timeline.length);
   const variableCount = useDocumentStore((s) => s.variables.length);
+
+  const inputReady = usePermissionStore(selectInputReady);
 
   const isIdle = engineState === "Idle";
   const isRunning = engineState === "Running";
@@ -58,7 +63,12 @@ export function RunPanel() {
       <div className="card controls-card">
         <div className="control-buttons">
           {mode === "timeline" && canRecord && (
-            <button className="btn btn-record" onClick={() => recorder.getState().start()}>
+            <button
+              className="btn btn-record"
+              onClick={() => recorder.getState().start()}
+              disabled={!inputReady}
+              title={inputReady ? undefined : INPUT_BLOCKED_HINT}
+            >
               Record
             </button>
           )}
@@ -86,13 +96,19 @@ export function RunPanel() {
             <button
               className="btn btn-primary btn-large"
               onClick={handlePlay}
-              disabled={mode === "timeline" && timelineLength === 0}
+              disabled={!inputReady || (mode === "timeline" && timelineLength === 0)}
+              title={inputReady ? undefined : INPUT_BLOCKED_HINT}
             >
               Play
             </button>
           )}
           {showKeyClickStart && (
-            <button className="btn btn-primary btn-large" onClick={() => tool.getState().startKeyClick()}>
+            <button
+              className="btn btn-primary btn-large"
+              onClick={() => tool.getState().startKeyClick()}
+              disabled={!inputReady}
+              title={inputReady ? undefined : INPUT_BLOCKED_HINT}
+            >
               Start Key-&gt;Click
             </button>
           )}

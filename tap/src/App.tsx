@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 
 import { ActivityLog } from "./components/ActivityLog";
+import { OnboardingBanner } from "./components/OnboardingBanner";
+import { PermissionBanner } from "./components/PermissionBanner";
 import { RunPanel } from "./components/RunPanel";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -9,6 +11,7 @@ import { TimelineEditor } from "./components/timeline/TimelineEditor";
 import { VariableDialog } from "./components/modals/VariableDialog";
 import { setupEventListeners } from "./lib/events";
 import { useDocumentStore } from "./stores/documentStore";
+import { usePermissionStore } from "./stores/permissionStore";
 import { useUiStore } from "./stores/uiStore";
 
 export default function App() {
@@ -27,9 +30,15 @@ export default function App() {
     void doc.loadRecents();
     void doc.loadTemplates();
     void doc.refreshFromBackend();
+    // Probe OS permissions now, and again when the window regains focus so
+    // grants made in System Settings reflect without a manual re-check.
+    void usePermissionStore.getState().refresh();
+    const onFocus = () => void usePermissionStore.getState().refresh();
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
       cleanup?.();
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 
@@ -39,6 +48,8 @@ export default function App() {
       <div className="layout">
         <Sidebar />
         <main className="main">
+          <OnboardingBanner />
+          <PermissionBanner />
           <RunPanel />
           {mode === "timeline" && <TimelineEditor />}
           <ActivityLog />
