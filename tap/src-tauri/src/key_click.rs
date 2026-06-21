@@ -1,10 +1,15 @@
 //! Key-to-Click tool mode.
 //!
-//! Behavior:
-//! - On KeyDown (A-Z): Immediately click once
-//! - If key is held longer than `hold_delay_ms`: Start repeating clicks at `interval_ms`
-//! - On KeyUp: Stop repeating (return to armed state)
-//! - On Space KeyDown: Stop the entire mode immediately
+//! An event-driven "hold a key to keep clicking" tool, separate from the
+//! timeline engine. Behavior:
+//! - On KeyDown (A-Z): click once immediately, then arm a repeat timer.
+//! - If the key is held past `hold_delay_ms`: repeat clicks every `min_interval_ms`.
+//! - On KeyUp: stop repeating (return to the armed state, ready for the next key).
+//! - On Space KeyDown: stop the whole mode immediately.
+//!
+//! Clicks use the configured mouse button at either the live cursor position or
+//! a fixed point, and can be gated to a single window so alt-tabbing away never
+//! leaks clicks into the wrong app.
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -15,17 +20,81 @@ use tap_core::{Action, MouseButton};
 use tap_platform::{EnigoInjector, InputEventType, InputHookHandle, InputInjector};
 use tracing::{debug, info, warn};
 
+/// Reports whether clicks are currently allowed (e.g. the target window is focused).
+pub type FocusGate = Box<dyn Fn() -> bool + Send>;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum KeyClickEvent {
     Started,
     Click { count: u64, x: i32, y: i32 },
-    Stopped { total_clicks: u64 },
+    Stopped { total_clicks: u64, reason: String },
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct KeyClickStatus {
     pub running: bool,
     pub click_count: u64,
+}
+
+/// Mouse button choice, deserialized from the frontend (`"left"`/`"right"`/`"middle"`).
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyClickButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl From<KeyClickButton> for MouseButton {
+    fn from(b: KeyClickButton) -> Self {
+        match b {
+            KeyClickButton::Left => MouseButton::Left,
+            KeyClickButton::Right => MouseButton::Right,
+            KeyClickButton::Middle => MouseButton::Middle,
+        }
+    }
+}
+
+/// Where each click lands.
+#[derive(Debug, Clone, Copy)]
+pub enum ClickLocation {
+    /// The live cursor position at click time.
+    Cursor,
+    /// A fixed point in injection-space coordinates.
+    Fixed { x: i32, y: i32 },
+}
+
+/// Raw Key->Click request from the frontend; [`to_config`](Self::to_config) clamps and resolves it.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyClickRequest {
+    pub min_interval_ms: u64,
+    pub hold_delay_ms: u64,
+    pub button: KeyClickButton,
+    /// `"cursor"` (default) or `"fixed"`.
+    pub location_mode: String,
+    pub fixed_x: i32,
+    pub fixed_y: i32,
+    /// When true, lock clicks to the window focused at start time.
+    pub only_target_focused: bool,
+}
+
+impl KeyClickRequest {
+    pub fn to_config(&self) -> KeyClickConfig {
+        KeyClickConfig {
+            min_interval_ms: self.min_interval_ms.clamp(10, 1000),
+            hold_delay_ms: self.hold_delay_ms.min(5000),
+            button: self.button.into(),
+            location: if self.location_mode == "fixed" {
+                ClickLocation::Fixed {
+                    x: self.fixed_x,
+                    y: self.fixed_y,
+                }
+            } else {
+                ClickLocation::Cursor
+            },
+        }
+    }
 }
 
 pub struct KeyClickHandle {
@@ -74,17 +143,21 @@ impl Drop for KeyClickHandle {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct KeyClickConfig {
-    pub interval_ms: u64,
+    pub min_interval_ms: u64,
     pub hold_delay_ms: u64,
+    pub button: MouseButton,
+    pub location: ClickLocation,
 }
 
 impl Default for KeyClickConfig {
     fn default() -> Self {
         Self {
-            interval_ms: 50,
+            min_interval_ms: 40,
             hold_delay_ms: 150,
+            button: MouseButton::Left,
+            location: ClickLocation::Cursor,
         }
     }
 }
@@ -98,6 +171,7 @@ pub fn start_key_click_runner(
     input_hook: InputHookHandle,
     injector: Arc<EnigoInjector>,
     get_mouse_position: impl Fn() -> (i32, i32) + Send + 'static,
+    focus_gate: Option<FocusGate>,
 ) -> KeyClickHandle {
     let (event_tx, event_rx) = bounded::<KeyClickEvent>(256);
 
@@ -115,6 +189,7 @@ pub fn start_key_click_runner(
             input_hook,
             injector,
             get_mouse_position,
+            focus_gate,
             stop_clone,
             event_tx,
             running_clone,
@@ -143,47 +218,59 @@ fn run_loop(
     input_hook: InputHookHandle,
     injector: Arc<EnigoInjector>,
     get_mouse_position: impl Fn() -> (i32, i32),
+    focus_gate: Option<FocusGate>,
     stop_requested: Arc<AtomicBool>,
     event_tx: Sender<KeyClickEvent>,
     running: Arc<AtomicBool>,
     click_count: Arc<AtomicU64>,
 ) {
     info!(
-        "Key-click started (interval={}ms, hold_delay={}ms)",
-        config.interval_ms, config.hold_delay_ms
+        min_interval_ms = config.min_interval_ms,
+        hold_delay_ms = config.hold_delay_ms,
+        button = ?config.button,
+        "Key-click started"
     );
     let _ = event_tx.send(KeyClickEvent::Started);
 
     let hold_delay = Duration::from_millis(config.hold_delay_ms);
-    let repeat_interval = Duration::from_millis(config.interval_ms);
+    let repeat_interval = Duration::from_millis(config.min_interval_ms);
     let mut active: Option<ActiveKey> = None;
 
+    // Fire one click, respecting the focus gate and resolving the target point.
+    let click_once = |click_count: &AtomicU64, event_tx: &Sender<KeyClickEvent>| {
+        if let Some(ref gate) = focus_gate {
+            if !gate() {
+                return; // target window not focused; skip silently
+            }
+        }
+        let (x, y) = match config.location {
+            ClickLocation::Cursor => get_mouse_position(),
+            ClickLocation::Fixed { x, y } => (x, y),
+        };
+        do_click(&injector, config.button, x, y, click_count, event_tx);
+    };
+
     loop {
-        // Check stop flag
         if stop_requested.load(Ordering::SeqCst) {
             info!("Key-click received stop signal");
             break;
         }
 
-        // Process input events
         for raw_event in input_hook.drain() {
             match &raw_event.event {
                 InputEventType::KeyDown { key } => {
                     debug!(key, "KeyDown received");
 
-                    // Space stops immediately
+                    // Space stops immediately.
                     if key == "Space" {
                         info!("Key-click stopped by Space");
-                        cleanup(&running, &click_count, &event_tx, &input_hook);
+                        cleanup(&running, &click_count, &event_tx, &input_hook, "space");
                         return;
                     }
 
-                    // A-Z triggers click (only if no active key)
+                    // A-Z triggers a click (only if no key is already active).
                     if is_az_key(key) && active.is_none() {
-                        let (x, y) = get_mouse_position();
-                        if do_click(&injector, x, y, &click_count, &event_tx) {
-                            debug!(key, "Initial click");
-                        }
+                        click_once(&click_count, &event_tx);
                         active = Some(ActiveKey {
                             key: key.clone(),
                             repeating: false,
@@ -193,8 +280,6 @@ fn run_loop(
                 }
                 InputEventType::KeyUp { key } => {
                     debug!(key, "KeyUp received");
-
-                    // Clear active key if it matches
                     if let Some(ref state) = active {
                         if state.key.eq_ignore_ascii_case(key) {
                             debug!(key, "Key released");
@@ -206,7 +291,6 @@ fn run_loop(
             }
         }
 
-        // Handle repeat clicks
         if let Some(ref mut state) = active {
             let now = Instant::now();
             if now >= state.next_repeat_at {
@@ -214,8 +298,7 @@ fn run_loop(
                     state.repeating = true;
                     debug!("Entering repeat mode");
                 }
-                let (x, y) = get_mouse_position();
-                do_click(&injector, x, y, &click_count, &event_tx);
+                click_once(&click_count, &event_tx);
                 state.next_repeat_at = now + repeat_interval;
             }
         }
@@ -223,21 +306,18 @@ fn run_loop(
         thread::sleep(Duration::from_millis(5));
     }
 
-    cleanup(&running, &click_count, &event_tx, &input_hook);
+    cleanup(&running, &click_count, &event_tx, &input_hook, "external");
 }
 
 fn do_click(
     injector: &EnigoInjector,
+    button: MouseButton,
     x: i32,
     y: i32,
     click_count: &AtomicU64,
     event_tx: &Sender<KeyClickEvent>,
 ) -> bool {
-    let action = Action::Click {
-        x,
-        y,
-        button: MouseButton::Left,
-    };
+    let action = Action::Click { x, y, button };
     match injector.inject(&action) {
         Ok(()) => {
             let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -256,12 +336,14 @@ fn cleanup(
     click_count: &AtomicU64,
     event_tx: &Sender<KeyClickEvent>,
     input_hook: &InputHookHandle,
+    reason: &str,
 ) {
     running.store(false, Ordering::SeqCst);
     let total = click_count.load(Ordering::SeqCst);
     let _ = event_tx.send(KeyClickEvent::Stopped {
         total_clicks: total,
+        reason: reason.to_string(),
     });
     input_hook.stop();
-    info!("Key-click exited, total clicks: {}", total);
+    info!(reason, total_clicks = total, "Key-click exited");
 }

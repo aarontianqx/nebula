@@ -71,8 +71,8 @@ tap 当前在 “Simple” 模式下提供两类基础重复能力：
 - **Click location**：
   - Cursor（默认）
   - Fixed position（可选）：复用现有 Pick，填入 X/Y
-- **Rate limit**：`min_interval_ms`（默认 40ms，范围建议 10–1000ms）
-- （可选增强）**Only when target window focused**：复用 Phase 3 的窗口绑定（若启用，则仅在目标窗口为前台时触发点击）
+- **Rate limit**：`min_interval_ms`（默认 40ms，范围 10–1000ms，超出自动夹取）
+- **Only when target window focused**：启用后在“按下 Start 的那一刻”快照当前活动窗口（优先按进程名匹配），之后仅当该窗口为前台时才点击；alt-tab 离开即暂停、切回即恢复，避免误点到别的应用
 
 ### 运行态提示（避免“悄悄捕获键盘”）
 
@@ -191,5 +191,14 @@ Key→Click 需要保证：
 - `specs/features/ui-design.md`：在 Onboarding 与 Safety/Running 状态提示中加入 Key→Click 的可观测要求
 - `specs/features/dsl-reference.md`：明确“event-driven 工具模式不属于 DSL”，避免用户误以为可以 YAML 配置实现
 - `specs/proposals/roadmap.md`：把 Key→Click 作为 “跨阶段体验增强 / Quick Tools” 记录，避免散落在 issue/脑内
+
+## 实现状态
+
+已在 Simple 模式落地，行为与上文一致：
+
+- 触发 A–Z、Space 立即停止、紧急停止热键随时生效；与 Engine/Recorder 互斥（仅 Idle 可启动）。
+- 可配置：鼠标按键（左/右/中）、点击位置（Cursor / Fixed + Pick）、`min_interval_ms`（夹取 10–1000ms）、`hold_delay_ms`（单击 → 连点的等待）、以及“仅在启动时活动窗口内点击”。
+- 可观测：Activity Log 记录启动参数与停止原因（Space / Stop），状态栏常驻运行提示，配置卡显示实时点击计数。
+- 实现落点：`tap/src-tauri/src/key_click.rs`（ToolRunner 线程 + 输入订阅 + 注入），命令 `start_key_click` / `stop_key_click` / `get_key_click_status`，前端 `toolStore` + `SimpleConfig`。
 
 
