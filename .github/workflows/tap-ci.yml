@@ -74,3 +74,35 @@ jobs:
       - name: Clippy (tap-tauri)
         working-directory: tap
         run: cargo clippy -p tap-tauri --all-targets -- -D warnings
+
+      # tap-platform and tap-tauri carry the platform-gated unit tests
+      # (key parsing, template parse/validate) that only build on macOS.
+      - name: Test (tap-platform + tap-tauri)
+        working-directory: tap
+        run: cargo test -p tap-platform -p tap-tauri
+
+  frontend:
+    name: tap frontend (typecheck + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: tap/yarn.lock
+
+      - name: Install dependencies
+        working-directory: tap
+        run: yarn install --frozen-lockfile
+
+      - name: Typecheck (tsc)
+        working-directory: tap
+        run: yarn typecheck
+
+      - name: Lint (eslint)
+        working-directory: tap
+        run: yarn lint
