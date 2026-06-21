@@ -22,7 +22,7 @@ tap (Timed Action Performer) is a cross-platform desktop automation tool built w
 │  - SessionStore           │  Canonical MacroDocument (single source of truth)
 │  - Player (Replay)        │  Document playback + Resolve stage (interruptible)
 │  - Recorder (Record)      │  Global event capture (pausable)
-│  - Storage                │  YAML persistence (+ legacy JSON read)
+│  - Storage                │  YAML document persistence
 └──────────────┬────────────┘
                │ Ports (traits: ActionExecutor / PlatformConditionProvider)
                ▼
