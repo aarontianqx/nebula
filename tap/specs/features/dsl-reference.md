@@ -146,6 +146,15 @@ timeline:
 
 ### Mouse Actions
 
+> **Coordinate system.** All `x`/`y` coordinates are in the OS *injection* space,
+> which is shared by recording, playback and the position picker:
+> **physical pixels on Windows** (the app opts into Per-Monitor V2 DPI awareness)
+> and **points on macOS** (the window server handles Retina scaling). The picker
+> converts the browser's CSS pixels via `browser_to_injection_scale()`, so values
+> captured by the picker, by recording and by hand all line up. Because the space
+> is OS- and display-specific, macros are not portable across machines without
+> re-capturing coordinates.
+
 #### click
 ```yaml
 action:
@@ -197,6 +206,11 @@ action:
     to_y: 400
     duration_ms: 500  # default: 500
 ```
+
+The engine presses at `from`, interpolates the cursor toward `to` over
+`duration_ms` (~60 steps/sec, capped), then releases at `to`. The interpolation
+is interruptible: a Stop/EmergencyStop during the drag releases the button
+before halting, so a half-finished drag never leaves the mouse stuck down.
 
 #### scroll
 ```yaml
