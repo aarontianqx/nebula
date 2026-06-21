@@ -1443,3 +1443,18 @@ kbd {
 .onboarding-points li {
   margin-bottom: 6px;
 }
+
+/* ===== M12: Dry-run ===== */
+.dry-run-toggle {
+  margin-top: 12px;
+}
+
+.dry-run-badge {
+  background: linear-gradient(135deg, var(--warning), rgba(245, 158, 11, 0.6));
+  color: #000;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}

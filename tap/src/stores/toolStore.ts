@@ -15,7 +15,9 @@ interface ToolStore {
   actionType: SimpleActionType;
   clickX: number;
   clickY: number;
+  clickButton: MouseButton;
   keyName: string;
+  capturingKey: boolean;
   intervalMs: number;
   repeatText: string;
   countdownSecs: number;
@@ -35,7 +37,9 @@ interface ToolStore {
   setActionType: (type: SimpleActionType) => void;
   setClickX: (x: number) => void;
   setClickY: (y: number) => void;
+  setClickButton: (button: MouseButton) => void;
   setKeyName: (key: string) => void;
+  captureKeyName: () => Promise<void>;
   setIntervalMs: (ms: number) => void;
   setRepeatText: (text: string) => void;
   setCountdownSecs: (secs: number) => void;
@@ -62,7 +66,9 @@ export const useToolStore = create<ToolStore>((set, get) => ({
   actionType: "click",
   clickX: 640,
   clickY: 360,
+  clickButton: "Left",
   keyName: "Space",
+  capturingKey: false,
   intervalMs: 1000,
   repeatText: "",
   countdownSecs: 3,
@@ -80,7 +86,23 @@ export const useToolStore = create<ToolStore>((set, get) => ({
   setActionType: (actionType) => set({ actionType }),
   setClickX: (clickX) => set({ clickX }),
   setClickY: (clickY) => set({ clickY }),
+  setClickButton: (clickButton) => set({ clickButton }),
   setKeyName: (keyName) => set({ keyName }),
+
+  captureKeyName: async () => {
+    if (get().capturingKey) return;
+    set({ capturingKey: true });
+    log("Press any key to capture...");
+    try {
+      const key = await api.captureKey();
+      set({ keyName: key });
+      log(`Captured key: ${key}`);
+    } catch (err) {
+      log(`Key capture failed: ${String(err)}`);
+    } finally {
+      set({ capturingKey: false });
+    }
+  },
   setIntervalMs: (intervalMs) => set({ intervalMs }),
   setRepeatText: (repeatText) => set({ repeatText }),
   setCountdownSecs: (countdownSecs) => set({ countdownSecs }),
@@ -117,6 +139,7 @@ export const useToolStore = create<ToolStore>((set, get) => ({
         x: s.actionType === "click" ? s.clickX : null,
         y: s.actionType === "click" ? s.clickY : null,
         key: s.actionType === "key" ? s.keyName : null,
+        button: s.actionType === "click" ? s.clickButton.toLowerCase() : null,
         intervalMs: s.intervalMs,
         repeatCount: s.repeatText ? parseInt(s.repeatText, 10) : null,
         countdownSecs: s.countdownSecs,
