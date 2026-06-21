@@ -38,7 +38,7 @@ pub use session::SessionStore;
 pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
     load_document, load_last_used, load_profile, load_recent, save_document, save_last_used,
-    save_profile, save_recent, StorageError, StorageResult,
+    save_recent, StorageError, StorageResult,
 };
 pub use submacro::{
     create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,
