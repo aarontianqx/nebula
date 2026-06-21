@@ -1,22 +1,25 @@
 import { create } from "zustand";
 
-import { api } from "../lib/ipc";
+import { api, isTauri, pickOpenPath, pickSavePath } from "../lib/ipc";
 import type {
   ActionInfo,
   Profile,
   Repeat,
   RunConfig,
+  TemplateInfo,
   TimedAction,
   VariableDefinitionResponse,
 } from "../lib/types";
 import { useEngineStore } from "./engineStore";
 
 const PUSH_DEBOUNCE_MS = 250;
+const META_DEBOUNCE_MS = 400;
 
 // Debounce/flush bookkeeping kept outside the reactive store.
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let pushInFlight: Promise<void> | null = null;
 let needsPush = false;
+let metaTimer: ReturnType<typeof setTimeout> | null = null;
 
 function log(msg: string): void {
   useEngineStore.getState().addLog(msg);
@@ -33,6 +36,13 @@ interface DocumentStore {
   /** False when the macro carries variables/expressions; the visual view is then a read-only preview. */
   editable: boolean;
   profiles: string[];
+  recents: string[];
+  templates: TemplateInfo[];
+
+  // === Document metadata (lossless: safe even for parameterized macros) ===
+  description: string;
+  author: string;
+  tags: string[];
 
   // === Backend sync ===
   currentProfile: () => Profile;
@@ -40,11 +50,22 @@ interface DocumentStore {
   setVariables: (vars: VariableDefinitionResponse[]) => void;
   refreshFromBackend: () => Promise<void>;
   loadProfiles: () => Promise<void>;
+  loadRecents: () => Promise<void>;
+  loadTemplates: () => Promise<void>;
   loadProfile: (name: string) => Promise<void>;
   deleteProfile: (name: string) => Promise<void>;
+  applyTemplate: (id: string) => Promise<void>;
   importYaml: (yaml: string) => Promise<Profile>;
+  exportToFile: () => Promise<void>;
+  importFromFile: () => Promise<void>;
   /** Force the pending debounced push to complete (call before start/save). */
   flush: () => Promise<void>;
+
+  // === Metadata edits (debounced, lossless) ===
+  loadMeta: () => Promise<void>;
+  setDescription: (value: string) => void;
+  setAuthor: (value: string) => void;
+  setTags: (tags: string[]) => void;
 
   // === Meta / run config ===
   setName: (name: string) => void;
@@ -100,6 +121,30 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
     await pushInFlight;
   }
 
+  function scheduleMetaPush(): void {
+    if (metaTimer) clearTimeout(metaTimer);
+    metaTimer = setTimeout(() => {
+      void pushMetaNow();
+    }, META_DEBOUNCE_MS);
+  }
+
+  async function pushMetaNow(): Promise<void> {
+    if (metaTimer) {
+      clearTimeout(metaTimer);
+      metaTimer = null;
+    }
+    const s = get();
+    try {
+      await api.setDocumentMeta({
+        description: s.description.trim() === "" ? null : s.description,
+        author: s.author.trim() === "" ? null : s.author,
+        tags: s.tags,
+      });
+    } catch (err) {
+      log(`Failed to sync metadata: ${String(err)}`);
+    }
+  }
+
   /** Apply a timeline mutation, but only when the document is visual-editable. */
   function mutateTimeline(fn: (actions: TimedAction[]) => TimedAction[]): void {
     if (!get().editable) return;
@@ -126,6 +171,11 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
     variables: [],
     editable: true,
     profiles: [],
+    recents: [],
+    templates: [],
+    description: "",
+    author: "",
+    tags: [],
 
     currentProfile: () => {
       const s = get();
@@ -150,6 +200,10 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
         clearTimeout(pushTimer);
         pushTimer = null;
       }
+      if (metaTimer) {
+        clearTimeout(metaTimer);
+        metaTimer = null;
+      }
       needsPush = false;
       const tw = profile.target_window;
       set({
@@ -169,6 +223,7 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
         const [profile, variables] = await Promise.all([api.getCurrentProfile(), api.getMacroVariables()]);
         get().applyProfile(profile);
         get().setVariables(variables);
+        await get().loadMeta();
       } catch (err) {
         log(`Failed to load document: ${String(err)}`);
       }
@@ -182,11 +237,29 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
       }
     },
 
+    loadRecents: async () => {
+      try {
+        set({ recents: await api.getRecentProfiles() });
+      } catch (err) {
+        log(`Failed to load recent profiles: ${String(err)}`);
+      }
+    },
+
+    loadTemplates: async () => {
+      try {
+        set({ templates: await api.listTemplates() });
+      } catch (err) {
+        log(`Failed to list templates: ${String(err)}`);
+      }
+    },
+
     loadProfile: async (name) => {
       try {
         const profile = await api.loadProfile(name);
         get().applyProfile(profile);
         get().setVariables(await api.getMacroVariables());
+        await get().loadMeta();
+        await get().loadRecents();
         log(`Loaded: ${name}`);
       } catch (err) {
         log(`Failed to load ${name}: ${String(err)}`);
@@ -203,20 +276,93 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
       }
     },
 
+    applyTemplate: async (id) => {
+      try {
+        const profile = await api.applyTemplate(id);
+        get().applyProfile(profile);
+        get().setVariables(await api.getMacroVariables());
+        await get().loadMeta();
+        log(`Applied template: ${profile.name}`);
+      } catch (err) {
+        log(`Failed to apply template: ${String(err)}`);
+      }
+    },
+
     importYaml: async (yaml) => {
       const profile = await api.importYaml(yaml);
       get().applyProfile(profile);
       get().setVariables(await api.getMacroVariables());
+      await get().loadMeta();
       log(`Imported: ${profile.name}`);
       return profile;
     },
 
+    exportToFile: async () => {
+      if (!isTauri()) {
+        log("Export needs the desktop app (native file dialog).");
+        return;
+      }
+      const s = get();
+      try {
+        await s.flush();
+        const path = await pickSavePath(`${s.name || "macro"}.yaml`);
+        if (!path) return;
+        await api.exportYamlToPath(path);
+        log(`Exported to ${path}`);
+      } catch (err) {
+        log(`Export failed: ${String(err)}`);
+      }
+    },
+
+    importFromFile: async () => {
+      if (!isTauri()) {
+        log("Import needs the desktop app (native file dialog).");
+        return;
+      }
+      try {
+        const path = await pickOpenPath();
+        if (!path) return;
+        const profile = await api.importYamlFromPath(path);
+        get().applyProfile(profile);
+        get().setVariables(await api.getMacroVariables());
+        await get().loadMeta();
+        log(`Imported: ${profile.name}`);
+      } catch (err) {
+        log(`Import failed: ${String(err)}`);
+      }
+    },
+
     flush: async () => {
+      if (metaTimer) {
+        await pushMetaNow();
+      }
       if (needsPush || pushTimer) {
         await pushNow();
       } else if (pushInFlight) {
         await pushInFlight;
       }
+    },
+
+    loadMeta: async () => {
+      try {
+        const m = await api.getDocumentMeta();
+        set({ description: m.description ?? "", author: m.author ?? "", tags: m.tags });
+      } catch (err) {
+        log(`Failed to load metadata: ${String(err)}`);
+      }
+    },
+
+    setDescription: (description) => {
+      set({ description });
+      scheduleMetaPush();
+    },
+    setAuthor: (author) => {
+      set({ author });
+      scheduleMetaPush();
+    },
+    setTags: (tags) => {
+      set({ tags });
+      scheduleMetaPush();
     },
 
     setName: (name) => mutateMeta(() => set({ name })),

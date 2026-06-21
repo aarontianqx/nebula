@@ -2,14 +2,15 @@
 
 mod key_click;
 mod state;
+mod templates;
 
 use key_click::{start_key_click_runner, KeyClickConfig, KeyClickEvent, KeyClickStatus};
 use state::{AppState, MousePositionUpdate, PositionPickedEvent, RecordingStatus};
 use std::sync::{Arc, Mutex};
 use tap_application::{
-    delete_profile, list_profiles, load_document, load_last_used, save_document, save_last_used,
-    ActionExecutor, Coordinator, EngineEvent, EngineState, MouseButtonRaw,
-    PlatformConditionProvider, Player, RawEventType, Recorder, RecorderState,
+    delete_profile, list_profiles, load_document, load_last_used, load_recent, save_document,
+    save_last_used, save_recent, ActionExecutor, Coordinator, EngineEvent, EngineState,
+    MouseButtonRaw, PlatformConditionProvider, Player, RawEventType, Recorder, RecorderState,
 };
 use tap_core::{
     document_to_yaml, parse_yaml, validate_profile, Action, ConditionColor, MacroDocument, Profile,
@@ -284,6 +285,7 @@ fn cmd_save_profile(
     let document = app_state.coordinator.document().clone();
     let path = save_document(&document).map_err(|e| e.to_string())?;
     let _ = save_last_used(&document.name);
+    let _ = save_recent(&document.name);
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -295,6 +297,7 @@ fn cmd_load_profile(state: State<'_, Mutex<AppState>>, name: String) -> Result<P
     let mut app_state = state.lock().unwrap();
     app_state.coordinator.set_document(document);
     let _ = save_last_used(&name);
+    let _ = save_recent(&name);
 
     Ok(app_state.coordinator.profile_view())
 }
@@ -312,6 +315,98 @@ fn cmd_list_profiles() -> Result<Vec<String>, String> {
 #[tauri::command]
 fn cmd_get_last_used() -> Option<String> {
     load_last_used()
+}
+
+#[tauri::command]
+fn cmd_get_recent_profiles() -> Vec<String> {
+    load_recent()
+}
+
+/// Document metadata exposed to the frontend (lossless edit surface).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct DocumentMeta {
+    description: Option<String>,
+    author: Option<String>,
+    tags: Vec<String>,
+}
+
+#[tauri::command]
+fn cmd_get_document_meta(state: State<'_, Mutex<AppState>>) -> DocumentMeta {
+    let app_state = state.lock().unwrap();
+    let doc = app_state.coordinator.document();
+    DocumentMeta {
+        description: doc.description.clone(),
+        author: doc.author.clone(),
+        tags: doc.tags.clone(),
+    }
+}
+
+#[tauri::command]
+fn cmd_set_document_meta(
+    state: State<'_, Mutex<AppState>>,
+    description: Option<String>,
+    author: Option<String>,
+    tags: Vec<String>,
+) {
+    let mut app_state = state.lock().unwrap();
+    app_state
+        .coordinator
+        .set_metadata(description, author, tags);
+}
+
+// === Templates ===
+
+#[tauri::command]
+fn cmd_list_templates() -> Vec<templates::TemplateInfo> {
+    templates::list_templates()
+}
+
+#[tauri::command]
+fn cmd_apply_template(state: State<'_, Mutex<AppState>>, id: String) -> Result<Profile, String> {
+    let yaml = templates::template_yaml(&id).ok_or_else(|| format!("Unknown template: {id}"))?;
+    let document = parse_yaml(yaml).map_err(|e| e.to_string())?;
+    validate_profile(&document).map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+
+    let mut app_state = state.lock().unwrap();
+    app_state.coordinator.set_document(document);
+    Ok(app_state.coordinator.profile_view())
+}
+
+// === Native file import / export ===
+
+#[tauri::command]
+fn cmd_export_yaml_to_path(state: State<'_, Mutex<AppState>>, path: String) -> Result<(), String> {
+    let yaml = {
+        let app_state = state.lock().unwrap();
+        document_to_yaml(app_state.coordinator.document()).map_err(|e| e.to_string())?
+    };
+    std::fs::write(&path, yaml).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cmd_import_yaml_from_path(
+    state: State<'_, Mutex<AppState>>,
+    path: String,
+) -> Result<Profile, String> {
+    let yaml = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let document = parse_yaml(&yaml).map_err(|e| e.to_string())?;
+    validate_profile(&document).map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+
+    let mut app_state = state.lock().unwrap();
+    app_state.coordinator.set_document(document);
+    Ok(app_state.coordinator.profile_view())
 }
 
 #[tauri::command]
@@ -1084,6 +1179,7 @@ fn main() {
         Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Backspace);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -1119,6 +1215,13 @@ fn main() {
             cmd_delete_profile,
             cmd_list_profiles,
             cmd_get_last_used,
+            cmd_get_recent_profiles,
+            cmd_get_document_meta,
+            cmd_set_document_meta,
+            cmd_list_templates,
+            cmd_apply_template,
+            cmd_export_yaml_to_path,
+            cmd_import_yaml_from_path,
             get_current_profile,
             // Recording commands
             start_recording,
