@@ -285,8 +285,8 @@ fn validate_condition(cond: &DslCondition, path: &str, errors: &mut Vec<Validati
                 validate_condition(c, &format!("{}[{}]", path, i), errors);
             }
         }
-        DslCondition::Not(c) => {
-            validate_condition(c, path, errors);
+        DslCondition::Not { condition } => {
+            validate_condition(condition, path, errors);
         }
     }
 }
