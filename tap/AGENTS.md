@@ -69,6 +69,23 @@ tap/
 - **Global coordinate system**: Mouse coordinates use the OS *injection* space — full-screen **physical pixels on Windows**, **points on macOS** — never WebView-relative coordinates. The picker converts browser CSS pixels via `browser_to_injection_scale()` so recording, playback and picking stay consistent. `get_primary_scale_factor()` reports the display backing scale and is informational only.
 - **Safety first**: Emergency stop (global hotkey `Ctrl+Shift+Backspace`) has the highest priority and must work regardless of window focus.
 
+### Frontend architecture (`src/`)
+
+The React UI is **store-driven**; components stay thin and read/write Zustand stores:
+
+| Store | Responsibility |
+|-------|----------------|
+| `documentStore` | Editable mirror of the canonical macro (name/timeline/run/target), profile list, debounced backend sync |
+| `engineStore` | Engine run state, countdown, run stats, activity log, lifecycle controls |
+| `recorderStore` | Recording state + controls |
+| `toolStore` | Simple-mode config, Key→Click, position picker, color sampling |
+| `uiStore` | View mode, timeline view (List/Rail/Code), selection, modal, code buffer |
+
+- **IPC boundary**: every backend call goes through `lib/ipc.ts` (a typed `api`, guarded so the UI still renders without the Tauri runtime). Backend events are wired to stores once in `lib/events.ts`.
+- **Sync contract (edits must persist)**: visual edits update the local mirror and **debounce-push** the resolved `Profile` to the backend via `update_profile`; the pending push is **force-flushed before Start and Save**, so playback/persistence always use the latest edits. Record/import/load refresh the mirror from the backend (`get_current_profile`). This is what makes "edit → save/replay reflects it" structurally guaranteed.
+- **Parameterized macros are preview-only**: a document carrying variables/expressions projects to a *lossy* resolved view, so the visual editor is **read-only** for it (re-pushing would flatten parameters); edit those in the **Code (YAML)** view. Plain recorded/simple macros are fully editable.
+- **Timeline editor**: List view (add / insert / delete / move / duplicate / retime / toggle / note), Rail view (drag-to-retime), and Code (YAML) view, with an Inspector for per-action parameter editing.
+
 ### Platform abstraction (`tap-platform`)
 
 | Submodule        | Responsibility               | Windows        | macOS                   |
