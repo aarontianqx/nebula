@@ -27,6 +27,7 @@ mod events;
 mod injector;
 mod input_hook;
 mod mouse_tracker;
+mod permissions;
 mod pixel;
 mod window;
 
@@ -48,6 +49,11 @@ pub use input_hook::{
 pub use mouse_tracker::{
     start_mouse_tracker, MousePosition, MouseTrackerCommand, MouseTrackerConfig, MouseTrackerEvent,
     MouseTrackerHandle,
+};
+
+// Re-export permission probing
+pub use permissions::{
+    check_permissions, open_permission_settings, request_screen_recording, PermissionStatus,
 };
 
 // Re-export pixel detection

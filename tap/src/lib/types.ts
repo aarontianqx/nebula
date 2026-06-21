@@ -110,6 +110,15 @@ export interface DocumentMeta {
   tags: string[];
 }
 
+export interface PermissionStatus {
+  /** Global input hook + injection allowed (macOS Accessibility; true where N/A). */
+  accessibility: boolean;
+  /** Screen capture for pixel/window reads allowed (macOS Screen Recording; true where N/A). */
+  screen_recording: boolean;
+  /** Target OS, so the UI can show platform-specific guidance. */
+  os: string;
+}
+
 export interface RecordingStatus {
   state: RecorderState;
   event_count: number;

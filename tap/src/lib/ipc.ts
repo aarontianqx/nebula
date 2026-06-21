@@ -11,6 +11,7 @@ import type {
   ColorResponse,
   DocumentMeta,
   EngineState,
+  PermissionStatus,
   Profile,
   RecordingStatus,
   TemplateInfo,
@@ -92,6 +93,12 @@ export const api = {
   // === Native file import / export ===
   exportYamlToPath: (path: string) => invoke<void>("cmd_export_yaml_to_path", { path }),
   importYamlFromPath: (path: string) => invoke<Profile>("cmd_import_yaml_from_path", { path }),
+
+  // === OS permissions ===
+  checkPermissions: () => invoke<PermissionStatus>("cmd_check_permissions"),
+  requestScreenRecording: () => invoke<PermissionStatus>("cmd_request_screen_recording"),
+  openPermissionSettings: (which: "accessibility" | "screen_recording") =>
+    invoke<void>("cmd_open_permission_settings", { which }),
 
   setSimpleRepeat: (args: {
     actionType: string;

@@ -1309,3 +1309,131 @@ select.input {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ===== M10: Permission + onboarding banners ===== */
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+kbd {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.permission-banner {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+  margin-bottom: 12px;
+}
+
+.permission-banner.permission-hint {
+  border-color: rgba(110, 231, 255, 0.4);
+  background: rgba(110, 231, 255, 0.08);
+}
+
+.permission-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.permission-headtext {
+  flex: 1;
+}
+
+.permission-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--warning);
+  color: #000;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.permission-hint .permission-icon {
+  background: var(--accent);
+}
+
+.permission-title {
+  font-weight: 700;
+}
+
+.permission-sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.permission-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.permission-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.permission-list .btn-row {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.permission-foot {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.onboarding-banner {
+  border-color: rgba(110, 231, 255, 0.4);
+  background: linear-gradient(135deg, rgba(110, 231, 255, 0.1), rgba(168, 85, 247, 0.08));
+  margin-bottom: 12px;
+}
+
+.onboarding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.onboarding-title {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.onboarding-text {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.onboarding-points {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.onboarding-points li {
+  margin-bottom: 6px;
+}
