@@ -6,6 +6,7 @@ import { useUiStore } from "../stores/uiStore";
 export function Topbar() {
   const mode = useUiStore((s) => s.mode);
   const setMode = useUiStore((s) => s.setMode);
+  const dryRun = useUiStore((s) => s.dryRun);
   const engineState = useEngineStore((s) => s.engineState);
   const mousePos = useEngineStore((s) => s.mousePos);
   const recorderState = useRecorderStore((s) => s.recorderState);
@@ -35,6 +36,7 @@ export function Topbar() {
         </button>
       </div>
       <div className="topbar-actions">
+        {dryRun && <span className="dry-run-badge">DRY RUN</span>}
         {mousePos && (
           <span className="mouse-pos">
             ({mousePos.x}, {mousePos.y})
