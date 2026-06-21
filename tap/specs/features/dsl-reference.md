@@ -1,59 +1,75 @@
-# TAP DSL Reference
+# tap DSL Reference
 
-TAP uses YAML as its Domain Specific Language (DSL) for defining macros. This document provides a complete reference for the DSL syntax.
+tap uses YAML as its DSL for defining macros (a `MacroDocument`). This is the
+canonical on-disk format; it round-trips losslessly through save/load and
+import/export.
 
-## Overview
+## Syntax note: actions and conditions are YAML tags
 
-A TAP macro file has the following structure:
+Actions and conditions are **YAML tagged values** — the variant name is written
+as a tag (`!click`, `!pixel_color`), not as a nested map key. This is the single
+most important rule:
 
 ```yaml
-name: My Macro
-description: Optional description
-version: "1.0"
-author: user
-tags: [example, demo]
+# Correct — tagged
+action: !click
+  x: 100
+  y: 200
 
-variables:
-  # Parameterized variables
-
-target_window:
-  # Window binding
-
-timeline:
-  # Action sequence
-
-run:
-  # Execution configuration
+# WRONG — rejected with "expected a YAML tag starting with '!'"
+action:
+  click:
+    x: 100
+    y: 200
 ```
 
-## Scope: DSL vs Tool Modes
+Unit variants that carry no fields are written as a bare scalar (no `!`):
+`exit`, `always`, `never`.
 
-This DSL describes **timed macros** (a `timeline` of actions executed by the engine).
+## Document structure
 
-Some features in the app are **event-driven tool modes** (driven by live global input, not by a pre-defined timeline). Tool modes are intentionally **out of scope** for the DSL and cannot be expressed/imported as YAML actions.
+```yaml
+name: My Macro            # required
+description: ...          # optional
+version: "1.0"            # optional (default "1.0")
+author: user              # optional
+tags: [example, demo]     # optional
 
-Examples of tool modes:
+variables: {}             # optional, parameterization
+target_window: {}         # optional, window binding
+timeline: []              # required, the action sequence
+run: {}                   # optional, execution config
+```
 
-- **Key→Click**: while enabled, holding any `A`-`Z` key triggers repeated mouse clicks; pressing `Space` stops immediately (see `specs/features/key-to-click-mode.md`).
-
-## Metadata Fields
+### Metadata fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | Yes | Name of the macro |
 | `description` | string | No | Human-readable description |
-| `version` | string | No | DSL schema version (default: "1.0") |
+| `version` | string | No | DSL schema version (default `"1.0"`) |
 | `author` | string | No | Author name |
-| `tags` | string[] | No | Free-form tags for organization and filtering |
+| `tags` | string[] | No | Free-form tags for organization/filtering |
+
+## Scope: DSL vs tool modes
+
+This DSL describes **timed macros** (a `timeline` executed by the engine).
+Some app features are **event-driven tool modes** (driven by live global input,
+not a timeline) and are intentionally **out of scope** — they cannot be
+expressed or imported as YAML.
+
+Example: **Key→Click** — while enabled, holding any `A`-`Z` key triggers repeated
+clicks; `Space` stops (see `key-to-click-mode.md`).
 
 ## Variables
 
-Variables allow parameterization of macros. They are defined in the `variables` section and referenced using `{{ var_name }}` syntax.
+Variables parameterize a macro. They are defined in `variables` and referenced
+with `{{ name }}` inside action value fields.
 
 ```yaml
 variables:
   username:
-    type: string
+    type: string      # string | number | boolean
     default: ""
     description: "Username to enter"
   click_x:
@@ -64,375 +80,308 @@ variables:
     default: true
 ```
 
-### Variable Types
-
-| Type | Description | Default Value |
-|------|-------------|---------------|
+| Type | Description | Default |
+|------|-------------|---------|
 | `string` | Text value | `""` |
-| `number` | Numeric value (integer or float) | `0` |
-| `boolean` | True/false value | `false` |
+| `number` | Integer or float | `0` |
+| `boolean` | True/false | `false` |
 
-### Variable References
+### References and expressions
 
-Variables can be referenced in action parameters:
-
-```yaml
-timeline:
-  - at_ms: 0
-    action:
-      click:
-        x: "{{ click_x }}"
-        y: "{{ click_y }}"
-  - at_ms: 500
-    action:
-      text_input:
-        text: "{{ username }}"
-```
-
-### Expressions
-
-Complex expressions are supported using Rhai syntax:
+Value fields (coordinates, text, …) accept a literal or a `{{ ... }}` template.
+Expressions use [Rhai](https://rhai.rs) syntax, evaluated in a sandbox (no file
+or network access, bounded depth/operations):
 
 ```yaml
 timeline:
   - at_ms: 0
-    action:
-      click:
-        x: "{{ base_x + offset }}"
-        y: "{{ base_y * 2 }}"
+    action: !click
+      x: "{{ base_x + offset }}"
+      y: "{{ base_y * 2 }}"
   - at_ms: 500
-    action:
-      text_input:
-        text: "{{ \"Hello, \" + name }}"
+    action: !text_input
+      text: "{{ \"Hello, \" + name }}"
 ```
 
-## Target Window
+A value left unresolved (an unfilled variable in a coordinate) is collected by
+the **run-before variable form** prompt; macros carrying variables are edited in
+the **Code (YAML)** view, since the visual editor projects a lossy resolved view.
 
-Bind macro execution to a specific window:
+## Target window
+
+Bind execution to a specific window:
 
 ```yaml
 target_window:
-  title: "Notepad"           # Window title (partial match)
-  process: "notepad.exe"     # Process name (partial match)
-  pause_when_unfocused: true # Pause when window loses focus
+  title: "Notepad"            # window title (partial match)
+  process: "notepad.exe"      # process name (partial match)
+  pause_when_unfocused: true  # pause when the window loses focus
 ```
 
-Either `title` or `process` (or both) can be specified. Leave empty to run on any window.
+Specify `title`, `process`, or both. Omit `target_window` to run on any window.
+On macOS, reading the window **title** requires Screen Recording permission;
+matching by **process** works without it.
 
 ## Timeline
 
-The timeline is a sequence of timed actions:
+A sequence of timed actions:
 
 ```yaml
 timeline:
   - at_ms: 0
-    action: { click: { x: 100, y: 200 } }
+    action: !click
+      x: 100
+      y: 200
     enabled: true
     note: "Click the button"
   - at_ms: 500
-    action: { wait: { ms: 100 } }
+    action: !wait
+      ms: 100
 ```
-
-### Timed Action Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `at_ms` | number | Yes | Milliseconds since timeline start |
-| `action` | object | Yes | The action to perform |
-| `enabled` | boolean | No | Whether action is enabled (default: true) |
-| `note` | string | No | User comment/note |
+| `action` | tagged value | Yes | The action to perform |
+| `enabled` | boolean | No | Whether the action runs (default `true`) |
+| `note` | string | No | User comment |
 
 ## Actions
 
-### Mouse Actions
+### Coordinate system
 
-> **Coordinate system.** All `x`/`y` coordinates are in the OS *injection* space,
-> which is shared by recording, playback and the position picker:
-> **physical pixels on Windows** (the app opts into Per-Monitor V2 DPI awareness)
-> and **points on macOS** (the window server handles Retina scaling). The picker
-> converts the browser's CSS pixels via `browser_to_injection_scale()`, so values
-> captured by the picker, by recording and by hand all line up. Because the space
-> is OS- and display-specific, macros are not portable across machines without
-> re-capturing coordinates.
+All `x`/`y` are in the OS **injection space**, shared by recording, playback and
+the picker: **physical pixels on Windows** (the app opts into Per-Monitor V2 DPI
+awareness) and **points on macOS** (the window server handles Retina scaling).
+Because the space is OS- and display-specific, macros are **not portable across
+machines** without re-capturing coordinates.
 
-#### click
+### Mouse
+
 ```yaml
-action:
-  click:
+action: !click
+  x: 100
+  y: 200
+  button: left        # left | right | middle (default left)
+```
+
+```yaml
+action: !double_click
+  x: 100
+  y: 200
+  button: left
+```
+
+```yaml
+action: !mouse_down
+  x: 100
+  y: 200
+  button: left
+
+action: !mouse_up
+  x: 100
+  y: 200
+  button: left
+```
+
+```yaml
+action: !mouse_move
+  x: 100
+  y: 200
+```
+
+```yaml
+action: !drag
+  from_x: 100
+  from_y: 200
+  to_x: 300
+  to_y: 400
+  duration_ms: 500    # default 500
+```
+
+The engine presses at `from`, interpolates toward `to` over `duration_ms`
+(~60 steps/sec, capped), then releases at `to`. The interpolation is
+interruptible: a Stop/EmergencyStop during the drag releases the button before
+halting, so a half-finished drag never leaves the mouse stuck down.
+
+```yaml
+action: !scroll
+  delta_x: 0
+  delta_y: -120       # negative = scroll up
+```
+
+### Keyboard
+
+```yaml
+action: !key_tap
+  key: "Enter"
+```
+
+Common key names: `Space`, `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`,
+`Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `F1`-`F12`,
+`A`-`Z`, `0`-`9`, and modifiers `Ctrl`, `Shift`, `Alt`, `Meta`. Recorded/captured
+key names are normalized to these canonical tokens, so a macro recorded on one OS
+replays on another.
+
+```yaml
+action: !key_down
+  key: "Ctrl"
+
+action: !key_up
+  key: "Ctrl"
+```
+
+```yaml
+action: !text_input
+  text: "Hello, World!"
+```
+
+### Timing
+
+```yaml
+action: !wait
+  ms: 1000
+```
+
+```yaml
+action: !wait_until
+  condition: !pixel_color
     x: 100
-    y: 200
-    button: left  # left, right, middle (default: left)
+    y: 100
+    color: "#00FF00"
+    tolerance: 10
+  timeout_ms: 5000        # optional; omit = wait forever
+  poll_interval_ms: 100   # default 100
 ```
 
-#### double_click
-```yaml
-action:
-  double_click:
-    x: 100
-    y: 200
-    button: left
-```
+### Conditional
 
-#### mouse_down / mouse_up
-```yaml
-action:
-  mouse_down:
-    x: 100
-    y: 200
-    button: left
-
-action:
-  mouse_up:
-    x: 100
-    y: 200
-    button: left
-```
-
-#### mouse_move
-```yaml
-action:
-  mouse_move:
-    x: 100
-    y: 200
-```
-
-#### drag
-```yaml
-action:
-  drag:
-    from_x: 100
-    from_y: 200
-    to_x: 300
-    to_y: 400
-    duration_ms: 500  # default: 500
-```
-
-The engine presses at `from`, interpolates the cursor toward `to` over
-`duration_ms` (~60 steps/sec, capped), then releases at `to`. The interpolation
-is interruptible: a Stop/EmergencyStop during the drag releases the button
-before halting, so a half-finished drag never leaves the mouse stuck down.
-
-#### scroll
-```yaml
-action:
-  scroll:
-    delta_x: 0
-    delta_y: -120  # negative = scroll up
-```
-
-### Keyboard Actions
-
-#### key_tap
-```yaml
-action:
-  key_tap:
-    key: "Enter"  # Key name
-```
-
-Common key names: `Space`, `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `F1`-`F12`, `A`-`Z`, `0`-`9`
-
-#### key_down / key_up
-```yaml
-action:
-  key_down:
-    key: "Control"
-
-action:
-  key_up:
-    key: "Control"
-```
-
-#### text_input
-```yaml
-action:
-  text_input:
-    text: "Hello, World!"
-```
-
-### Timing Actions
-
-#### wait
-```yaml
-action:
-  wait:
-    ms: 1000
-```
-
-#### wait_until
-Wait for a condition to be satisfied:
+`then_action`/`else_action` are themselves actions (a tag, or bare `exit`):
 
 ```yaml
-action:
-  wait_until:
-    condition:
-      pixel_color:
-        x: 100
-        y: 100
-        color: "#00FF00"
-        tolerance: 10
-    timeout_ms: 5000      # optional, null = wait forever
-    poll_interval_ms: 100 # default: 100
-```
-
-### Conditional Actions
-
-#### conditional
-```yaml
-action:
-  conditional:
-    condition:
-      counter:
-        key: "loop_count"
-        op: "<"
-        value: 10
-    then_action:
-      click: { x: 100, y: 200 }
-    else_action:  # optional
-      exit: {}
-```
-
-### Counter Actions
-
-#### set_counter
-```yaml
-action:
-  set_counter:
-    key: "count"
+action: !conditional
+  condition: !counter
+    key: "loop_count"
+    op: "<"
     value: 10
+  then_action: !click
+    x: 100
+    y: 200
+  else_action: exit       # optional
 ```
 
-#### incr_counter / decr_counter
-```yaml
-action:
-  incr_counter:
-    key: "count"
-
-action:
-  decr_counter:
-    key: "count"
-```
-
-#### reset_counter
-```yaml
-action:
-  reset_counter:
-    key: "count"
-```
-
-### Control Flow
-
-#### exit
-Stop macro execution:
+### Counters
 
 ```yaml
-action:
-  exit: {}
+action: !set_counter
+  key: "count"
+  value: 10
+
+action: !incr_counter
+  key: "count"
+
+action: !decr_counter
+  key: "count"
+
+action: !reset_counter
+  key: "count"
 ```
 
-#### call_macro
-
-调用另一个已保存的宏，引擎在运行时就地展开其时间线：
+### Control flow
 
 ```yaml
-action:
-  call_macro:
-    name: "login_sequence"
-    args:
-      username: "{{ user }}"
-      password: "{{ pass }}"
+action: exit              # stop the macro (bare scalar, no fields)
 ```
 
-- `name`：要调用的已保存宏名称（按名称从存储加载）。
-- `args`：传入子宏的参数，覆盖子宏的同名变量；值可用 `{{ var }}` 引用父宏作用域中的变量。
+```yaml
+action: !call_macro
+  name: "login_sequence"
+  args:
+    username: "{{ user }}"
+    password: "{{ pass }}"
+```
 
-执行语义：
-
-- **独立子作用域**：子宏以父宏作用域的快照为起点，叠加子宏自身的变量定义默认值，再叠加 `args`；子宏对变量 / 计数器的修改不会回流到父宏（调用结束后父作用域恢复）。
-- **环 / 深度保护**：检测到循环调用或超过最大调用深度（10）时，发出 `EngineEvent::Error` 并**跳过该次调用**，父宏继续执行——不会卡死或中断整个运行。
-- **Exit**：子宏内的 `exit` 只结束该子宏，不影响父宏。
+`call_macro` loads another saved macro by `name` and expands its timeline in
+place at runtime. `args` override the child's same-named variables and may
+reference the parent scope via `{{ ... }}`. The child runs in an isolated scope
+(its variable/counter writes do not leak back), a child `exit` only ends the
+child, and cycles or calls deeper than 10 levels are skipped with an
+`EngineEvent::Error` rather than hanging the run.
 
 ## Conditions
 
-Conditions are used in `wait_until` and `conditional` actions.
+Used by `wait_until` and `conditional`.
 
-### window_focused
 ```yaml
-condition:
-  window_focused:
-    title: "Notepad"
-    process: "notepad.exe"
+condition: !window_focused
+  title: "Notepad"
+  process: "notepad.exe"
 ```
 
-### window_exists
 ```yaml
-condition:
-  window_exists:
+condition: !window_exists
+  title: "Calculator"
+```
+
+```yaml
+condition: !pixel_color
+  x: 100
+  y: 100
+  color: "#FF0000"
+  tolerance: 10           # default 10
+```
+
+```yaml
+condition: !counter
+  key: "loop_count"
+  op: "<"                 # == != > < >= <=
+  value: 10
+```
+
+### Logical operators
+
+`always`/`never` are bare scalars; `and`/`or` take a sequence; `not` nests the
+inner condition under `condition:`.
+
+```yaml
+condition: always
+condition: never
+```
+
+```yaml
+condition: !and
+  - !window_focused
+    title: "Notepad"
+  - !pixel_color
+    x: 100
+    y: 100
+    color: "#00FF00"
+```
+
+```yaml
+condition: !or
+  - !window_focused
+    title: "Notepad"
+  - !window_focused
     title: "Calculator"
 ```
 
-### pixel_color
 ```yaml
-condition:
-  pixel_color:
-    x: 100
-    y: 100
-    color: "#FF0000"
-    tolerance: 10  # default: 10
+condition: !not
+  condition: !window_focused
+    title: "Notepad"
 ```
 
-### counter
-```yaml
-condition:
-  counter:
-    key: "loop_count"
-    op: "<"     # ==, !=, >, <, >=, <=
-    value: 10
-```
-
-### Logical Operators
-
-#### always / never
-```yaml
-condition:
-  always: {}
-
-condition:
-  never: {}
-```
-
-#### and
-```yaml
-condition:
-  and:
-    - window_focused: { title: "Notepad" }
-    - pixel_color: { x: 100, y: 100, color: "#00FF00" }
-```
-
-#### or
-```yaml
-condition:
-  or:
-    - window_focused: { title: "Notepad" }
-    - window_focused: { title: "Calculator" }
-```
-
-#### not
-```yaml
-condition:
-  not:
-    window_focused: { title: "Notepad" }
-```
-
-## Run Configuration
+## Run configuration
 
 ```yaml
 run:
-  repeat: 1           # Number of times (0 = forever)
-  start_delay_ms: 3000 # Countdown before start
-  speed: 1.0          # Speed multiplier (0.5 = half speed, 2.0 = double speed)
+  repeat: 1            # number of times (0 = forever)
+  start_delay_ms: 3000 # countdown before the first action
+  speed: 1.0           # speed multiplier (0.5 = half, 2.0 = double)
 ```
 
-## Complete Example
+## Complete example
 
 ```yaml
 name: Auto Login
@@ -452,9 +401,6 @@ variables:
   button_x:
     type: number
     default: 640
-  button_y:
-    type: number
-    default: 400
 
 target_window:
   title: "Login"
@@ -462,43 +408,31 @@ target_window:
 
 timeline:
   - at_ms: 0
-    action:
-      click:
-        x: 500
-        y: 300
+    action: !click
+      x: 500
+      y: 300
     note: "Click username field"
-  
   - at_ms: 200
-    action:
-      text_input:
-        text: "{{ username }}"
-  
+    action: !text_input
+      text: "{{ username }}"
   - at_ms: 700
-    action:
-      click:
-        x: 500
-        y: 350
+    action: !click
+      x: 500
+      y: 350
     note: "Click password field"
-  
   - at_ms: 900
-    action:
-      text_input:
-        text: "{{ password }}"
-  
+    action: !text_input
+      text: "{{ password }}"
   - at_ms: 1400
-    action:
-      click:
-        x: "{{ button_x }}"
-        y: "{{ button_y }}"
+    action: !click
+      x: "{{ button_x }}"
+      y: 400
     note: "Click login button"
-  
   - at_ms: 2000
-    action:
-      wait_until:
-        condition:
-          window_exists:
-            title: "Dashboard"
-        timeout_ms: 10000
+    action: !wait_until
+      condition: !window_exists
+        title: "Dashboard"
+      timeout_ms: 10000
     note: "Wait for login to complete"
 
 run:
@@ -509,14 +443,14 @@ run:
 
 ## Validation
 
-TAP validates YAML files on import:
+YAML is validated on import:
 
-- Required fields must be present
-- Types must match (numbers for coordinates, etc.)
-- Coordinates must be within reasonable range (-100000 to 100000)
-- Variable names must be valid identifiers
-- Colors must be in `#RRGGBB` format
-- Comparison operators must be valid
+- Required fields present; types match (numbers for coordinates, etc.)
+- Coordinates within range (-100000 to 100000)
+- Variable names are valid identifiers
+- Colors in `#RRGGBB` format
+- Comparison operators are valid
 
 Validation errors include the field path and a descriptive message.
 
+> See `tap/templates/*.yaml` for working, parse-validated examples.

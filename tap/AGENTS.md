@@ -56,7 +56,7 @@ tap/
 ├── templates/                    # YAML macro templates
 ├── specs/
 │   ├── features/                 # Feature specifications
-│   └── proposals/                # Design proposals and RFCs
+│   └── proposals/                # backlog.md — forward-looking backlog / future work
 └── README.md
 ```
 

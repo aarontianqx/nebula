@@ -42,8 +42,8 @@ yarn tauri:build
 ## 文档
 
 - `AGENTS.md` — 架构设计与开发规范
-- `specs/features/` — 功能规格（产品功能、UI 设计、DSL 语法参考等）
-- `specs/proposals/` — 设计提案与路线图
+- `specs/features/` — 功能规格（产品功能、UI 设计、DSL 语法参考、Key→Click）
+- `specs/proposals/backlog.md` — 待办与未来工作（唯一的前瞻性提案文档）
 - `templates/` — YAML 宏模板示例
 
 ## License
