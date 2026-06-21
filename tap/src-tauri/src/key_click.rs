@@ -326,18 +326,14 @@ fn do_click(
     y: i32,
     click_count: &AtomicU64,
     event_tx: &Sender<KeyClickEvent>,
-) -> bool {
+) {
     let action = Action::Click { x, y, button };
     match injector.inject(&action) {
         Ok(()) => {
             let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
             let _ = event_tx.send(KeyClickEvent::Click { count, x, y });
-            true
         }
-        Err(e) => {
-            warn!(?e, "Click failed");
-            false
-        }
+        Err(e) => warn!(?e, "Click failed"),
     }
 }
 

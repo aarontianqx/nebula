@@ -15,8 +15,9 @@ use tap_application::{
     MouseButtonRaw, PlatformConditionProvider, Player, RawEventType, Recorder, RecorderState,
 };
 use tap_core::{
-    document_to_yaml, parse_yaml, validate_profile, Action, ConditionColor, MacroDocument, Profile,
-    Repeat, RunConfig, TimedAction, Timeline, ValidationError, VariableValue,
+    document_to_yaml, normalize_key, parse_yaml, validate_profile, Action, ConditionColor,
+    MacroDocument, Profile, Repeat, RunConfig, TimedAction, Timeline, ValidationError,
+    VariableValue,
 };
 use tap_platform::{
     check_permissions, get_pixel_color, is_window_focused, list_windows, open_permission_settings,
@@ -218,7 +219,7 @@ fn cmd_capture_key(state: State<'_, Mutex<AppState>>) -> Result<String, String> 
     loop {
         for ev in hook.drain() {
             if let InputEventType::KeyDown { key } = ev.event {
-                let normalized = tap_platform::normalize_key(&key);
+                let normalized = normalize_key(&key);
                 hook.stop();
                 info!(key = %normalized, "Captured key");
                 return Ok(normalized);
@@ -284,10 +285,8 @@ fn start_key_click(
     // Start the input hook for capturing key events
     let input_hook = start_input_hook();
 
-    // We need a way to get the current mouse position in the runner.
-    // Since we can't easily share the tracker, we'll use rdev to get position.
-    // Actually, we can use enigo to get mouse position, but it's simpler to
-    // just use the platform API.
+    // Resolve the live cursor position for cursor-mode clicks via the platform
+    // API directly (the runner thread can't share the mouse tracker).
     let get_position = move || {
         // Use platform-specific mouse position query
         #[cfg(target_os = "windows")]
