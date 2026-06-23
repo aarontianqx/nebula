@@ -4,8 +4,10 @@
 //! 因此**新增工具只需在 [`build_registry`] 里加一行**。
 
 use pulsar_core::tools::{
-    Base64Tool, CaseTool, DiffTool, HashTool, HexTool, IdGenTool, JsonFormatTool, JsonPathTool,
-    JsonYamlTool, JwtTool, NumberBaseTool, RegexTool, TimestampTool, UrlTool,
+    Base64Tool, CaseTool, ColorTool, CronTool, DedupSortTool, DiffTool, HashTool, HexTool,
+    HmacTool, HtmlEntityTool, IdGenTool, JsonCsvTool, JsonFormatTool, JsonPathTool, JsonYamlTool,
+    JwtTool, NumberBaseTool, PasswordTool, RegexTool, SlugTool, SqlTool, TextStatsTool,
+    TimestampTool, UnicodeTool, UrlTool,
 };
 use pulsar_core::{Tool, ToolDescriptor, ToolError, ToolParams, ToolResult, ToolValue};
 use serde::Serialize;
@@ -117,22 +119,33 @@ pub fn build_registry() -> ToolRegistry {
         Arc::new(JsonYamlTool),
         Arc::new(TimestampTool),
         Arc::new(NumberBaseTool),
+        Arc::new(JsonCsvTool),
+        Arc::new(ColorTool),
+        Arc::new(CronTool),
         // Encoders / Decoders
         Arc::new(Base64Tool),
         Arc::new(UrlTool),
         Arc::new(HexTool),
         Arc::new(JwtTool),
+        Arc::new(HtmlEntityTool),
+        Arc::new(UnicodeTool),
         // Formatters
         Arc::new(JsonFormatTool),
+        Arc::new(SqlTool),
         // Generators
         Arc::new(IdGenTool),
         Arc::new(HashTool),
+        Arc::new(PasswordTool),
+        Arc::new(HmacTool),
         // Testers
         Arc::new(RegexTool),
         Arc::new(JsonPathTool),
         Arc::new(DiffTool),
         // Text
         Arc::new(CaseTool),
+        Arc::new(TextStatsTool),
+        Arc::new(DedupSortTool),
+        Arc::new(SlugTool),
     ];
     ToolRegistry::from_tools(tools)
 }
@@ -149,7 +162,19 @@ mod tests {
         assert!(reg.get("encoders.base64").is_some());
         assert!(reg.get("generators.id").is_some());
         assert!(reg.get("testers.regex").is_some());
-        assert_eq!(reg.descriptors().len(), 14);
+        // P1 新增工具。
+        assert!(reg.get("converters.color").is_some());
+        assert!(reg.get("converters.json_csv").is_some());
+        assert!(reg.get("converters.cron").is_some());
+        assert!(reg.get("encoders.html_entity").is_some());
+        assert!(reg.get("encoders.unicode").is_some());
+        assert!(reg.get("formatters.sql").is_some());
+        assert!(reg.get("generators.password").is_some());
+        assert!(reg.get("generators.hmac").is_some());
+        assert!(reg.get("text.stats").is_some());
+        assert!(reg.get("text.dedup_sort").is_some());
+        assert!(reg.get("text.slug").is_some());
+        assert_eq!(reg.descriptors().len(), 25);
     }
 
     #[test]
@@ -208,6 +233,13 @@ mod tests {
     fn detect_empty_is_empty() {
         let reg = build_registry();
         assert!(reg.detect("   ").is_empty());
+    }
+
+    #[test]
+    fn detect_hex_color() {
+        let reg = build_registry();
+        let results = reg.detect("#1E90FF");
+        assert!(results.iter().any(|r| r.tool_id == "converters.color"));
     }
 
     #[test]
