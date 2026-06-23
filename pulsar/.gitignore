@@ -1,7 +1,8 @@
 # === Rust (Cargo) ===
 target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock is committed: Pulsar ships as a binary app, so we pin the
+# exact dependency graph for reproducible builds and releases.
 
 # === IDE / Editor ===
 .idea/
