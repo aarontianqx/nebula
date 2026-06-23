@@ -3,6 +3,7 @@
 //! 新增工具：① 在此目录新建模块并实现 `Tool`；② 在 `pulsar-app` 的注册表登记。
 
 mod base64_tool;
+mod bcrypt_tool;
 mod case_tool;
 mod color_tool;
 mod cron_tool;
@@ -20,15 +21,20 @@ mod jsonpath_tool;
 mod jwt_tool;
 mod number_base_tool;
 mod password_tool;
+mod qr_tool;
 mod regex_tool;
 mod slug_tool;
 mod sql_tool;
 mod text_stats_tool;
 mod timestamp_tool;
+mod toml_tool;
 mod unicode_tool;
 mod url_tool;
+mod xml_format_tool;
+mod xml_json_tool;
 
 pub use base64_tool::Base64Tool;
+pub use bcrypt_tool::BcryptTool;
 pub use case_tool::CaseTool;
 pub use color_tool::ColorTool;
 pub use cron_tool::CronTool;
@@ -46,10 +52,14 @@ pub use jsonpath_tool::JsonPathTool;
 pub use jwt_tool::JwtTool;
 pub use number_base_tool::NumberBaseTool;
 pub use password_tool::PasswordTool;
+pub use qr_tool::QrTool;
 pub use regex_tool::RegexTool;
 pub use slug_tool::SlugTool;
 pub use sql_tool::SqlTool;
 pub use text_stats_tool::TextStatsTool;
 pub use timestamp_tool::TimestampTool;
+pub use toml_tool::TomlTool;
 pub use unicode_tool::UnicodeTool;
 pub use url_tool::UrlTool;
+pub use xml_format_tool::XmlFormatTool;
+pub use xml_json_tool::XmlJsonTool;

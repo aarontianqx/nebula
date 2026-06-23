@@ -53,7 +53,7 @@
 
 收敛为 **8 个一级分类**。优先级：**P0**=首发必做（高频刚需），**P1**=第二批，**P2**=加分/长尾。
 
-> ✅ = 已实现（截至 Phase 1：全部 P0 + 纯文本/逻辑类 P1，共 25 个工具）。图片类与需重依赖的格式化工具仍待办。
+> ✅ = 已实现（截至 Phase 1：全部 P0 + 纯文本/逻辑类 P1，共 30 个工具）。图片类（需二进制 IPC 链路 + 图像库）与 HTML/CSS/JS 等需重依赖的格式化工具仍待办。
 
 ### 5.1 Converters（转换）
 | 工具 | 优先级 |
@@ -64,7 +64,8 @@
 | JSON ↔ CSV | P1 ✅ |
 | Cron 表达式解析（人类可读 + 下次执行） | P1 ✅ |
 | 颜色格式 (HEX/RGB/HSL) | P1 ✅ |
-| XML ↔ JSON | P1 |
+| XML ↔ JSON | P1 ✅ |
+| TOML ↔ JSON / YAML | P1 ✅ |
 | 单位换算（字节/温度/角度/时长…） | P2 |
 | 罗马数字 / NATO 字母 | P2 |
 
@@ -85,7 +86,7 @@
 |------|--------|
 | JSON 格式化 / 压缩 / 校验 | P0 ✅ |
 | SQL 格式化 | P1 ✅ |
-| XML 格式化 | P1 |
+| XML 格式化 | P1 ✅ |
 | HTML / CSS / JS 格式化 | P1 |
 | YAML / TOML 格式化 | P1 |
 
@@ -96,8 +97,8 @@
 | 哈希 (MD5 / SHA-1/256/512 / CRC32) | P0 ✅ |
 | 强密码生成 + 强度/熵分析 | P1 ✅ |
 | HMAC | P1 ✅ |
-| Bcrypt 生成 / 校验 | P1 |
-| QR 码生成 (URL / WiFi / 文本) | P1 |
+| Bcrypt 生成 / 校验 | P1 ✅ |
+| QR 码生成 (文本，SVG / ASCII) | P1 ✅ |
 | Lorem Ipsum / Mock 测试数据 | P2 |
 | .gitignore / Dockerfile / docker-compose 生成 | P2 |
 
