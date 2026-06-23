@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/pulsar-core",
+  "crates/pulsar-app",
+  "src-tauri",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.release.package."*"]
+opt-level = "z"
+strip = true
