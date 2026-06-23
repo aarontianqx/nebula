@@ -23,6 +23,7 @@ nebula/
   tap/              # Desktop automation tool (Tauri + React + Rust)
   wardenly-rs/      # Browser automation for WLY game (Tauri + React + Rust)
   wardenly-go/      # Browser automation for WLY game -- Go edition (Go + Fyne)
+  pulsar/           # Local developer toolbox / workbench (Tauri + React + Rust)
 ```
 
 ## Coding conventions

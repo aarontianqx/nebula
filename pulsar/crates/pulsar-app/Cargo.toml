@@ -1,0 +1,10 @@
+[package]
+name = "pulsar-app"
+version = "0.1.0"
+description = "Pulsar application layer: tool registry and orchestration"
+authors = ["Aaron Tian"]
+edition = "2021"
+
+[dependencies]
+pulsar-core = { path = "../pulsar-core" }
+serde = { version = "1", features = ["derive"] }
