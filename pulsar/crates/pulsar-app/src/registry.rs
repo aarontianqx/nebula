@@ -4,10 +4,10 @@
 //! 因此**新增工具只需在 [`build_registry`] 里加一行**。
 
 use pulsar_core::tools::{
-    Base64Tool, CaseTool, ColorTool, CronTool, DedupSortTool, DiffTool, HashTool, HexTool,
-    HmacTool, HtmlEntityTool, IdGenTool, JsonCsvTool, JsonFormatTool, JsonPathTool, JsonYamlTool,
-    JwtTool, NumberBaseTool, PasswordTool, RegexTool, SlugTool, SqlTool, TextStatsTool,
-    TimestampTool, UnicodeTool, UrlTool,
+    Base64Tool, BcryptTool, CaseTool, ColorTool, CronTool, DedupSortTool, DiffTool, HashTool,
+    HexTool, HmacTool, HtmlEntityTool, IdGenTool, JsonCsvTool, JsonFormatTool, JsonPathTool,
+    JsonYamlTool, JwtTool, NumberBaseTool, PasswordTool, QrTool, RegexTool, SlugTool, SqlTool,
+    TextStatsTool, TimestampTool, TomlTool, UnicodeTool, UrlTool, XmlFormatTool, XmlJsonTool,
 };
 use pulsar_core::{Tool, ToolDescriptor, ToolError, ToolParams, ToolResult, ToolValue};
 use serde::Serialize;
@@ -122,6 +122,8 @@ pub fn build_registry() -> ToolRegistry {
         Arc::new(JsonCsvTool),
         Arc::new(ColorTool),
         Arc::new(CronTool),
+        Arc::new(TomlTool),
+        Arc::new(XmlJsonTool),
         // Encoders / Decoders
         Arc::new(Base64Tool),
         Arc::new(UrlTool),
@@ -132,11 +134,14 @@ pub fn build_registry() -> ToolRegistry {
         // Formatters
         Arc::new(JsonFormatTool),
         Arc::new(SqlTool),
+        Arc::new(XmlFormatTool),
         // Generators
         Arc::new(IdGenTool),
         Arc::new(HashTool),
         Arc::new(PasswordTool),
         Arc::new(HmacTool),
+        Arc::new(BcryptTool),
+        Arc::new(QrTool),
         // Testers
         Arc::new(RegexTool),
         Arc::new(JsonPathTool),
@@ -174,7 +179,12 @@ mod tests {
         assert!(reg.get("text.stats").is_some());
         assert!(reg.get("text.dedup_sort").is_some());
         assert!(reg.get("text.slug").is_some());
-        assert_eq!(reg.descriptors().len(), 25);
+        assert!(reg.get("converters.toml").is_some());
+        assert!(reg.get("converters.xml_json").is_some());
+        assert!(reg.get("formatters.xml").is_some());
+        assert!(reg.get("generators.bcrypt").is_some());
+        assert!(reg.get("generators.qr").is_some());
+        assert_eq!(reg.descriptors().len(), 30);
     }
 
     #[test]
