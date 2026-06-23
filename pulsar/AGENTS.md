@@ -6,7 +6,7 @@ Pulsar 是面向开发者的**本地工具工作台**：把每天要用的几十
 
 与赛道内既有产品（DevToys / IT-Tools 等）相比，Pulsar 的差异化在于：**纯离线轻量 + Smart Detection（粘贴即识别）+ Pipeline（工具串联）+ CLI/工作流自动化**，而非工具数量。详见 `specs/proposals/`。
 
-> 当前阶段：提案已完成，实现待开始。本文件描述**目标架构**；实现推进时需同步更新。
+> 当前阶段：Phase 1 进行中。Tool 内核、注册表、Smart Detection 雏形与 25 个 P0/P1 工具（纯文本/逻辑类）已落地；Pipeline、CLI、工作流、流式处理仍在路线图上。本文件描述**目标架构**；实现推进时需同步更新。
 
 ## Architecture
 
