@@ -52,7 +52,7 @@ yarn install
 yarn tauri:build
 ```
 
-构建产物位于 `src-tauri/target/release/`。
+构建产物位于 `target/release/`（workspace 根在 `pulsar/`）。
 
 ## 工具分类
 

@@ -1,0 +1,77 @@
+name: CI pulsar
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pulsar/**"
+      - ".github/workflows/pulsar-ci.yml"
+  pull_request:
+    paths:
+      - "pulsar/**"
+      - ".github/workflows/pulsar-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pulsar-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: pulsar-core + pulsar-app (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: pulsar -> target
+
+      - name: Format check (workspace)
+        working-directory: pulsar
+        run: cargo fmt --all --check
+
+      # pulsar-core (pure domain) and pulsar-app (registry/detection) are
+      # platform-agnostic; the whole workspace builds and tests on Linux.
+      - name: Clippy (workspace)
+        working-directory: pulsar
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test (workspace)
+        working-directory: pulsar
+        run: cargo test --workspace
+
+  frontend:
+    name: pulsar frontend (typecheck + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: pulsar/yarn.lock
+
+      - name: Install dependencies
+        working-directory: pulsar
+        run: yarn install --frozen-lockfile
+
+      - name: Typecheck (tsc)
+        working-directory: pulsar
+        run: yarn typecheck
+
+      - name: Lint (eslint)
+        working-directory: pulsar
+        run: yarn lint

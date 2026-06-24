@@ -1,0 +1,122 @@
+name: Release pulsar
+
+on:
+  push:
+    tags:
+      - "pulsar-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without project prefix (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: pulsar -> target
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: pulsar
+        run: yarn install --frozen-lockfile
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Tauri app
+        working-directory: pulsar
+        run: cargo tauri build --target ${{ matrix.target }}
+
+      - name: Rename raw executable
+        working-directory: pulsar
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv target/${{ matrix.target }}/release/Pulsar.exe target/${{ matrix.target }}/release/Pulsar-${{ matrix.target }}.exe
+          else
+            mv target/${{ matrix.target }}/release/Pulsar target/${{ matrix.target }}/release/Pulsar-${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulsar-${{ matrix.label }}
+          path: |
+            pulsar/target/${{ matrix.target }}/release/Pulsar-${{ matrix.target }}
+            pulsar/target/${{ matrix.target }}/release/Pulsar-${{ matrix.target }}.exe
+            pulsar/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            pulsar/target/${{ matrix.target }}/release/bundle/**/*.msi
+            pulsar/target/${{ matrix.target }}/release/bundle/**/*setup*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+            TAG="pulsar-${VERSION}"
+            git tag "$TAG"
+            git push origin "$TAG"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#pulsar-}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "Pulsar ${{ steps.meta.outputs.version }}"
+          files: artifacts/**/*
+          generate_release_notes: true
