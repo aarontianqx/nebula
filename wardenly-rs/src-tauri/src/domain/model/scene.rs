@@ -65,6 +65,9 @@ impl Default for SceneMatcher {
 }
 
 impl SceneMatcher {
+    /// Construct a matcher with an explicit threshold (non-positive falls back to
+    /// the default). Retained alongside `Default` for tests/diagnostics.
+    #[allow(dead_code)]
     pub fn new(threshold: f64) -> Self {
         Self {
             threshold: if threshold <= 0.0 { 5.0 } else { threshold },
@@ -116,7 +119,8 @@ impl SceneMatcher {
         avg_diff <= self.threshold
     }
 
-    /// Match with detailed results for debugging
+    /// Match with detailed per-point diffs for debugging/tuning thresholds.
+    #[allow(dead_code)]
     pub fn match_with_details(&self, scene: &Scene, image: &DynamicImage) -> MatchResult {
         let rgb = image.to_rgb8();
         let (width, height) = (rgb.width(), rgb.height());
@@ -168,7 +172,8 @@ impl SceneMatcher {
     }
 }
 
-/// Result of a scene match attempt
+/// Detailed result of a scene match attempt (produced by `match_with_details`).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     pub scene_name: String,

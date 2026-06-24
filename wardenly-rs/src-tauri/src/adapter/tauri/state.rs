@@ -13,6 +13,9 @@ pub struct AppState {
     pub account_service: AccountService<DynAccountRepository>,
     pub group_service: GroupService<DynGroupRepository>,
     pub coordinator: Arc<Coordinator>,
+    // Retained so future command handlers can publish events directly; currently
+    // only consumed at construction time (cloned into the coordinator).
+    #[allow(dead_code)]
     pub event_bus: SharedEventBus,
     pub input_processor: Arc<InputEventProcessor>,
 }

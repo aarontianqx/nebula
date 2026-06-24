@@ -17,13 +17,11 @@ pub struct Coordinator {
 
 impl Coordinator {
     pub fn new(event_bus: SharedEventBus, account_repo: Arc<dyn AccountRepository>) -> Self {
-        let coordinator = Self {
+        Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             event_bus,
             account_repo,
-        };
-
-        coordinator
+        }
     }
 
     /// Start the event listener for state sync and auto-cleanup of stopped sessions

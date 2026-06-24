@@ -145,33 +145,25 @@ impl Condition {
 /// OCR mode for different recognition types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum OcrMode {
     /// Recognize usage ratio (e.g., "1/10")
+    #[default]
     Ratio,
-}
-
-impl Default for OcrMode {
-    fn default() -> Self {
-        OcrMode::Ratio
-    }
 }
 
 /// Action to take when OCR condition is met
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum OcrAction {
     /// Quit with ResourceExhausted status
+    #[default]
     QuitExhausted,
     /// Quit with Completed status
     Quit,
     /// Skip current step
     Skip,
-}
-
-impl Default for OcrAction {
-    fn default() -> Self {
-        OcrAction::QuitExhausted
-    }
 }
 
 /// OCR rule for resource-based script control

@@ -1,0 +1,76 @@
+name: CI wardenly-rs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wardenly-rs/**"
+      - ".github/workflows/wardenly-rs-ci.yml"
+  pull_request:
+    paths:
+      - "wardenly-rs/**"
+      - ".github/workflows/wardenly-rs-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wardenly-rs-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: wardenly-rs (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: wardenly-rs/src-tauri -> target
+
+      # wardenly-rs is a single Tauri app crate (no domain/platform split).
+      # tauri-build does not require the frontend dist for cargo check/clippy/test,
+      # so the crate builds on Linux without bundling the UI first.
+      - name: Format check
+        working-directory: wardenly-rs/src-tauri
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        working-directory: wardenly-rs/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: wardenly-rs/src-tauri
+        run: cargo test
+
+  frontend:
+    name: wardenly-rs frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: wardenly-rs/yarn.lock
+
+      - name: Install dependencies
+        working-directory: wardenly-rs
+        run: yarn install --frozen-lockfile
+
+      # No standalone lint/typecheck scripts here; `yarn build` runs
+      # `tsc && vite build`, which typechecks and bundles in one step.
+      - name: Build (tsc + vite)
+        working-directory: wardenly-rs
+        run: yarn build

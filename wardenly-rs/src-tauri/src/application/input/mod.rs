@@ -1,3 +1,3 @@
 mod processor;
 
-pub use processor::{ClickEvent, InputEventProcessor};
+pub use processor::InputEventProcessor;

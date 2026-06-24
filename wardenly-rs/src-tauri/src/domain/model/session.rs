@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Session states representing the lifecycle of a browser session
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SessionState {
+    #[default]
     Idle,
     Starting,
     LoggingIn,
@@ -15,12 +16,6 @@ impl SessionState {
     /// Check if the session can accept click/drag interactions
     pub fn can_accept_interaction(&self) -> bool {
         matches!(self, Self::LoggingIn | Self::Ready | Self::ScriptRunning)
-    }
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        Self::Idle
     }
 }
 

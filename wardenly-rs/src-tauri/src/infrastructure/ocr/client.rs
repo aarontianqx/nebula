@@ -26,7 +26,11 @@ pub struct Roi {
 pub struct UsageRatioResult {
     pub numerator: i32,
     pub denominator: i32,
+    // Diagnostic fields populated from the OCR backend's debug payload; kept for
+    // logging/troubleshooting even though callers currently read only the ratio.
+    #[allow(dead_code)]
     pub raw_text: String,
+    #[allow(dead_code)]
     pub confidence: f64,
 }
 
@@ -44,6 +48,10 @@ pub trait OcrClient: Send + Sync {
     ) -> anyhow::Result<UsageRatioResult>;
 
     /// Shutdown the client and any background tasks.
+    ///
+    /// Currently shutdown also happens via `Drop`; this explicit hook is retained
+    /// for callers that need deterministic teardown.
+    #[allow(dead_code)]
     fn close(&self);
 }
 

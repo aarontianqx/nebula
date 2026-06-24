@@ -13,6 +13,8 @@ pub trait AccountRepository: Send + Sync {
 
 /// Repository trait for Group entity
 pub trait GroupRepository: Send + Sync {
+    // Symmetric CRUD with AccountRepository; not yet called for groups.
+    #[allow(dead_code)]
     fn find_by_id(&self, id: &str) -> Result<Option<Group>>;
     fn find_all(&self) -> Result<Vec<Group>>;
     fn save(&self, group: &Group) -> Result<()>;

@@ -43,7 +43,7 @@ pub fn log_dir() -> PathBuf {
 /// - Linux: ~/.local/share/wardenly/profiles/{account_id}
 pub fn profile_dir(account_id: &str) -> PathBuf {
     dirs::data_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("wardenly")
         .join("profiles")
         .join(account_id)
@@ -72,12 +72,15 @@ pub fn delete_profile(account_id: &str) {
 /// Get the root profiles directory.
 pub fn profiles_dir() -> PathBuf {
     dirs::data_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("wardenly")
         .join("profiles")
 }
 
 /// Get the size of a specific account's profile directory in bytes.
+///
+/// Sibling to `get_all_profiles_size`; retained for per-account reporting.
+#[allow(dead_code)]
 pub fn get_profile_size(account_id: &str) -> u64 {
     let path = profile_dir(account_id);
     dir_size(&path)

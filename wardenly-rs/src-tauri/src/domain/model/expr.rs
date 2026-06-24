@@ -17,6 +17,9 @@ pub enum ExprError {
     #[error("Unknown variable: {0}")]
     UnknownVariable(String),
 
+    // Part of the expression error taxonomy; not produced by the current parser
+    // but kept so downstream matches stay exhaustive.
+    #[allow(dead_code)]
     #[error("Invalid operator: {0}")]
     InvalidOperator(String),
 }
@@ -92,10 +95,11 @@ impl ExprContext {
                 depth += 1;
             } else if bytes[i] == b')' {
                 depth -= 1;
-            } else if depth == 0 && i + op.len() <= expr.len() {
-                if &bytes[i..i + op.len()] == op_bytes {
-                    return Some(i);
-                }
+            } else if depth == 0
+                && i + op.len() <= expr.len()
+                && &bytes[i..i + op.len()] == op_bytes
+            {
+                return Some(i);
             }
         }
         None

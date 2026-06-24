@@ -38,6 +38,9 @@ enum StepResult {
     Continue,
     Quit,
     ResourceExhausted,
+    /// Reserved terminal-error result; no step produces it yet, but the executor
+    /// already handles it (mapped to `StopReason::Error`).
+    #[allow(dead_code)]
     Error,
 }
 
@@ -545,12 +548,17 @@ impl ScriptRunner {
         }
     }
 
-    /// Stop the script runner
+    /// Stop the script runner.
+    ///
+    /// Stopping currently goes through `ScriptHandle`'s shared flag; these direct
+    /// accessors are retained for symmetry and standalone use of the runner.
+    #[allow(dead_code)]
     pub fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
 
-    /// Check if the script is still running
+    /// Check if the script is still running.
+    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }

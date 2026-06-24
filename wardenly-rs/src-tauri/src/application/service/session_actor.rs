@@ -360,28 +360,27 @@ impl SessionActor {
             }
 
             // Check for login form (only attempt login once)
-            if !login_attempted {
-                if self
+            if !login_attempted
+                && self
                     .browser
                     .wait_visible("#username", login_form_check_interval)
                     .await
                     .is_ok()
-                {
-                    tracing::info!(
-                        "Detected login form, performing password login for {}",
-                        self.account.identity()
-                    );
-                    self.browser
-                        .login_with_password(
-                            &self.account.user_name,
-                            &self.account.password,
-                            Duration::from_secs(10),
-                        )
-                        .await?;
-                    login_attempted = true;
-                    // After login form submission, continue loop to wait for game scenes
-                    continue;
-                }
+            {
+                tracing::info!(
+                    "Detected login form, performing password login for {}",
+                    self.account.identity()
+                );
+                self.browser
+                    .login_with_password(
+                        &self.account.user_name,
+                        &self.account.password,
+                        Duration::from_secs(10),
+                    )
+                    .await?;
+                login_attempted = true;
+                // After login form submission, continue loop to wait for game scenes
+                continue;
             }
 
             // Small delay before next check iteration
@@ -411,10 +410,8 @@ impl SessionActor {
 
     /// Click a named action in a scene.
     async fn click_scene_action(&self, scene: &Scene, action_name: &str) -> anyhow::Result<()> {
-        if let Some(action) = scene.actions.get(action_name) {
-            if let SceneAction::Click { point } = action {
-                self.browser.click(point.x as f64, point.y as f64).await?;
-            }
+        if let Some(SceneAction::Click { point }) = scene.actions.get(action_name) {
+            self.browser.click(point.x as f64, point.y as f64).await?;
         }
         Ok(())
     }
