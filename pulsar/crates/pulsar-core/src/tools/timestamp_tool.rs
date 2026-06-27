@@ -153,10 +153,9 @@ fn to_datetime(input: &str, tz: Tz) -> ToolResult {
 }
 
 fn to_timestamp(input: &str, tz: Tz) -> ToolResult {
+    // 留空 → 当前时间（与 to_datetime 一致）。
     if input.is_empty() {
-        return Err(ToolError::InvalidInput(
-            "请输入日期（RFC3339、'YYYY-MM-DD HH:MM:SS' 或 'YYYY-MM-DD'）".into(),
-        ));
+        return Ok(format_timestamp(Utc::now()));
     }
 
     // 1) 带时区偏移的 RFC3339：尊重其自带偏移。
@@ -288,6 +287,23 @@ mod tests {
             .unwrap();
         // 当前时间应被识别为「刚刚」。
         assert!(out.as_text().contains("刚刚"));
+    }
+
+    #[test]
+    fn to_timestamp_empty_uses_now() {
+        let before = Utc::now().timestamp();
+        let out = TimestampTool
+            .run(ToolValue::text(""), &params("to_timestamp", "UTC"))
+            .unwrap();
+        let after = Utc::now().timestamp();
+        let text = out.as_text();
+        // 提取 seconds 行的值并断言落在调用窗口内。
+        let secs: i64 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("seconds:"))
+            .and_then(|s| s.trim().parse().ok())
+            .expect("seconds line present");
+        assert!(before <= secs && secs <= after, "now timestamp in range");
     }
 
     #[test]

@@ -1,12 +1,48 @@
-import { useState } from "react";
-import { Copy, Check, Play } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useToolStore } from "../stores/toolStore";
-import { ParamControl } from "./ParamControl";
+import { archetypeOf, isAutoRun, runsOnEmpty } from "../lib/layouts";
+import { GenerateLayout } from "./layouts/GenerateLayout";
+import { InspectLayout } from "./layouts/InspectLayout";
+import { QueryLayout } from "./layouts/QueryLayout";
+import { TransformLayout } from "./layouts/TransformLayout";
+import { VisualLayout } from "./layouts/VisualLayout";
+import type { LayoutProps } from "./layouts/types";
 
 export function ToolPanel() {
-  const { active, input, params, output, error, running, setInput, setParam, run } =
+  const { active, input, params, output, error, running, setInput, setParam, run, clearOutput } =
     useToolStore();
-  const [copied, setCopied] = useState(false);
+
+  const autoRun = active ? isAutoRun(active.id) : false;
+
+  // 轻量工具：输入/参数变化后防抖自动运行。
+  // 空输入通常清空输出（不报错）；但「依赖当前时间」类工具空输入也运行（→ now）。
+  const timer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!active || !autoRun) return;
+    if (timer.current) window.clearTimeout(timer.current);
+    if (input.trim() === "" && !runsOnEmpty(active.id)) {
+      clearOutput();
+      return;
+    }
+    timer.current = window.setTimeout(() => run(), 200);
+    return () => {
+      if (timer.current) window.clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, params, active?.id, autoRun]);
+
+  // 全局快捷键：Cmd/Ctrl+Enter 运行。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        if (active && !running) run();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id, running]);
 
   if (!active) {
     return (
@@ -16,83 +52,29 @@ export function ToolPanel() {
     );
   }
 
-  const copyOutput = async () => {
-    if (!output) return;
-    await navigator.clipboard.writeText(output);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+  const layoutProps: LayoutProps = {
+    tool: active,
+    input,
+    params,
+    output,
+    error,
+    running,
+    autoRun,
+    setInput,
+    setParam,
+    run,
   };
 
-  return (
-    <section className="flex h-full flex-1 flex-col overflow-hidden">
-      <header className="border-b border-[var(--color-border)] px-6 py-4">
-        <h1 className="text-base font-semibold">{active.name}</h1>
-        <p className="mt-0.5 text-sm text-[var(--color-text-muted)]">
-          {active.description}
-        </p>
-      </header>
-
-      {active.params.length > 0 && (
-        <div className="flex flex-wrap items-center gap-4 border-b border-[var(--color-border)] px-6 py-3">
-          {active.params.map((spec) => (
-            <ParamControl
-              key={spec.key}
-              spec={spec}
-              value={params[spec.key]}
-              onChange={(v) => setParam(spec.key, v)}
-            />
-          ))}
-        </div>
-      )}
-
-      <div className="grid flex-1 grid-cols-2 gap-px overflow-hidden bg-[var(--color-border)]">
-        <div className="flex flex-col overflow-hidden bg-[var(--color-bg)]">
-          <div className="px-4 py-2 text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
-            输入
-          </div>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="在此粘贴或输入…"
-            spellCheck={false}
-            className="font-mono flex-1 resize-none bg-transparent px-4 pb-4 text-sm leading-relaxed outline-none placeholder:text-[var(--color-text-muted)]"
-          />
-        </div>
-
-        <div className="flex flex-col overflow-hidden bg-[var(--color-bg)]">
-          <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
-              输出
-            </span>
-            <button
-              onClick={copyOutput}
-              disabled={!output}
-              className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] disabled:opacity-40"
-            >
-              {copied ? <Check size={13} /> : <Copy size={13} />}
-              {copied ? "已复制" : "复制"}
-            </button>
-          </div>
-          <pre className="font-mono flex-1 overflow-auto whitespace-pre-wrap px-4 pb-4 text-sm leading-relaxed">
-            {error ? (
-              <span className="text-[var(--color-danger)]">{error}</span>
-            ) : (
-              output
-            )}
-          </pre>
-        </div>
-      </div>
-
-      <footer className="flex items-center justify-end border-t border-[var(--color-border)] px-6 py-3">
-        <button
-          onClick={run}
-          disabled={running}
-          className="flex items-center gap-2 rounded-md bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
-        >
-          <Play size={15} />
-          {running ? "运行中…" : "运行"}
-        </button>
-      </footer>
-    </section>
-  );
+  switch (archetypeOf(active.id)) {
+    case "inspect":
+      return <InspectLayout {...layoutProps} />;
+    case "generate":
+      return <GenerateLayout {...layoutProps} />;
+    case "query":
+      return <QueryLayout {...layoutProps} />;
+    case "visual":
+      return <VisualLayout {...layoutProps} />;
+    default:
+      return <TransformLayout {...layoutProps} />;
+  }
 }

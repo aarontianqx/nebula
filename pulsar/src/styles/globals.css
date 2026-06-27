@@ -2,18 +2,55 @@
 
 /* 语义化 CSS 变量（禁止在组件里硬编码颜色）。深色主题。 */
 :root {
-  --color-bg: #0b1020;
-  --color-surface: #121a30;
-  --color-surface-hover: #1a2440;
-  --color-border: #243150;
-  --color-text: #e6ecff;
-  --color-text-muted: #8a97bd;
-  --color-accent: #5b8cff;
-  --color-accent-hover: #3f74ff;
+  /* 背景层次：三级递进，营造纵深 */
+  --color-bg: #0a0e1c;
+  --color-surface: #111729;
+  --color-surface-2: #161e36;
+  --color-surface-hover: #1c2645;
+  --color-border: #232f4e;
+  --color-border-strong: #314069;
+
+  /* 文本三级 */
+  --color-text: #e8edff;
+  --color-text-muted: #93a0c4;
+  --color-text-faint: #5e6b91;
+
+  /* 品牌色：呼应图标的蓝紫渐变 */
+  --color-accent: #6b8cff;
+  --color-accent-hover: #5577ff;
+  --color-accent-soft: #6b8cff1f;
+  --color-brand-from: #6b8cff;
+  --color-brand-to: #a06bff;
+
   --color-danger: #ff6b6b;
+  --color-danger-soft: #ff6b6b1a;
   --color-success: #4ade80;
+  --color-warning: #fbbf24;
+
+  /* 品牌渐变（Logo / 强调元素） */
+  --gradient-brand: linear-gradient(
+    135deg,
+    var(--color-brand-from),
+    var(--color-brand-to)
+  );
 
   color-scheme: dark;
+}
+
+/* 浅色主题（预留：data-theme="light" 时生效） */
+:root[data-theme="light"] {
+  --color-bg: #f7f8fc;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f2f9;
+  --color-surface-hover: #e8ebf5;
+  --color-border: #e2e6f0;
+  --color-border-strong: #cbd2e3;
+  --color-text: #1a2138;
+  --color-text-muted: #5a647f;
+  --color-text-faint: #97a0b8;
+  --color-accent-soft: #6b8cff1a;
+
+  color-scheme: light;
 }
 
 * {
@@ -59,6 +96,48 @@ button {
   background: var(--color-border);
   border-radius: 6px;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 品牌渐变文字（Logo 等） */
+.text-brand-gradient {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 轻量进入动画 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.16s ease-out;
+}
+
+/* 键盘按键提示（kbd） */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  height: 18px;
+  font-size: 11px;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--color-text-muted);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  line-height: 1;
 }

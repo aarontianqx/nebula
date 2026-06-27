@@ -45,9 +45,9 @@ pulsar/
 ├── src/                    # React 前端 (Vite)
 │   ├── components/         # UI 组件 (layout, tool panel, pipeline, dialogs)
 │   ├── stores/            # Zustand 状态 (registry, tool, pipeline, ui)
-│   ├── lib/               # ipc.ts (IPC 边界) / events.ts (事件接线)
+│   ├── lib/               # ipc.ts (IPC 边界) / events.ts (事件接线) / layouts.ts (布局原型/示例/输入提示) / image.ts (SVG→PNG/剪贴板) / text.ts (行·字符度量)
 │   └── styles/            # 全局样式 + 语义化 CSS 变量
-├── src-tauri/             # Tauri 后端 (GUI 适配，薄)
+├── src-tauri/             # Tauri 后端 (GUI 适配，薄；插件：clipboard-manager 用于复制图片)
 ├── crates/
 │   ├── pulsar-core/       # 纯域：Tool trait、描述符、所有工具实现
 │   ├── pulsar-app/        # 应用层：注册表、Pipeline、SmartDetector、Workflow
@@ -73,13 +73,25 @@ store-driven，组件保持薄，读写 Zustand store：
 
 | Store | 职责 |
 |-------|------|
-| `registryStore` | 工具列表/分类/参数 schema（从后端拉取） |
+| `registryStore` | 工具列表/分类/参数 schema（从后端拉取）、收藏（localStorage 持久化） |
 | `toolStore` | 当前工具输入/输出/参数、运行状态 |
 | `pipelineStore` | Pipeline 步骤编辑与执行（V2） |
-| `uiStore` | 视图模式、搜索、收藏、最近使用、Compact 浮窗 |
+| `uiStore` | 命令面板开关（Cmd/Ctrl+K）等全局界面状态；后续承载视图模式 / Compact 浮窗 |
 
+- **布局原型（archetype）**：不同工具的输入/输出形态差异很大，强行「双大文本框」并不通用。前端按工具 id 归到 5 种 archetype（见 `lib/layouts.ts`），由 `ToolPanel` 分发到 `components/layouts/` 下对应布局：
+  - `transform`：大文本输入 → 大文本输出（编码 / 格式化 / 批量文本）
+  - `inspect`：紧凑输入 → 结构化字段卡（时间戳 / 进制 / 颜色 / JWT / 哈希）
+  - `generate`：无输入，纯参数表单 → 结果（密码 / ID）。结果走 `GenerateResult`：突出「主结果」（首个空行前的内容），**复制只取主结果**，元信息（长度 / 熵等）弱化为辅助说明，避免把元信息一起粘出去。
+  - `query`：查询字段 + 主体文本 → 匹配（正则 / JSONPath / Diff）
+  - `visual`：渲染输出（二维码）。走 `QrResult`：SVG 即时渲染，并支持「复制图片 / 下载 PNG」（可选 256/512/1024 分辨率，canvas 光栅化）。复制图片优先用 Tauri clipboard 插件写系统剪贴板（IM 可直接粘贴），退化到浏览器 `ClipboardItem`，再退化为下载。
+  - 通用输出渲染走 `OutputView`：自动识别 SVG / 颜色 / 分段（`--- Title ---`）/ `LABEL: value` 字段，并提供「渲染 / 源码」切换；纯文本输出附带「行 · 字符」徽标与「自动换行」开关（关闭后长行横向滚动，便于看 SQL/JSON）。
+  - 暂以前端 id 映射为单一来源，设计稳定后可上提到 Rust `ToolDescriptor`。
+- **一键示例与输入提示**：`lib/layouts.ts` 的 `EXAMPLES` / `INPUT_HINTS` 为多数工具提供「示例」按钮与贴合内容的占位提示；示例须在**默认参数**下即产出有意义结果。`transform`/`inspect`/`query` 布局在标题栏渲染「示例」按钮（仅当该工具配了示例）。
+- **轻量工具自动运行**：`lib/layouts.ts` 标注的工具输入即防抖运行（无需点「运行」）；`runsOnEmpty` 标注的工具（如时间戳，留空 = 当前时间）空输入也会运行，选中即出结果。全局 `Cmd/Ctrl+Enter` 运行。
+- **命令面板**：全局 `Cmd/Ctrl+K` 打开 `CommandPalette`，按名称 / 关键词 / 分类模糊搜索全部工具，方向键 + 回车跳转。
+- **工具描述**：标题旁信息图标（hover/focus 显示），不再常驻整行描述，保持页面简洁。
 - **IPC 边界**：所有后端调用走 `lib/ipc.ts`（带 guard，无 Tauri 运行时也能渲染）；事件在 `lib/events.ts` 一处接线。
-- **样式**：Tailwind + 语义化 CSS 变量，禁止硬编码颜色。
+- **样式**：Tailwind + 语义化 CSS 变量（深色为主，`globals.css` 预留浅色 `data-theme`），禁止硬编码颜色。共享 UI 原子件在 `components/ui/`。
 
 ### 关键能力（差异化）
 

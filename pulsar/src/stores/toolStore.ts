@@ -17,6 +17,7 @@ interface ToolState {
   setInput: (input: string) => void;
   setParam: (key: string, value: ParamValue) => void;
   run: () => Promise<void>;
+  clearOutput: () => void;
 }
 
 /** 按 ParamSpec 把 default 字符串解释为对应类型的初值。 */
@@ -42,6 +43,9 @@ export const useToolStore = create<ToolState>((set, get) => ({
     set({
       active: tool,
       params: defaultParams(tool.params),
+      // 切换到无关工具时不保留上一个工具的输入，避免误导。
+      // Smart Detection 的跳转走 selectAndFill，会带上识别到的内容。
+      input: "",
       output: "",
       error: null,
     }),
@@ -72,4 +76,6 @@ export const useToolStore = create<ToolState>((set, get) => ({
       set({ error: String(e), output: "", running: false });
     }
   },
+
+  clearOutput: () => set({ output: "", error: null }),
 }));
