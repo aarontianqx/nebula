@@ -10,7 +10,7 @@
 
 技术栈：Tauri v2 + React + Rust
 
-> 项目状态：设计提案已完成（见 `specs/proposals/`），实现待开始。
+> 项目状态：Phase 1（内核 + MVP）实质完成，Phase 2/3 进行中。已实现 **30 个工具** + Smart Detection + Command Palette + **CLI**；Pipeline、工作流/剪贴板自动化、大文件流式仍在路线图上（见 `specs/proposals/roadmap.md`）。
 
 ## 快速开始
 
@@ -22,14 +22,47 @@ yarn install
 yarn tauri:dev
 ```
 
-### CLI（实现后）
+### CLI
+
+`pulsar-cli` 与 GUI 共享同一份 `pulsar-core` 工具逻辑（零重复）；子命令由工具注册表**动态派生**，新增工具即自动出现在 CLI 中。二进制名为 `pulsar`（workspace 根在 `pulsar/`）。
+
+#### 编译 / 安装（任选其一）
 
 ```bash
-# 与 GUI 共享同一份工具逻辑
-pulsar json fmt < input.json
-echo "aGVsbG8=" | pulsar base64 -d
-pulsar uuid --count 5
+cd pulsar
+
+# 方式 A：开发编译，产物在 target/debug/pulsar（运行需 ./ 前缀）
+cargo build -p pulsar-cli
+./target/debug/pulsar list
+
+# 方式 B：cargo run（自动编译再跑；程序参数放在 -- 之后）
+cargo run -p pulsar-cli -- uuid --count 5
+
+# 方式 C：安装到 PATH，之后任意目录直接敲 pulsar（推荐日常用）
+#   cargo install 默认即 release 优化构建（无需也不接受 --release；
+#   想装 debug 版加 --debug）。装到 ~/.cargo/bin/pulsar。
+cargo install --path crates/pulsar-cli
+pulsar list
+
+# 发布用、压体积的 release 二进制：target/release/pulsar
+cargo build -p pulsar-cli --release
 ```
+
+#### 使用
+
+```bash
+# 主输入走 stdin（管道）或位置参数；结果到 stdout，错误到 stderr + 非零退出码
+echo aGVsbG8= | pulsar base64 --mode decode
+cat data.json  | pulsar json
+pulsar uuid --count 5
+echo "255"     | pulsar number_base
+
+pulsar list                 # 列出全部工具（--json 供脚本消费）
+echo '{"a":1}' | pulsar detect      # 智能识别并推荐工具（--json 同上）
+pulsar base64 --help        # 每个工具的参数 = 其 descriptor，自动生成
+```
+
+约定：布尔参数为 `--flag` / `--no-flag`；其余为 `--key <值>`；短命令名（`base64`）与完整 id（`encoders.base64`）均可用。
 
 ### 代码检查（提交前 / CI）
 
@@ -56,18 +89,20 @@ yarn tauri:build
 
 ## 工具分类
 
-| 分类 | 示例 |
-|------|------|
-| Converters | JSON↔YAML↔TOML、时间戳、进制、Cron、颜色 |
-| Encoders / Decoders | Base64、URL、Hex、JWT、HTML 实体 |
-| Formatters | JSON、SQL、XML、HTML/CSS/JS |
-| Generators | UUID/ULID、哈希、密码、QR 码 |
-| Testers | 正则、JSONPath、Diff |
-| Text | 大小写转换、统计、去重排序、Slug |
-| Graphic | 图片压缩/转换、取色器、对比度检查 |
-| Reference | HTTP 状态码、MIME、Chmod、CIDR |
+已实现 **30 个工具**（截至当前）：
 
-完整清单与优先级见 [specs/proposals/vision-and-scope.md](specs/proposals/vision-and-scope.md)。
+| 分类 | 已实现工具 |
+|------|------|
+| Converters | JSON↔YAML、TOML↔JSON/YAML、XML↔JSON、JSON↔CSV、时间戳、进制、Cron、颜色 |
+| Encoders / Decoders | Base64、URL、Hex、JWT（仅解码）、HTML 实体、Unicode |
+| Formatters | JSON、SQL、XML |
+| Generators | UUID/ULID/NanoID、哈希、密码、HMAC、Bcrypt、QR 码 |
+| Testers | 正则、JSONPath、文本 Diff |
+| Text | 大小写转换、统计、去重/排序/去空白、Slug |
+
+**规划中（尚未实现）**：Formatters 的 HTML/CSS/JS、Graphic（图片压缩/转换、取色器、对比度）、Reference（HTTP 状态码、MIME、Chmod、CIDR）、代码生成器等 —— 见路线图。
+
+完整清单与优先级见 [specs/proposals/vision-and-scope.md](specs/proposals/vision-and-scope.md)；进度见 [specs/proposals/roadmap.md](specs/proposals/roadmap.md)。
 
 ## 文档
 
