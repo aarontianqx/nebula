@@ -2,6 +2,8 @@
 
 > 状态：提案 (Proposal) · 起草于 2026-06
 > 配套文档：[`vision-and-scope.md`](./vision-and-scope.md)、[`roadmap.md`](./roadmap.md)
+>
+> **实现现状（2026-06）**：本文为**目标架构**。已落地：Domain（`pulsar-core`：Tool/descriptor/`ToolValue{Text,Bytes}`/30 工具/detect 规则）、Application（`pulsar-app`：注册表 + `detect()`）、Adapter-GUI（`src-tauri`）、**Adapter-CLI（`pulsar-cli`：子命令由 descriptor 动态派生，§6）**。**尚未实现**：Pipeline 执行器（§7）、自动化/流式（§9，`ToolValue::Stream` 未引入）、Infrastructure 层与 SQLite 持久化（§11）。各节按"目标"阅读，落地进度以 `roadmap.md` 为准。
 
 ## 1. 设计目标
 
@@ -142,11 +144,13 @@ impl ToolRegistry {
 ```
 
 - **GUI**：Tauri 命令 `run_tool(id, input, params)` → 查注册表 → `tool.run()` → 返回结果。表单字段由 `descriptor.params` 动态渲染。
-- **CLI**：`clap` 把子命令映射到 `ToolId`，flag 映射到 `ToolParams`，stdin → `input`，stdout ← 结果。
+- **CLI**（✅ 已实现，`crates/pulsar-cli`）：`clap` 子命令由注册表 descriptor **动态派生**（短名 = id 短名，完整 id 作别名），flag 映射到 `ToolParams`，stdin/位置参数 → `input`，stdout ← 结果，错误 → stderr + 非零退出码。映射逻辑集中在 `dispatch.rs`。
   ```bash
-  pulsar json fmt < in.json
-  echo "aGVsbG8=" | pulsar base64 -d
+  cat in.json | pulsar json
+  echo "aGVsbG8=" | pulsar base64 --mode decode
   pulsar uuid --count 5
+  pulsar list            # 全部工具（--json 供脚本）
+  pulsar detect          # 智能识别（--json）
   ```
 - **Pipeline**：见下。
 

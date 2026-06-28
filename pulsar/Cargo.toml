@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/pulsar-core",
   "crates/pulsar-app",
+  "crates/pulsar-cli",
   "src-tauri",
 ]
 

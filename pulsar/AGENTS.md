@@ -12,46 +12,50 @@ Pulsar 是面向开发者的**本地工具工作台**：把每天要用的几十
 
 ### 分层设计 (DDD + Onion)
 
-依赖方向：外 → 内，内层永不依赖外层（与 `wardenly-rs` 一致）。
+依赖方向：外 → 内，内层永不依赖外层（与 `wardenly-rs` 一致）。下图为**目标架构**，`(规划)` 标记尚未实现的部分（实现进度见 `specs/proposals/roadmap.md`）。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                         Adapter 层                            │
-│  src-tauri (GUI: Tauri IPC)   ·   pulsar-cli (命令行)         │
+│  src-tauri (GUI: Tauri IPC) ✅  ·  pulsar-cli (命令行) ✅     │
 ├──────────────────────────────────────────────────────────────┤
 │                       Application 层 (pulsar-app)             │
-│  ToolRegistry · Pipeline · SmartDetector · Workflow ·         │
-│  ClipboardWatcher                                             │
+│  ToolRegistry ✅ · Smart Detection ✅（注册表方法）           │
+│  Pipeline (规划) · Workflow (规划) · ClipboardWatcher (规划)  │
 ├──────────────────────────────────────────────────────────────┤
-│                     Infrastructure 层                          │
+│                  Infrastructure 层 (规划, 尚无此 crate)        │
 │  剪贴板 · 文件流式 IO · 持久化 (SQLite) · 日志                 │
 ├──────────────────────────────────────────────────────────────┤
 │                    Domain 层 (pulsar-core)                    │
-│  Tool trait · ToolDescriptor · ToolValue · 各工具纯实现        │
+│  Tool trait ✅ · ToolDescriptor ✅ · ToolValue(Text/Bytes) ✅ │
+│  · 30 个工具纯实现 ✅                                          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Responsibility | May depend on |
 |-------|----------------|---------------|
 | **Domain** (`pulsar-core`) | 工具 trait、描述符、值类型、各工具纯实现（无 IO/UI/平台依赖） | 无 |
-| **Application** (`pulsar-app`) | 注册表、Pipeline、Smart Detection、工作流、剪贴板编排 | Domain |
-| **Infrastructure** | 剪贴板、文件 IO、持久化、日志 | Domain |
-| **Adapter** | `src-tauri`（GUI）/ `pulsar-cli`（命令行） | Application |
+| **Application** (`pulsar-app`) | 注册表 + Smart Detection ✅；Pipeline / 工作流 / 剪贴板编排（规划） | Domain |
+| **Infrastructure** | 剪贴板、文件 IO、持久化、日志（规划，尚未建 crate） | Domain |
+| **Adapter** | `src-tauri`（GUI）✅ / `pulsar-cli`（命令行）✅ | Application |
+
+> **实现现状**：`ToolValue` 目前只有 `Text` / `Bytes`（无 `Stream`，流式待大文件阶段）；Smart Detection 以 `ToolRegistry::detect()` 方法实现（非独立 `SmartDetector` 类型）；持久化目前仅前端收藏（localStorage），无 SQLite。
 
 ### 目录结构
 
 ```
 pulsar/
 ├── src/                    # React 前端 (Vite)
-│   ├── components/         # UI 组件 (layout, tool panel, pipeline, dialogs)
-│   ├── stores/            # Zustand 状态 (registry, tool, pipeline, ui)
+│   ├── components/         # UI 组件 (sidebar, tool panel, layouts/, ui/, DetectBar, CommandPalette)
+│   ├── stores/            # Zustand 状态 (registryStore, toolStore, uiStore)
 │   ├── lib/               # ipc.ts (IPC 边界) / events.ts (事件接线) / layouts.ts (布局原型/示例/输入提示) / image.ts (SVG→PNG/剪贴板) / text.ts (行·字符度量)
 │   └── styles/            # 全局样式 + 语义化 CSS 变量
 ├── src-tauri/             # Tauri 后端 (GUI 适配，薄；插件：clipboard-manager 用于复制图片)
 ├── crates/
-│   ├── pulsar-core/       # 纯域：Tool trait、描述符、所有工具实现
-│   ├── pulsar-app/        # 应用层：注册表、Pipeline、SmartDetector、Workflow
-│   └── pulsar-cli/        # CLI 适配 (二进制)
+│   ├── pulsar-core/       # 纯域：Tool trait、描述符、ToolValue、30 个工具实现、detect 规则
+│   ├── pulsar-app/        # 应用层：注册表 + Smart Detection（detect 方法）
+│   └── pulsar-cli/        # CLI 适配（bin `pulsar`）：descriptor→clap 动态派生，dispatch.rs 是唯一映射层
+│   # Pipeline / Workflow / Infrastructure 仍为规划
 ├── specs/
 │   ├── features/          # 功能规格（落地后维护）
 │   └── proposals/         # 设计提案 (vision / architecture / roadmap)
@@ -60,10 +64,10 @@ pulsar/
 
 ### 核心约定
 
-- **一份逻辑三处共享**：每个工具是纯函数 `fn(ToolValue, &ToolParams) -> Result<ToolValue>`，全部住在 `pulsar-core`。GUI、CLI、Pipeline 三种形态调用同一份逻辑，**零重复**。
-- **加工具只改一处**：新增工具 = 实现 `Tool` trait + 在注册表注册一条 `ToolDescriptor`。UI 表单、CLI 子命令、Pipeline 兼容校验、Smart Detection 候选**全部由 descriptor 派生**。
+- **一份逻辑多处共享**：每个工具是纯函数 `fn(ToolValue, &ToolParams) -> Result<ToolValue>`，全部住在 `pulsar-core`。GUI 与 CLI 调用同一份逻辑、**零重复**；Pipeline 为规划中的第三种形态。
+- **加工具只改一处**：新增工具 = 实现 `Tool` trait + 在 `pulsar-app/src/registry.rs` 的 `build_registry()` 注册一条 `ToolDescriptor`（并更新计数断言）。UI 表单、**CLI 子命令/flag**、Smart Detection 候选**全部由 descriptor 派生**——GUI 与 CLI 自动同步，无需手工改两处（CLI 的派生逻辑集中在 `pulsar-cli/src/dispatch.rs`）。
 - **工具 id 规范**：`<category>.<tool>`，如 `encoders.base64`、`converters.json_yaml`。分类 enum：`Converters / Encoders / Formatters / Generators / Testers / Text / Graphic / Reference`。
-- **纯函数内核**：工具逻辑无副作用，文件/剪贴板由 Application 层喂入；大文件用 `ToolValue::Stream` 流式处理，避免全量载入内存。
+- **纯函数内核**：工具逻辑无副作用，文件/剪贴板由外层喂入。`ToolValue` 现为 `Text` / `Bytes`；大文件流式（`Stream`）为规划项，避免全量载入内存。
 - **离线优先**：不做需要联网的工具，数据不出本机。
 - **ID 方案**：ULID（时间有序），与仓库统一。
 
@@ -73,10 +77,11 @@ store-driven，组件保持薄，读写 Zustand store：
 
 | Store | 职责 |
 |-------|------|
-| `registryStore` | 工具列表/分类/参数 schema（从后端拉取）、收藏（localStorage 持久化） |
+| `registryStore` | 工具列表/分类/参数 schema（从后端拉取）、搜索、收藏（localStorage 持久化） |
 | `toolStore` | 当前工具输入/输出/参数、运行状态 |
-| `pipelineStore` | Pipeline 步骤编辑与执行（V2） |
-| `uiStore` | 命令面板开关（Cmd/Ctrl+K）等全局界面状态；后续承载视图模式 / Compact 浮窗 |
+| `uiStore` | 命令面板开关（Cmd/Ctrl+K）等全局界面状态 |
+
+> 规划中：`pipelineStore`（Pipeline 步骤编辑与执行）、"最近使用"、Compact 浮窗等尚未实现。
 
 - **布局原型（archetype）**：不同工具的输入/输出形态差异很大，强行「双大文本框」并不通用。前端按工具 id 归到 5 种 archetype（见 `lib/layouts.ts`），由 `ToolPanel` 分发到 `components/layouts/` 下对应布局：
   - `transform`：大文本输入 → 大文本输出（编码 / 格式化 / 批量文本）
@@ -93,16 +98,29 @@ store-driven，组件保持薄，读写 Zustand store：
 - **IPC 边界**：所有后端调用走 `lib/ipc.ts`（带 guard，无 Tauri 运行时也能渲染）；事件在 `lib/events.ts` 一处接线。
 - **样式**：Tailwind + 语义化 CSS 变量（深色为主，`globals.css` 预留浅色 `data-theme`），禁止硬编码颜色。共享 UI 原子件在 `components/ui/`。
 
+### CLI 架构 (`crates/pulsar-cli`)
+
+二进制名 `pulsar`，是与 GUI 并列的薄适配层——只做"解析参数 → 调注册表 → 打印结果"，**不含任何按工具写死的代码**。
+
+- **单一事实源**：子命令、flag、帮助文本全部由 `ToolRegistry` 的 `ToolDescriptor` **动态派生**。新增工具或改参数只动 `pulsar-core` + 注册一行，CLI 自动同步（与 GUI 表单同源）。
+- **唯一映射层**：descriptor → clap 的转换全部集中在 `dispatch.rs`（命令名、flag、`ToolParams` 收集），约定清晰：
+  - 命令名 = id 短名（`encoders.base64` → `base64`）；撞名或撞保留字（`list`/`detect`/`help`）退回完整 id。完整 id 始终注册为可见别名。
+  - `Bool` → `--key` / `--no-key`（`--no-` 优先）；`Int`/`Str` → `--key <值>`；`Enum` → `--key <候选>`（带校验）。
+  - **只收集用户显式给的参数**，其余留空交由工具自身默认（默认值的唯一真理在工具里，不在 CLI 复制）。
+- **I/O 契约**（脚本/CI/agent 友好）：主输入走 stdin（管道）或位置参数；stdin 为 TTY 且无位置参数时视为空输入（避免生成类工具卡住）。结果→stdout；错误→stderr + 非零退出码。`list`/`detect` 支持 `--json`。
+- clap 4 要求命令/参数名 `'static`，而名字是运行期派生的：`dispatch.rs::leak` 在启动时 leak 少量短字符串（命令树随进程存活，无实际泄漏风险）。
+- 测试：`dispatch.rs` 内有映射单测；`tests/cli.rs` 用 `assert_cmd` 跑真实二进制验证 I/O 与退出码。
+
 ### 关键能力（差异化）
 
-| 能力 | 说明 | 阶段 |
+| 能力 | 说明 | 状态 |
 |------|------|------|
-| Smart Detection ✅ | 粘贴内容自动识别类型并推荐工具（descriptor 声明 detectors，`registry.detect()`） | Phase 1（已实现雏形） |
-| Command Palette | `Cmd/Ctrl+K` 模糊搜全部工具 | Phase 1 |
-| Pipeline | 工具串联，前一步输出喂后一步，构建期类型校验 | Phase 2 |
-| CLI | `pulsar json fmt < in.json`，可进 CI/脚本 | Phase 3 |
-| 工作流 + 剪贴板监听 | 保存 Pipeline 复用；监听剪贴板自动处理（接续 tap 基因） | Phase 3 |
-| 流式大文件 | 数百 MB JSON/日志/CSV 不爆内存 | Phase 3 |
+| Smart Detection | 粘贴内容自动识别类型并推荐工具（descriptor 声明 detectors，`registry.detect()` + 前端 DetectBar） | ✅ Phase 1 |
+| Command Palette | `Cmd/Ctrl+K` 模糊搜全部工具 | ✅ Phase 1 |
+| Pipeline | 工具串联，前一步输出喂后一步，构建期类型校验 | ⏳ Phase 2（未实现） |
+| CLI | `cat in.json \| pulsar json`，子命令由注册表动态派生，可进 CI/脚本 | ✅ Phase 3 |
+| 工作流 + 剪贴板监听 | 保存 Pipeline 复用；监听剪贴板自动处理（接续 tap 基因） | ⏳ Phase 3（未实现） |
+| 流式大文件 | 数百 MB JSON/日志/CSV 不爆内存 | ⏳ Phase 3（未实现，`ToolValue::Stream` 未引入） |
 
 ## Spec references
 
