@@ -64,6 +64,16 @@ pulsar base64 --help        # 每个工具的参数 = 其 descriptor，自动生
 
 约定：布尔参数为 `--flag` / `--no-flag`；其余为 `--key <值>`；短命令名（`base64`）与完整 id（`encoders.base64`）均可用。
 
+#### Shell 自动补全
+
+`completions` 子命令生成补全脚本（含全部工具与 flag）；新增工具后重新生成一次即可。
+
+```bash
+pulsar completions zsh  > ~/.zfunc/_pulsar          # zsh（确保该目录在 fpath 中）
+pulsar completions bash > /usr/local/etc/bash_completion.d/pulsar
+pulsar completions fish > ~/.config/fish/completions/pulsar.fish
+```
+
 ### 代码检查（提交前 / CI）
 
 ```bash

@@ -78,10 +78,12 @@ store-driven，组件保持薄，读写 Zustand store：
 | Store | 职责 |
 |-------|------|
 | `registryStore` | 工具列表/分类/参数 schema（从后端拉取）、搜索、收藏（localStorage 持久化） |
-| `toolStore` | 当前工具输入/输出/参数、运行状态 |
+| `toolStore` | 当前工具输入/输出/参数、运行状态；按工具 id 暂存会话（切页恢复，见下） |
 | `uiStore` | 命令面板开关（Cmd/Ctrl+K）等全局界面状态 |
 
 > 规划中：`pipelineStore`（Pipeline 步骤编辑与执行）、"最近使用"、Compact 浮窗等尚未实现。
+
+- **切页暂存（per-tool 会话）**：`toolStore.sessions` 按工具 id 暂存 `{input, params, output, error}`。`selectTool` 切走前存当前、切回时恢复"离开时的样子"；点同一工具不重置。**仅内存**，刷新/重启即清空（不持久化，符合预期）。Smart Detection 跳转（`selectAndFill`）会用识别内容覆盖该工具会话。
 
 - **布局原型（archetype）**：不同工具的输入/输出形态差异很大，强行「双大文本框」并不通用。前端按工具 id 归到 5 种 archetype（见 `lib/layouts.ts`），由 `ToolPanel` 分发到 `components/layouts/` 下对应布局：
   - `transform`：大文本输入 → 大文本输出（编码 / 格式化 / 批量文本）
@@ -107,7 +109,8 @@ store-driven，组件保持薄，读写 Zustand store：
   - 命令名 = id 短名（`encoders.base64` → `base64`）；撞名或撞保留字（`list`/`detect`/`help`）退回完整 id。完整 id 始终注册为可见别名。
   - `Bool` → `--key` / `--no-key`（`--no-` 优先）；`Int`/`Str` → `--key <值>`；`Enum` → `--key <候选>`（带校验）。
   - **只收集用户显式给的参数**，其余留空交由工具自身默认（默认值的唯一真理在工具里，不在 CLI 复制）。
-- **I/O 契约**（脚本/CI/agent 友好）：主输入走 stdin（管道）或位置参数；stdin 为 TTY 且无位置参数时视为空输入（避免生成类工具卡住）。结果→stdout；错误→stderr + 非零退出码。`list`/`detect` 支持 `--json`。
+- **I/O 契约**（脚本/CI/agent 友好）：主输入走 stdin（管道）或位置参数；stdin 为 TTY 且无位置参数时视为空输入（避免生成类工具卡住）。结果→stdout；错误→stderr + 非零退出码。
+- **内置子命令**：`list`/`detect`（均支持 `--json`）、`completions <shell>`（用同一棵动态命令树经 `clap_complete` 渲染补全脚本，工具自动覆盖）。三者与 `help` 同为保留字，工具撞名退回完整 id。
 - clap 4 要求命令/参数名 `'static`，而名字是运行期派生的：`dispatch.rs::leak` 在启动时 leak 少量短字符串（命令树随进程存活，无实际泄漏风险）。
 - 测试：`dispatch.rs` 内有映射单测；`tests/cli.rs` 用 `assert_cmd` 跑真实二进制验证 I/O 与退出码。
 

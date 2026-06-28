@@ -12,6 +12,7 @@
 mod dispatch;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use clap_complete::{generate, Shell};
 use pulsar_app::{build_registry, ToolRegistry};
 use pulsar_core::{ToolDescriptor, ToolValue};
 use std::collections::BTreeMap;
@@ -19,7 +20,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 /// 保留给内置子命令，工具不得占用（撞名则退回完整 id）。
-const RESERVED: &[&str] = &["list", "detect", "help"];
+const RESERVED: &[&str] = &["list", "detect", "completions", "help"];
 
 fn main() -> ExitCode {
     let registry = build_registry();
@@ -32,6 +33,7 @@ fn main() -> ExitCode {
     match matches.subcommand() {
         Some(("list", sub)) => cmd_list(&descriptors, sub),
         Some(("detect", sub)) => cmd_detect(&registry, sub),
+        Some(("completions", sub)) => cmd_completions(&descriptors, &names, sub),
         Some((name, sub)) => cmd_run(&registry, &descriptors, &names, name, sub),
         None => {
             // 无子命令：打印帮助（已由 arg_required_else_help 兜底，这里防御）。
@@ -77,6 +79,24 @@ fn build_cli(descriptors: &[ToolDescriptor], names: &BTreeMap<String, String>) -
                         .value_name("INPUT")
                         .help("待识别文本；留空则从 stdin 读取")
                         .required(false),
+                ),
+        )
+        .subcommand(
+            Command::new("completions")
+                .about("生成 shell 自动补全脚本（写入补全目录或 source 之）")
+                .long_about(
+                    "为指定 shell 生成补全脚本。脚本含全部工具子命令与 flag。\n\
+                     新增工具后重新生成一次即可。\n\n\
+                     例：\n  \
+                     pulsar completions zsh  > ~/.zfunc/_pulsar\n  \
+                     pulsar completions bash > /usr/local/etc/bash_completion.d/pulsar",
+                )
+                .arg(
+                    Arg::new("shell")
+                        .value_name("SHELL")
+                        .required(true)
+                        .help("目标 shell")
+                        .value_parser(clap::value_parser!(Shell)),
                 ),
         );
 
@@ -204,6 +224,19 @@ fn cmd_detect(registry: &ToolRegistry, sub: &ArgMatches) -> ExitCode {
         print_stdout(&out);
         ExitCode::SUCCESS
     }
+}
+
+fn cmd_completions(
+    descriptors: &[ToolDescriptor],
+    names: &BTreeMap<String, String>,
+    sub: &ArgMatches,
+) -> ExitCode {
+    let shell = *sub.get_one::<Shell>("shell").expect("required arg");
+    // 用同一棵动态命令树渲染补全——补全里自然含全部工具与 flag（单一事实源）。
+    let mut cmd = build_cli(descriptors, names);
+    let bin = cmd.get_name().to_string();
+    generate(shell, &mut cmd, bin, &mut std::io::stdout());
+    ExitCode::SUCCESS
 }
 
 // ── I/O 辅助 ────────────────────────────────────────────────
