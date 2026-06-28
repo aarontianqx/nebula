@@ -127,3 +127,30 @@ fn full_id_subcommand_also_works() {
         .success()
         .stdout(predicate::str::contains("aGVsbG8="));
 }
+
+#[test]
+fn completions_zsh_includes_tool_subcommands() {
+    // 补全脚本由动态命令树渲染，应含工具子命令（单一事实源）。
+    pulsar()
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("base64").and(predicate::str::contains("number_base")));
+}
+
+#[test]
+fn completions_bash_is_generated() {
+    pulsar()
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_pulsar"));
+}
+
+#[test]
+fn completions_rejects_unknown_shell() {
+    pulsar()
+        .args(["completions", "nonsense"])
+        .assert()
+        .failure();
+}
