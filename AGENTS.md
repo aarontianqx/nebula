@@ -59,9 +59,9 @@ nebula/
 
 ## Commits
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/). Use scopes to indicate the affected project (e.g., `feat(tap): add timeline editor`).
-
-Valid types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`
+- Use conventional types from `.commitlintrc.yaml` and clear scopes when helpful, e.g. `feat(cny-2026): ...`.
+- Commit with one inline multi-line `git commit -m` argument only: `git commit -m $'type(scope): subject\n\n- body bullet\n- body bullet'`.
+- Write the body as brief, high-level release notes: group minor file changes into structural or behavioral impacts instead of granular diff audits.
 
 ## CI/CD
 
