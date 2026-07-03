@@ -8,12 +8,12 @@ Comet 是**极致轻量的桌面宠物**：以主人的真实泰迪照片为原�
 
 ## Key design decisions
 
-### 动画路线：序列帧 + 程序化微动画（非 Live2D）
+### 动画路线：序列帧 + 待机态 Live2D（混合）
 
-- 每个宠物状态对应一张静态姿势图（4×4 宫格切片），姿态切换 = 换图。
-- 图之上叠加程序化微动画（CSS/canvas transform）：呼吸起伏、上下浮动、squash & stretch、拖拽倾斜。观感"活"但成本极低。
-- 走路 = 2 帧循环 + 窗口水平位移。
-- **不采用 Live2D 全姿态管线**：Live2D 只擅长单立绘微形变，不能做姿态切换；写实照片风格做网格形变易穿帮；AI 自动拆层绑定不成熟。若二期需要眼神跟随/物理毛发，可单独为"待机正面"做一个 Live2D 模型与序列帧并存。
+- 每个宠物状态对应一张静态姿势图（4×4 宫格切片），姿态切换 = 换图；图之上叠加程序化微动画（呼吸/浮动/拖拽倾斜）。走路 = 2 帧循环 + 窗口水平位移。
+- **待机正面姿势升级 Live2D**（进行中）：分层素材已就绪（`assets-src/live2d/comet_live2d.psd`，15 层，由 AI 部件分解图切片对位合成），等待人工在 Cubism Editor 完成绑定（操作手册：`specs/features/live2d-rigging-guide.md`）。moc3 导出后由 pixi-live2d-display 驱动：眼神跟随、眨眼、歪头、吐舌、耳朵尾巴物理。
+- Live2D 只覆盖待机态；走路等其它姿势仍用序列帧，切换时交叉淡入衔接。
+- Live2D 素材再生管线：`scripts/slice_parts.py`（部件分解图切片）→ `scripts/compose_parts.py`（对位预览）→ `scripts/export_psd.py`（分层 PSD）。
 
 ### 动态鼠标穿透（核心机制）
 
