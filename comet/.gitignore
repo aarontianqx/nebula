@@ -1,0 +1,26 @@
+# === Rust (Cargo) ===
+target/
+**/*.rs.bk
+# Cargo.lock is committed: Comet ships as a binary app, so we pin the
+# exact dependency graph for reproducible builds and releases.
+
+# === IDE / Editor ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Node / Frontend ===
+node_modules/
+dist/
+*.log
+.env
+.env.*
+
+# === Tauri (auto-generated) ===
+src-tauri/gen/
