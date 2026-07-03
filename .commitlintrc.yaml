@@ -1,0 +1,16 @@
+---
+# https://www.npmjs.com/package/git-conventional-commits
+convention:
+  commitTypes:
+    - build
+    - chore
+    - ci
+    - docs
+    - feat
+    - fix
+    - perf
+    - refactor
+    - revert
+    - style
+    - test
+  commitScopes: []
