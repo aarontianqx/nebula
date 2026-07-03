@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 待机呼吸：轻微纵向压缩 + 上下浮动，序列帧之上的程序化微动画 */
+@keyframes breathe {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  50% {
+    transform: translateY(-3px) scaleY(0.985);
+  }
+}
+
+/* 被拎起：轻微钟摆晃动 */
+@keyframes dangle {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+.pet-idle {
+  animation: breathe 3.2s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+.pet-grabbed {
+  animation: dangle 0.8s ease-in-out infinite;
+  transform-origin: top center;
+}
+
