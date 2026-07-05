@@ -10,6 +10,9 @@ on:
     paths:
       - "tap/**"
       - ".github/workflows/tap-ci.yml"
+  # Path filters are skipped by GitHub when a push diff cannot be computed
+  # (force push / >300 changed files); allow manual runs as an escape hatch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -56,6 +59,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Icons are stored in Git LFS; tauri's generate_context! reads them
+      # at compile time, so pull the real files (not pointers) selectively.
+      - name: Fetch LFS assets (tauri icons)
+        run: git lfs pull --include="tap/src-tauri/icons/**"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
