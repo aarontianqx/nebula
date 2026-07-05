@@ -21,4 +21,4 @@
 
 ## 实现
 
-`src/lib/pomodoro.ts`：`Pomodoro` 类（1s tick，phase 状态机 off → focus → break → off）；姿势编排在 `App.tsx`（`basePose()` 统一计算常驻姿势）。
+`src/features/pomodoro.ts`：`Pomodoro` 类（1s tick，phase 状态机 off → focus → break → off）；挂钩在 `hooks/useWellness.ts` 的 `usePomodoro`，姿势编排统一走 `PetController.baseState()`（常驻状态优先级计算）。

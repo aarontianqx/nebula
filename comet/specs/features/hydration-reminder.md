@@ -17,4 +17,4 @@
 
 ## 实现
 
-`src/lib/hydration.ts` 提供 `startHydrationScheduler`（30s 轮询检查）与 `acknowledgeDrink`；姿势编排在 `App.tsx`（`remindingRef` 标记提醒中状态）。
+`src/features/hydration.ts` 提供 `startHydrationScheduler`（30s 轮询检查）与 `acknowledgeDrink`；挂钩在 `hooks/useWellness.ts` 的 `useHydration`（`PetController.remindingRef` 标记提醒中），点击确认逻辑在 `hooks/usePetGestures.ts`。

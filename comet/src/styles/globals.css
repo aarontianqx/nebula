@@ -45,3 +45,21 @@ body,
   transform-origin: top center;
 }
 
+/* 落地：squash & stretch 弹性回复 */
+@keyframes land {
+  0% {
+    transform: scaleY(0.82) scaleX(1.12);
+  }
+  45% {
+    transform: scaleY(1.06) scaleX(0.96);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+.pet-land {
+  animation: land 0.45s ease-out;
+  transform-origin: bottom center;
+}
+
