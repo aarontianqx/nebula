@@ -16,5 +16,5 @@
 
 ## 实现
 
-- Rust：`spawn_system_watcher`（`src-tauri/src/lib.rs`），`sysinfo` 采样全局 CPU、`starship-battery` 读电池，emit `system-status` 事件。
-- 前端：`onSystemStatus`（`lib/ipc.ts`）订阅，`App.tsx` 中 `stressedRef` + 迟滞判定。
+- Rust：`system::spawn_watcher`（`src-tauri/src/system.rs`），`sysinfo` 采样全局 CPU、`starship-battery` 读电池，emit `system-status` 事件。
+- 前端：`onSystemStatus`（`platform/ipc.ts`）订阅，`hooks/useWellness.ts` 的 `useSystemStress` 做迟滞判定并驱动 `PetController`。
