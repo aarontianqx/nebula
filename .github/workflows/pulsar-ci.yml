@@ -10,6 +10,9 @@ on:
     paths:
       - "pulsar/**"
       - ".github/workflows/pulsar-ci.yml"
+  # Path filters are skipped by GitHub when a push diff cannot be computed
+  # (force push / >300 changed files); allow manual runs as an escape hatch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,6 +28,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Icons are stored in Git LFS; tauri's generate_context! reads them
+      # at compile time, so pull the real files (not pointers) selectively.
+      - name: Fetch LFS assets (tauri icons)
+        run: git lfs pull --include="pulsar/src-tauri/icons/**"
+
+      # The workspace includes src-tauri; Tauri on Linux links against
+      # webkit2gtk/gtk, so install the dev packages before clippy.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -36,6 +36,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Binary assets (icons etc.) live in Git LFS; pull real files for the build.
+      - name: Fetch LFS assets
+        run: git lfs pull --include="wardenly-rs/**"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
