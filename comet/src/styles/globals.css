@@ -13,14 +13,20 @@ body,
   -webkit-user-select: none;
 }
 
-/* 待机呼吸：轻微纵向压缩 + 上下浮动，序列帧之上的程序化微动画 */
+/* 待机生命感：轻微呼吸并偶尔左右探头；眨眼由 Canvas 局部覆盖。 */
 @keyframes breathe {
   0%,
   100% {
-    transform: translateY(0) scaleY(1);
+    transform: translateY(0) rotate(0deg) scaleY(1);
   }
-  50% {
-    transform: translateY(-3px) scaleY(0.985);
+  28% {
+    transform: translateY(-2px) rotate(-0.8deg) scaleY(0.988);
+  }
+  55% {
+    transform: translateY(-3px) rotate(0deg) scaleY(0.982);
+  }
+  78% {
+    transform: translateY(-1px) rotate(0.65deg) scaleY(0.992);
   }
 }
 
@@ -36,7 +42,7 @@ body,
 }
 
 .pet-idle {
-  animation: breathe 3.2s ease-in-out infinite;
+  animation: breathe 4.8s ease-in-out infinite;
   transform-origin: bottom center;
 }
 
@@ -62,4 +68,3 @@ body,
   animation: land 0.45s ease-out;
   transform-origin: bottom center;
 }
-

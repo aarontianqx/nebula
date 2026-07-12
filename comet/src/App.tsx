@@ -22,7 +22,13 @@ export default function App() {
 
   // 程序化微动画：拖拽钟摆 / 落地弹性 / 待机呼吸（styles/globals.css）
   const motionClass =
-    state === "grabbed" ? "pet-grabbed" : landing ? "pet-land" : "pet-idle";
+    state === "grabbed"
+      ? "pet-grabbed"
+      : landing
+        ? "pet-land"
+        : state === "idle"
+          ? "pet-idle"
+          : undefined;
 
   return (
     <div className="w-full h-full flex items-end justify-center">

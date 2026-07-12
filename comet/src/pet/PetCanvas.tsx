@@ -23,6 +23,10 @@ interface Props {
 
 const imageCache = new Map<string, HTMLImageElement>();
 
+const IDLE_BLINK_MIN_MS = 2_400;
+const IDLE_BLINK_JITTER_MS = 3_100;
+const IDLE_BLINK_HOLD_MS = 120;
+
 function loadFrame(url: string): Promise<HTMLImageElement> {
   const cached = imageCache.get(url);
   if (cached?.complete) return Promise.resolve(cached);
@@ -65,7 +69,8 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
     let stale = false;
     let timer = 0;
 
-    void Promise.all(asset.urls.map(loadFrame)).then((frames) => {
+    const urls = state === "idle" ? asset.urls.slice(0, 2) : asset.urls;
+    void Promise.all(urls.map(loadFrame)).then((frames) => {
       if (stale) return;
       const canvas = canvasRef.current!;
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
@@ -85,17 +90,66 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
       const dy = H - dh; // 贴地
 
       let idx = 0;
-      const draw = () => {
+      const drawFrame = (frame: HTMLImageElement) => {
         ctx.clearRect(0, 0, W, H);
         ctx.save();
         if (flip) {
           ctx.translate(W, 0);
           ctx.scale(-1, 1);
         }
-        ctx.drawImage(frames[idx], dx, dy, dw, dh);
+        ctx.drawImage(frame, dx, dy, dw, dh);
         ctx.restore();
+      };
+
+      const draw = () => {
+        drawFrame(frames[idx]);
         idx = (idx + 1) % frames.length;
       };
+
+      if (state === "idle") {
+        // Idle 使用一张已验收标准底图。眨眼只从闭眼参考帧覆盖双眼局部，
+        // 避免为微动作循环重绘整只宠物造成脸型、毛发和体型闪烁。
+        const base = frames[0];
+        const closedEyesReference = frames[1];
+        const eyePatch = {
+          sx: base.width * 0.17,
+          sy: base.height * 0.19,
+          sw: base.width * 0.66,
+          sh: base.height * 0.23,
+        };
+        const drawIdle = (eyesClosed: boolean) => {
+          drawFrame(base);
+          if (!eyesClosed) return;
+          ctx.drawImage(
+            closedEyesReference,
+            eyePatch.sx,
+            eyePatch.sy,
+            eyePatch.sw,
+            eyePatch.sh,
+            dx + eyePatch.sx * scale,
+            dy + eyePatch.sy * scale,
+            eyePatch.sw * scale,
+            eyePatch.sh * scale
+          );
+        };
+
+        const scheduleBlink = () => {
+          timer = window.setTimeout(() => {
+            if (stale) return;
+            drawIdle(true);
+            timer = window.setTimeout(() => {
+              if (stale) return;
+              drawIdle(false);
+              scheduleBlink();
+            }, IDLE_BLINK_HOLD_MS);
+          }, IDLE_BLINK_MIN_MS + Math.random() * IDLE_BLINK_JITTER_MS);
+        };
+
+        drawIdle(false);
+        scheduleBlink();
+        return;
+      }
+
       draw();
       if (frames.length > 1) {
         timer = window.setInterval(draw, 1000 / asset.fps);
