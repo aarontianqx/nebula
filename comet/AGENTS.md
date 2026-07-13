@@ -4,23 +4,25 @@
 
 Comet 是**极致轻量的桌面宠物**：以主人的真实泰迪照片为原型，透明无边框窗口常驻桌面，动态鼠标穿透保证不影响正常办公。核心差异化是"轻 + 实用"：健康饮水提醒、番茄钟、系统状态联动等实用功能通过宠物姿态自然表达，而非弹窗打扰。技术栈 Tauri v2 + React + Rust。
 
-> 当前阶段：Phase 2。透明窗口、动态穿透、拖拽、15 状态 × 16 帧序列资产（皮克斯风，4×4 宫格原生分辨率）、待机轮换、拖拽/抚摸反馈、屏幕随机走动与奔跑（帧循环 + 窗口位移 + 朝向镜像）、健康饮水提醒、番茄钟（双击切换）、系统状态联动（CPU/电量 → tired；见 `specs/features/`）已落地；快捷工具箱、AI 挂件等在路线图上。
+> 当前阶段：Phase 2。透明窗口、动态穿透、拖拽、15 状态混合动画（标准姿势 / 语义关键帧 / 连续序列）、待机轮换、拖拽/抚摸反馈、屏幕随机走动与奔跑、健康饮水提醒、番茄钟、系统状态联动（CPU/电量 → tired；见 `specs/features/`）已落地；快捷工具箱、AI 挂件等在路线图上。
 
 ## Key design decisions
 
-### 动画路线：多帧序列 + 程序化微动画
+### 动画路线：一致性优先的混合动画
 
-- 每个状态 16 帧（4×4 宫格按动作相位顺序生成，一轮即一个完整动作循环），按各自 fps（4~16）循环播放；之上叠加程序化微动画（CSS：待机呼吸、拖拽钟摆、落地 squash & stretch）。
+- 微动作状态使用一张标准姿势加程序动画；交互动作使用少量语义关键姿势和可变停留时间；只有连续肢体运动保留帧序列。运行协议见 `src/pet/assets.ts`。
+- 程序层负责呼吸、眨眼、歪头、眼镜、爱心、Zzz、问号、拖拽钟摆和落地 squash & stretch，避免为小变化重绘整只宠物。
 - 曾评估并放弃 Live2D 路线（需人工 Cubism Editor 绑定，工作流重）；也曾升级 25 帧（5×5 + 超分 + RIFE 插帧）后回退——AI 生成 25 帧非连续动作反而加剧跳变，连贯性应由生成质量保证而非后处理补救。
-- 走路/奔跑 = 帧循环 + 窗口水平位移（`walker.ts`）；素材统一朝右，向左由 canvas 镜像。
+- 走路/奔跑 = 经闭环指标筛选的短帧循环 + 窗口水平位移（`walker.ts`）；素材统一朝右，向左由 canvas 镜像。
 - 状态矩阵、资产规格、切片管线、重生成 checklist 详见 `specs/features/pose-matrix.md`。
 
-### 资产管线（AI 生图 → 切片 → 压缩）
+### 资产管线（原狗 reference → AI 关键姿势 → 验证）
 
-1. 以皮克斯风样板图为一致性基准，AI 按状态生成 4×4 宫格图（1536×1024 原生分辨率，无超分）→ 存 `assets-src/frames/{state}_grid_4x4.png`。提示词硬性要求动作连续、地面线恒定、主体同位同尺寸不触边（详见 `specs/features/pose-matrix.md`）。
-2. `scripts/slice_frames.py`（pillow + numpy + scipy）一条命令完成切片 + 压缩：格子内缩去格线、背景去除（白洞剔除 + 去污染软边缘）、去噪（保本体和不触边装饰）、**逐帧锚点对齐**（消除 AI 宫格随机漂移，保证播放零错位）、状态级共用裁剪窗口、体型归一化系数输出到 `manifest.json`、末段自动 `pngquant` 有损量化（240 帧 ≈ 6.2MB）。
-3. `scripts/preview_frames.py` 生成每状态联络表（contact sheet）到 `/tmp/comet_preview/`，重生资产后目检削头/错位/下沉/道具丢失。
-4. 前端 `src/pet/assets.ts` 读 manifest 组装状态资产表；`pet/PetCanvas.tsx` 按 fps 循环绘制。
+1. 角色身份以主人原狗照片及 `assets-src/live2d/parts/reference.png` 为最高优先级 reference；`template-grid-pixar.png` 与已验收帧为补充参考。
+2. `scripts/imagegen_url.py` 适配返回签名 URL 的 OpenAI Images endpoint，立即下载并校验图片；凭据只从 `~/.config/codex/imagegen.env` 读取。
+3. 新姿势必须逐张生成和验收。若脸型、眼距、头身比或四肢拓扑漂移，拒绝该批资产并回退到已验收姿势，不用插帧掩盖。
+4. 旧 4×4 源图仍由 `scripts/slice_frames.py` 完成去背、对齐、共用裁剪和压缩，作为连续序列及迁移来源。
+5. `scripts/validate_animation.py` 生成真实节奏 GIF 和结构指标；`preview_frames.py` 生成联络表。动态预览至少检查三个循环。
 
 ### 动态鼠标穿透（核心机制）
 

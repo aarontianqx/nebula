@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --pet-ink-color: rgb(35 24 18 / 92%);
+  --pet-effect-color: rgb(244 92 98 / 92%);
+}
+
 html,
 body,
 #root {
@@ -43,6 +48,26 @@ body,
 
 .pet-idle {
   animation: breathe 4.8s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+.pet-calm {
+  animation: breathe 5.8s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+
+@keyframes curious-tilt {
+  0%,
+  100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(3deg) translateY(-1px);
+  }
+}
+
+.pet-curious {
+  animation: curious-tilt 2.8s ease-in-out infinite;
   transform-origin: bottom center;
 }
 

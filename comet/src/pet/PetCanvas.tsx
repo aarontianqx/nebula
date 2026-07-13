@@ -49,10 +49,14 @@ function loadFrame(url: string): Promise<HTMLImageElement> {
  */
 export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hitCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    const hitCanvas = document.createElement("canvas");
+    hitCanvas.width = W;
+    hitCanvas.height = H;
+    hitCanvasRef.current = hitCanvas;
     onHitTestReady((x, y) => {
       const r = canvas.getBoundingClientRect();
       const px = Math.floor(((x - r.left) / r.width) * canvas.width);
@@ -60,8 +64,14 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
       if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) {
         return false;
       }
-      return ctx.getImageData(px, py, 1, 1).data[3] > 10;
+      const hitContext = hitCanvasRef.current?.getContext("2d", {
+        willReadFrequently: true,
+      });
+      return (hitContext?.getImageData(px, py, 1, 1).data[3] ?? 0) > 10;
     });
+    return () => {
+      hitCanvasRef.current = null;
+    };
   }, [onHitTestReady]);
 
   useEffect(() => {
@@ -69,11 +79,11 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
     let stale = false;
     let timer = 0;
 
-    const urls = state === "idle" ? asset.urls.slice(0, 2) : asset.urls;
-    void Promise.all(urls.map(loadFrame)).then((frames) => {
+    void Promise.all(asset.urls.map(loadFrame)).then((frames) => {
       if (stale) return;
       const canvas = canvasRef.current!;
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+      const hitContext = hitCanvasRef.current!.getContext("2d")!;
 
       // 状态内所有帧同尺寸（共用裁剪窗口），绘制参数一次算好。
       // fit 保护：体型归一化后仍超出画布的状态整体再缩，杜绝削头断尾。
@@ -90,23 +100,82 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
       const dy = H - dh; // 贴地
 
       let idx = 0;
-      const drawFrame = (frame: HTMLImageElement) => {
-        ctx.clearRect(0, 0, W, H);
-        ctx.save();
-        if (flip) {
-          ctx.translate(W, 0);
-          ctx.scale(-1, 1);
+      const drawDecorator = (frameIndex: number) => {
+        if (!asset.decorator) return;
+        const styles = getComputedStyle(canvas);
+        const ink = styles.getPropertyValue("--pet-ink-color").trim();
+        const effect = styles.getPropertyValue("--pet-effect-color").trim();
+
+        if (asset.decorator === "hearts") {
+          if (frameIndex === 0 || frameIndex === frames.length - 1) return;
+          const drawHeart = (x: number, y: number, size: number) => {
+            ctx.beginPath();
+            ctx.moveTo(x, y + size * 0.28);
+            ctx.bezierCurveTo(x - size, y - size * 0.35, x - size * 0.42, y - size, x, y - size * 0.35);
+            ctx.bezierCurveTo(x + size * 0.42, y - size, x + size, y - size * 0.35, x, y + size * 0.28);
+            ctx.fill();
+          };
+          ctx.save();
+          ctx.fillStyle = effect;
+          drawHeart(dx + dw * 0.08, dy + dh * 0.24, 7);
+          drawHeart(dx + dw * 0.91, dy + dh * 0.18, 6);
+          ctx.restore();
+          return;
         }
-        ctx.drawImage(frame, dx, dy, dw, dh);
+
+        if (asset.decorator === "zzz" || asset.decorator === "question") {
+          ctx.save();
+          ctx.fillStyle = ink;
+          ctx.font = `600 ${Math.max(16, dw * 0.14)}px system-ui`;
+          ctx.fillText(
+            asset.decorator === "zzz" ? "Zzz" : "?",
+            dx + dw * 0.74,
+            dy + dh * 0.2
+          );
+          ctx.restore();
+          return;
+        }
+
+        const lensY = dy + dh * 0.34;
+        const lensRadius = dw * 0.115;
+        const leftX = dx + dw * 0.35;
+        const rightX = dx + dw * 0.65;
+        ctx.save();
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = Math.max(2, dw * 0.018);
+        ctx.beginPath();
+        ctx.arc(leftX, lensY, lensRadius, 0, Math.PI * 2);
+        ctx.arc(rightX, lensY, lensRadius, 0, Math.PI * 2);
+        ctx.moveTo(leftX + lensRadius, lensY);
+        ctx.lineTo(rightX - lensRadius, lensY);
+        ctx.stroke();
         ctx.restore();
       };
 
+      const drawFrame = (frame: HTMLImageElement, frameIndex = 0) => {
+        ctx.clearRect(0, 0, W, H);
+        hitContext.clearRect(0, 0, W, H);
+        ctx.save();
+        hitContext.save();
+        if (flip) {
+          ctx.translate(W, 0);
+          ctx.scale(-1, 1);
+          hitContext.translate(W, 0);
+          hitContext.scale(-1, 1);
+        }
+        ctx.drawImage(frame, dx, dy, dw, dh);
+        hitContext.drawImage(frame, dx, dy, dw, dh);
+        ctx.restore();
+        hitContext.restore();
+        drawDecorator(frameIndex);
+      };
+
       const draw = () => {
-        drawFrame(frames[idx]);
+        drawFrame(frames[idx], idx);
         idx = (idx + 1) % frames.length;
       };
 
-      if (state === "idle") {
+      if (asset.blink) {
         // Idle 使用一张已验收标准底图。眨眼只从闭眼参考帧覆盖双眼局部，
         // 避免为微动作循环重绘整只宠物造成脸型、毛发和体型闪烁。
         const base = frames[0];
@@ -118,7 +187,7 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
           sh: base.height * 0.23,
         };
         const drawIdle = (eyesClosed: boolean) => {
-          drawFrame(base);
+          drawFrame(base, 0);
           if (!eyesClosed) return;
           ctx.drawImage(
             closedEyesReference,
@@ -131,6 +200,7 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
             eyePatch.sw * scale,
             eyePatch.sh * scale
           );
+          drawDecorator(0);
         };
 
         const scheduleBlink = () => {
@@ -151,7 +221,17 @@ export function PetCanvas({ state, flip = false, onHitTestReady }: Props) {
       }
 
       draw();
-      if (frames.length > 1) {
+      if (asset.kind === "keyframes" && asset.durations) {
+        const durations = asset.durations;
+        const scheduleKeyframe = () => {
+          timer = window.setTimeout(() => {
+            if (stale) return;
+            draw();
+            scheduleKeyframe();
+          }, durations[(idx + durations.length - 1) % durations.length]);
+        };
+        scheduleKeyframe();
+      } else if (asset.kind === "sequence" && frames.length > 1) {
         timer = window.setInterval(draw, 1000 / asset.fps);
       }
     });
