@@ -28,6 +28,10 @@ export default function App() {
         ? "pet-land"
         : state === "idle"
           ? "pet-idle"
+          : state === "sleep" || state === "rest" || state === "tired"
+            ? "pet-calm"
+            : state === "curious"
+              ? "pet-curious"
           : undefined;
 
   return (

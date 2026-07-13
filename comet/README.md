@@ -23,10 +23,11 @@ cargo fmt           # Rust 格式化
 # 资产管线（重生成宫格图后）
 python scripts/slice_frames.py     # 切片 + 压缩 → src/assets/pet/frames/
 python scripts/preview_frames.py   # 生成目检拼图 → /tmp/comet_preview/
+conda run -n search-rec python scripts/validate_animation.py  # GIF + 连贯性指标
 ```
 
 ## Current state
 
-Phase 2：透明置顶窗口、像素级动态鼠标穿透、15 状态 × 16 帧序列动画（皮克斯风泰迪，4×4 宫格切片）、待机姿势轮换、屏幕随机走动与奔跑、拖拽（被拎起姿势）与点击（开心姿势）反馈、健康饮水提醒（到点宠物舔水碗，点击确认后欢呼重新计时）、番茄钟（双击开始/取消：专注期戴眼镜盯屏，完成欢呼，休息期趴卧）、系统状态联动（CPU 高负载或低电量时瘫倒吐舌）。右键宠物退出。
+Phase 2：透明置顶窗口、像素级动态鼠标穿透、15 状态混合动画（标准姿势 + 程序微动画 / 语义关键帧 / 连续序列）、待机姿势轮换、屏幕随机走动与奔跑、拖拽与点击反馈、健康饮水提醒、番茄钟和系统状态联动。右键宠物退出。
 
-资产重刷：替换 `assets-src/frames/{state}_grid_4x4.png` 后运行 `scripts/slice_frames.py`。架构与资产规格见 `AGENTS.md` 与 `specs/features/`。
+旧序列重刷：替换 `assets-src/frames/{state}_grid_4x4.png` 后运行 `scripts/slice_frames.py`。新关键姿势必须基于原狗 reference 生成，并用 `scripts/validate_animation.py` 检查真实播放连贯性。架构与资产规格见 `AGENTS.md` 与 `specs/features/`。
