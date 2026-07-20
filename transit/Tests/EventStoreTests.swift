@@ -141,6 +141,22 @@ final class EventStoreTests: XCTestCase {
         XCTAssertEqual(pipeline.status().dropped, 1)
     }
 
+    func testEventPipelineNotifiesOnlyAfterSuccessfulPersistence() {
+        let recorder = PersistedEventRecorder()
+        let expected = event(at: Date(), model: "persisted", total: 10, outcome: .completed)
+        let pipeline = UsageEventPipeline(store: RecoveringEventWriter()) { event in
+            recorder.record(event)
+        }
+
+        XCTAssertTrue(pipeline.submit(expected))
+        pipeline.flush()
+        XCTAssertTrue(recorder.events.isEmpty)
+
+        XCTAssertTrue(pipeline.submit(expected))
+        pipeline.shutdown()
+        XCTAssertEqual(recorder.events, [expected])
+    }
+
     func testEventPipelineReportsStorageFailureWithoutRejectingSubmission() {
         let pipeline = UsageEventPipeline(store: FailingEventWriter(), capacity: 2)
 
@@ -261,6 +277,19 @@ private final class RecoveringEventWriter: UsageEventWriting, @unchecked Sendabl
             return shouldFail
         }
         if fail { throw FailingEventWriterError() }
+    }
+}
+
+private final class PersistedEventRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedEvents: [UsageEvent] = []
+
+    var events: [UsageEvent] {
+        lock.withLock { recordedEvents }
+    }
+
+    func record(_ event: UsageEvent) {
+        lock.withLock { recordedEvents.append(event) }
     }
 }
 

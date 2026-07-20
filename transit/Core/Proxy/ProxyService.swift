@@ -29,8 +29,7 @@ public final class ProxyService: @unchecked Sendable {
         self.eventPipeline = eventPipeline
         self.secretStore = secretStore
         self.onStatus = onStatus
-        let resolvedThreadCount = threadCount
-            ?? max(2, ProcessInfo.processInfo.activeProcessorCount / 2)
+        let resolvedThreadCount = threadCount ?? 2
         eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: max(1, resolvedThreadCount))
         var configuration = HTTPClient.Configuration()
         configuration.redirectConfiguration = .disallow
