@@ -39,7 +39,9 @@ final class AppModel: ObservableObject {
     private var eventStore: EventStore?
     private var pipeline: UsageEventPipeline?
     private var proxyService: ProxyService?
-    private var refreshTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
+    private var scheduledRefreshTask: Task<Void, Never>?
+    private var dataRefreshPending = false
     private var lastPruneDay: Date?
     private var modelsByPeriod: [WidgetPeriod: [ModelUsageSummary]] = [:]
     private var configurationReadError: String?
@@ -48,6 +50,7 @@ final class AppModel: ObservableObject {
     private var lastWidgetSnapshot: WidgetSnapshot?
 
     init() {
+        let refreshRelay = AppRefreshRelay()
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         widgetPrimaryMetric = WidgetSnapshotStore.loadPrimaryMetric()
         var initializationErrors: [String] = []
@@ -62,21 +65,39 @@ final class AppModel: ObservableObject {
         do {
             let eventStore = try EventStore()
             self.eventStore = eventStore
-            createdPipeline = UsageEventPipeline(store: eventStore)
+            createdPipeline = UsageEventPipeline(store: eventStore) { _ in
+                refreshRelay.requestDataRefresh()
+            }
         } catch {
             let message = "用量数据库不可用：\(error.localizedDescription)"
             infrastructureError = message
             initializationErrors.append(message)
-            createdPipeline = UsageEventPipeline(store: UnavailableEventWriter(message: message))
+            createdPipeline = UsageEventPipeline(store: UnavailableEventWriter(message: message)) { _ in
+                refreshRelay.requestDataRefresh()
+            }
         }
         pipeline = createdPipeline
-        proxyService = ProxyService(eventPipeline: createdPipeline)
+        proxyService = ProxyService(eventPipeline: createdPipeline) { status in
+            refreshRelay.publish(status: status)
+        }
         refreshSecretReferences()
         lastError = initializationErrors.isEmpty ? nil : initializationErrors.joined(separator: "\n")
+        refreshRelay.setHandler { [weak self] signal in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch signal {
+                case .dataPersisted:
+                    self.scheduleDataRefresh()
+                case .proxyStatus(let status):
+                    self.updateProxyStatus(status)
+                }
+            }
+        }
     }
 
     deinit {
-        refreshTask?.cancel()
+        heartbeatTask?.cancel()
+        scheduledRefreshTask?.cancel()
     }
 
     func start() {
@@ -90,11 +111,15 @@ final class AppModel: ObservableObject {
             await applyRunnableConfiguration()
             await refresh()
         }
-        refreshTask = Task { [weak self] in
+        heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    return
+                }
                 guard let self else { return }
-                await self.refresh()
+                await self.heartbeat()
             }
         }
     }
@@ -149,13 +174,11 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         guard !isRefreshing else {
-            proxyStatus = proxyService?.status() ?? ProxyStatus(state: .stopped)
-            pipelineStatus = pipeline?.status() ?? pipelineStatus
+            updateOperationalStatus()
             return
         }
         guard let eventStore else {
-            proxyStatus = proxyService?.status() ?? ProxyStatus(state: .stopped)
-            pipelineStatus = pipeline?.status() ?? pipelineStatus
+            updateOperationalStatus()
             await refreshWidgetSnapshot()
             return
         }
@@ -193,18 +216,19 @@ final class AppModel: ObservableObject {
 
         switch result {
         case .success(let value):
-            summaries = value.0
+            if summaries != value.0 { summaries = value.0 }
             modelsByPeriod = value.1
-            topModels = value.1[period] ?? []
-            statusDistribution = value.2
-            breakdown = value.3
-            recentEvents = value.4
-            lastError = pipeline?.status().lastError ?? infrastructureError ?? configurationReadError
+            let refreshedTopModels = value.1[period] ?? []
+            if topModels != refreshedTopModels { topModels = refreshedTopModels }
+            if statusDistribution != value.2 { statusDistribution = value.2 }
+            if breakdown != value.3 { breakdown = value.3 }
+            if recentEvents != value.4 { recentEvents = value.4 }
+            let refreshedError = pipeline?.status().lastError ?? infrastructureError ?? configurationReadError
+            if lastError != refreshedError { lastError = refreshedError }
         case .failure(let error):
-            lastError = error.localizedDescription
+            if lastError != error.localizedDescription { lastError = error.localizedDescription }
         }
-        proxyStatus = proxyService?.status() ?? ProxyStatus(state: .stopped)
-        pipelineStatus = pipeline?.status() ?? pipelineStatus
+        updateOperationalStatus()
         isRefreshing = false
         await pruneIfNeeded(force: false)
         await refreshWidgetSnapshot()
@@ -309,14 +333,65 @@ final class AppModel: ObservableObject {
     }
 
     func shutdown(gracePeriod: Duration = .seconds(10)) async {
-        let task = refreshTask
-        task?.cancel()
-        refreshTask = nil
-        await task?.value
+        let heartbeat = heartbeatTask
+        heartbeat?.cancel()
+        heartbeatTask = nil
+        scheduledRefreshTask?.cancel()
+        scheduledRefreshTask = nil
+        dataRefreshPending = false
+        await heartbeat?.value
         try? await proxyService?.shutdown(gracePeriod: gracePeriod)
         pipeline?.shutdown()
         try? eventStore?.checkpoint()
         try? eventStore?.close()
+    }
+
+    private func scheduleDataRefresh() {
+        dataRefreshPending = true
+        guard scheduledRefreshTask == nil else { return }
+        scheduledRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            await self.runScheduledRefresh()
+        }
+    }
+
+    private func runScheduledRefresh() async {
+        scheduledRefreshTask = nil
+        guard dataRefreshPending else { return }
+        guard !isRefreshing else {
+            scheduleDataRefresh()
+            return
+        }
+        dataRefreshPending = false
+        await refresh()
+        if dataRefreshPending { scheduleDataRefresh() }
+    }
+
+    private func heartbeat() async {
+        updateOperationalStatus()
+        let previousPruneDay = lastPruneDay
+        await pruneIfNeeded(force: false)
+        if previousPruneDay != lastPruneDay {
+            await refresh()
+        } else {
+            await refreshWidgetSnapshot()
+        }
+    }
+
+    private func updateOperationalStatus() {
+        updateProxyStatus(proxyService?.status() ?? ProxyStatus(state: .stopped))
+        if let refreshedPipelineStatus = pipeline?.status(), pipelineStatus != refreshedPipelineStatus {
+            pipelineStatus = refreshedPipelineStatus
+        }
+    }
+
+    private func updateProxyStatus(_ status: ProxyStatus) {
+        if proxyStatus != status { proxyStatus = status }
     }
 
     private func applyRunnableConfiguration() async {
@@ -409,10 +484,12 @@ final class AppModel: ObservableObject {
         do {
             try WidgetSnapshotStore.save(snapshot)
             lastWidgetSnapshot = snapshot
-            widgetSnapshotError = nil
+            if widgetSnapshotError != nil { widgetSnapshotError = nil }
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
-            widgetSnapshotError = error.localizedDescription
+            if widgetSnapshotError != error.localizedDescription {
+                widgetSnapshotError = error.localizedDescription
+            }
         }
     }
 
@@ -435,6 +512,43 @@ final class AppModel: ObservableObject {
     private func refreshSecretReferences() {
         keychainSecretReferences = (try? secretStore.listReferences())?
             .filter { $0 != "install-hmac-key" } ?? []
+    }
+}
+
+private final class AppRefreshRelay: @unchecked Sendable {
+    enum Signal: Sendable {
+        case dataPersisted
+        case proxyStatus(ProxyStatus)
+    }
+
+    typealias Handler = @Sendable (Signal) -> Void
+
+    private let lock = NSLock()
+    private var handler: Handler?
+
+    func setHandler(_ handler: @escaping Handler) {
+        lock.withLock { self.handler = handler }
+    }
+
+    func requestDataRefresh() {
+        send(.dataPersisted)
+    }
+
+    func publish(status: ProxyStatus) {
+        send(.proxyStatus(status))
+    }
+
+    private func send(_ signal: Signal) {
+        let currentHandler = lock.withLock { handler }
+        currentHandler?(signal)
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock()
+        defer { unlock() }
+        return try body()
     }
 }
 
