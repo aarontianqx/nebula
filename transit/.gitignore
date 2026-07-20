@@ -1,0 +1,5 @@
+.DS_Store
+Transit.xcodeproj/
+build/
+.swiftpm/
+DerivedData/
