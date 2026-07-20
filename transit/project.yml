@@ -1,0 +1,138 @@
+name: Transit
+
+options:
+  bundleIdPrefix: com.aarontianqx
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: DBGKX6VP2X
+    SWIFT_VERSION: "6.0"
+    ENABLE_HARDENED_RUNTIME: "YES"
+
+packages:
+  SwiftNIO:
+    url: https://github.com/apple/swift-nio.git
+    exactVersion: 2.101.3
+  AsyncHTTPClient:
+    url: https://github.com/swift-server/async-http-client.git
+    exactVersion: 1.35.0
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    exactVersion: 7.11.1
+
+targets:
+  TransitShared:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aarontianqx.transit.shared
+        DEFINES_MODULE: "YES"
+        GENERATE_INFOPLIST_FILE: "YES"
+
+  TransitCore:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Core
+    dependencies:
+      - target: TransitShared
+      - package: SwiftNIO
+        product: NIOCore
+      - package: SwiftNIO
+        product: NIOHTTP1
+      - package: SwiftNIO
+        product: NIOPosix
+      - package: SwiftNIO
+        product: NIOFoundationCompat
+      - package: AsyncHTTPClient
+        product: AsyncHTTPClient
+      - package: GRDB
+        product: GRDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aarontianqx.transit.core
+        DEFINES_MODULE: "YES"
+        GENERATE_INFOPLIST_FILE: "YES"
+
+  Transit:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - target: TransitCore
+      - target: TransitShared
+      - target: TransitWidget
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Transit
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.0"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aarontianqx.transit
+        ENABLE_APP_SANDBOX: "YES"
+        CODE_SIGN_ENTITLEMENTS: App/Transit.entitlements
+
+  TransitWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: TransitWidget
+    dependencies:
+      - target: TransitShared
+    info:
+      path: TransitWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Transit Widget
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aarontianqx.transit.widget
+        SKIP_INSTALL: "YES"
+        ENABLE_APP_SANDBOX: "YES"
+        CODE_SIGN_ENTITLEMENTS: TransitWidget/TransitWidget.entitlements
+
+  TransitCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: TransitCore
+      - target: TransitShared
+      - package: SwiftNIO
+        product: NIOCore
+      - package: SwiftNIO
+        product: NIOEmbedded
+      - package: SwiftNIO
+        product: NIOHTTP1
+      - package: SwiftNIO
+        product: NIOPosix
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aarontianqx.transit.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  Transit:
+    build:
+      targets:
+        Transit: all
+        TransitCoreTests: [test]
+    test:
+      targets:
+        - TransitCoreTests
