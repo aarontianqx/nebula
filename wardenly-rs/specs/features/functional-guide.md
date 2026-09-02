@@ -245,6 +245,37 @@ Wardenly 是一款用于 WLY 网页游戏自动化的桌面控制工具。通过
 
 > 如遇登录问题，可在 Settings → Browser Cache 中清除该账户的缓存后重试。
 
+## 协议桥
+
+登录完成后，会话的游戏页面内会注入一个 JS 桥（`resources/page_bridge.js`，经 CDP init script 在页面脚本之前注入），提供两条协议通道：
+
+### 下行观测
+
+桥会 patch 游戏自己的 `Connection._parsePacket`，把**全部下行协议包**（已由游戏解码成结构化数据）经 CDP binding 推回宿主，以 `protocol_message` 事件广播：
+
+```json
+{
+  "session_id": "...",
+  "protocol_id": 4,
+  "name": "S_2_C_KEEP_ALIVE",
+  "data": { "cur_time": 1788339938, "time_diff": 0 }
+}
+```
+
+`name` 取自游戏自身的协议注册表（如 `S_2_C_MAILLIST_ID`）；未知协议的 `name` 为 `null`。
+
+### 上行发送
+
+通过 Tauri command 向游戏发送协议消息（组包、加密、编码全部由游戏自己的 `Connection` 完成）：
+
+```
+send_protocol(session_id, name = "C_2_S_MAIL_INFO", payload = {})
+```
+
+`name` 必须是游戏协议注册表中的协议名（`C_2_S_` 开头的上行协议）。对应的下行响应会以 `protocol_message` 事件到达。
+
+> 协议能力仅依赖游戏 bundle 暴露的协议层，不触碰二进制与加解密；游戏版本更新后协议名/id 可能漂移。
+
 ## 场景识别
 
 ### 场景定义

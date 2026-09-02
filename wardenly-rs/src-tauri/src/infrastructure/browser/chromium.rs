@@ -11,6 +11,7 @@ use chromiumoxide::cdp::browser_protocol::page::{
     HandleJavaScriptDialogParams,
 };
 use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, EventTargetCreated};
+use chromiumoxide::cdp::js_protocol::runtime::{AddBindingParams, EventBindingCalled};
 use chromiumoxide::page::Page;
 use futures::StreamExt;
 use image::DynamicImage;
@@ -594,6 +595,64 @@ impl BrowserDriver for ChromiumDriver {
         let result = with_timeout(CDP_TIMEOUT, "evaluate", page.evaluate(script)).await?;
         let value: serde_json::Value = result.into_value()?;
         Ok(value.to_string())
+    }
+
+    async fn install_page_bridge(
+        &self,
+        binding_name: &str,
+        init_script: &str,
+    ) -> Result<mpsc::Receiver<String>> {
+        let page = self.page().await?;
+
+        // Runtime.addBinding (without a context id) registers the name on all
+        // current and future execution contexts of this target, so the page can
+        // call it from any later document.
+        with_timeout(
+            CDP_TIMEOUT,
+            "addBinding",
+            page.execute(AddBindingParams::new(binding_name)),
+        )
+        .await?;
+
+        // The init script runs before page scripts on every subsequent document,
+        // letting the bridge hook the game before it opens its WebSocket.
+        with_timeout(
+            CDP_TIMEOUT,
+            "evaluateOnNewDocument",
+            page.evaluate_on_new_document(init_script.to_string()),
+        )
+        .await?;
+
+        let mut events = page
+            .event_listener::<EventBindingCalled>()
+            .await
+            .map_err(|e| anyhow!("Failed to subscribe binding events: {}", e))?;
+
+        let name = binding_name.to_string();
+        let session_id = self.session_id.clone();
+        let (tx, rx) = mpsc::channel(512);
+        // Fire-and-forget forwarder: ends when the events stream closes (browser
+        // teardown) or when the receiver side is dropped. Dropping the JoinHandle
+        // intentionally detaches the task.
+        drop(tokio::spawn(async move {
+            while let Some(ev) = events.next().await {
+                if ev.name != name {
+                    continue;
+                }
+                match tx.try_send(ev.payload.clone()) {
+                    Ok(()) => {}
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            "Protocol bridge channel full, dropping message"
+                        );
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
+                }
+            }
+        }));
+
+        Ok(rx)
     }
 
     async fn capture_screen(&self) -> Result<DynamicImage> {

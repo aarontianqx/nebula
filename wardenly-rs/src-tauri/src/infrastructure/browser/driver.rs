@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use image::DynamicImage;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Point for browser coordinate operations.
 /// Separate from domain::model::Point to maintain layer separation.
@@ -49,6 +50,16 @@ pub trait BrowserDriver: Send + Sync {
     /// Note: this only reaches the top-level page context, never cross-origin iframes;
     /// callers needing the game JS context must navigate the tab directly to the game URL.
     async fn evaluate(&self, script: &str) -> anyhow::Result<String>;
+
+    /// Install the page bridge: register a CDP `Runtime.addBinding` push channel
+    /// (page → host) plus an init script evaluated before page scripts on every
+    /// new document. Returns a receiver yielding the string payloads the page
+    /// passes to the binding.
+    async fn install_page_bridge(
+        &self,
+        binding_name: &str,
+        init_script: &str,
+    ) -> anyhow::Result<mpsc::Receiver<String>>;
 
     /// Capture the current screen as an image
     async fn capture_screen(&self) -> anyhow::Result<DynamicImage>;

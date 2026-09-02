@@ -57,6 +57,17 @@ pub enum DomainEvent {
         step_index: usize,
         scene_name: String,
     },
+
+    /// A downstream protocol message decoded by the in-page bridge
+    /// (see resources/page_bridge.js)
+    ProtocolMessage {
+        session_id: String,
+        protocol_id: u32,
+        /// Protocol name from the game's own registry (None if unknown)
+        name: Option<String>,
+        /// Decoded payload (the raw DataBuffer field `pp` is stripped)
+        data: serde_json::Value,
+    },
 }
 
 impl DomainEvent {
@@ -72,6 +83,7 @@ impl DomainEvent {
             Self::ScriptStarted { .. } => "script_started",
             Self::ScriptStopped { .. } => "script_stopped",
             Self::ScriptStepExecuted { .. } => "script_step_executed",
+            Self::ProtocolMessage { .. } => "protocol_message",
         }
     }
 }

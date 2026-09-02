@@ -420,6 +420,25 @@ pub async fn insert_text_all(state: State<'_, AppState>, text: String) -> Result
     Ok(())
 }
 
+// ====== Protocol Commands ======
+
+/// Send a protocol message to a session's game page via the page bridge.
+/// `name` is a protocol name from the game's own registry (e.g. "C_2_S_MAIL_INFO").
+/// Downstream messages arrive as `protocol_message` events.
+#[tauri::command]
+pub async fn send_protocol(
+    state: State<'_, AppState>,
+    session_id: String,
+    name: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    state
+        .coordinator
+        .send_protocol(&session_id, &name, payload)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ====== Input Commands ======
 
 #[tauri::command]

@@ -37,4 +37,11 @@ pub enum SessionCommand {
 
     /// Insert text into the currently focused element via CDP Input.insertText
     InsertText { text: String },
+
+    /// Send a protocol message to the game via the page bridge
+    /// (name per the game's own registry, e.g. "C_2_S_MAIL_INFO")
+    SendProtocol {
+        name: String,
+        payload: serde_json::Value,
+    },
 }

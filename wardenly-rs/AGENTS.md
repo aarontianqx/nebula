@@ -81,6 +81,7 @@ wardenly-rs/
 - **Storage runtime switch**: Repository uses trait objects (`dyn AccountRepository`) for runtime polymorphism between SQLite and MongoDB. No compile-time feature flags needed.
 - **Theme system**: Theme presets are defined in `themes.yaml` (embedded resource). At runtime, ThemeProvider reads via Tauri command and injects CSS variables into `:root`. No recompilation for theme changes.
 - **ScriptRunner lifecycle**: Each script run gets a unique `run_id`. Stop commands carry optional `run_id` for race-condition safety. A shared `running` flag allows immediate stop marking.
+- **Protocol bridge**: `resources/page_bridge.js` is injected via CDP init script before game boot. It patches the game's own `Connection` to report all downstream packets as `ProtocolMessage` events; upstream sends go through `SessionCommand::SendProtocol` → `window.__wardenly.send(name, payload)`. No binary/crypto is touched — the game encodes and decodes itself.
 - **OCR**: Global singleton `HttpOcrClient` with background health checks. OCR rules use expression-based conditions (`"used > 7 || used > total"`).
 - **ID scheme**: ULID for all entity IDs (time-ordered unique identifiers).
 

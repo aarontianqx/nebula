@@ -236,6 +236,8 @@ pub fn run() {
             // Text input commands
             commands::insert_text,
             commands::insert_text_all,
+            // Protocol commands
+            commands::send_protocol,
             // Input commands
             commands::set_keyboard_passthrough,
             // Settings & Theme commands

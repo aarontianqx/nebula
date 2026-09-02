@@ -1,6 +1,6 @@
 # Proposal: 协议驱动自动化落地方案
 
-> 2026-09-02 ｜ 状态：Phase 1 已实现（登录链路直达游戏页，含 live 集成测试 `src-tauri/tests/login_chain.rs`）｜ 前置文档：[protocol-automation-recon.md](protocol-automation-recon.md)（调研事实与验证记录，本文档不再重复）
+> 2026-09-02 ｜ 状态：Phase 1、Phase 2 已实现（登录链路直达 + 协议桥，live 集成测试 `src-tauri/tests/login_chain.rs`、`src-tauri/tests/protocol_bridge.rs`）｜ 前置文档：[protocol-automation-recon.md](protocol-automation-recon.md)（调研事实与验证记录，本文档不再重复）
 
 ## 1. 背景与决策
 

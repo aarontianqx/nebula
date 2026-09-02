@@ -231,6 +231,30 @@ impl Coordinator {
         Ok(())
     }
 
+    /// Send a protocol message to a session's game page via the page bridge
+    pub async fn send_protocol(
+        &self,
+        session_id: &str,
+        name: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?;
+
+        handle
+            .cmd_tx
+            .send(SessionCommand::SendProtocol {
+                name: name.to_string(),
+                payload,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to send protocol command"))?;
+
+        Ok(())
+    }
+
     /// Send drag to a specific session
     pub async fn drag_session(
         &self,

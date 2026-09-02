@@ -32,6 +32,24 @@ const JS_GAME_CONNECTED: &str = r"(() => {
     } catch (e) { return false; }
 })()";
 
+/// Layer 3: the injected page bridge finished hooking the game's Connection.
+const JS_BRIDGE_READY: &str = r"!!(window.__wardenly && window.__wardenly.ready === true)";
+
+/// CDP Runtime binding name the page bridge uses to push protocol messages.
+/// Must match the call site in resources/page_bridge.js.
+const BRIDGE_BINDING_NAME: &str = "__wardenlyReport";
+
+/// In-page bridge, injected via Page.addScriptToEvaluateOnNewDocument.
+const PAGE_BRIDGE_JS: &str = include_str!("../../../resources/page_bridge.js");
+
+/// Wire format of a message pushed by the page bridge.
+#[derive(Debug, serde::Deserialize)]
+struct BridgeMessage {
+    id: u32,
+    name: Option<String>,
+    data: serde_json::Value,
+}
+
 /// Handle to communicate with a SessionActor
 pub struct SessionHandle {
     pub id: String,
@@ -49,6 +67,8 @@ pub struct SessionActor {
     browser: Arc<dyn BrowserDriver + Send + Sync>,
     frame_rx: mpsc::Receiver<String>,
     script_handle: Option<ScriptHandle>,
+    /// Forwarder turning page-bridge pushes into ProtocolMessage events.
+    protocol_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SessionActor {
@@ -72,6 +92,7 @@ impl SessionActor {
             browser,
             frame_rx,
             script_handle: None,
+            protocol_handle: None,
         }
     }
 
@@ -312,6 +333,13 @@ impl SessionActor {
                     }
                 }
             }
+            SessionCommand::SendProtocol { name, payload } => {
+                if self.state.can_accept_interaction() {
+                    if let Err(e) = self.send_protocol(&name, &payload).await {
+                        tracing::warn!("SendProtocol {} failed: {}", name, e);
+                    }
+                }
+            }
         }
         true
     }
@@ -355,6 +383,52 @@ impl SessionActor {
             .unwrap_or(false)
     }
 
+    /// Send a protocol message through the page bridge.
+    async fn send_protocol(&self, name: &str, payload: &serde_json::Value) -> anyhow::Result<()> {
+        // serde_json string escaping produces a valid JS string literal;
+        // a JSON value is directly a valid JS expression.
+        let name_literal = serde_json::to_string(name)?;
+        let script = format!(
+            "window.__wardenly ? window.__wardenly.send({}, {}) : 'ERR bridge not installed'",
+            name_literal, payload
+        );
+        let result = self.browser.evaluate(&script).await?;
+        if result.contains("ERR") {
+            anyhow::bail!("bridge rejected send: {}", result);
+        }
+        tracing::debug!("send_protocol {} -> {}", name, result);
+        Ok(())
+    }
+
+    /// Forward page-bridge pushes to the event bus as ProtocolMessage events.
+    fn spawn_protocol_forwarder(&mut self, mut rx: mpsc::Receiver<String>) {
+        let event_bus = self.event_bus.clone();
+        let session_id = self.id.clone();
+        let handle = tokio::spawn(async move {
+            while let Some(raw) = rx.recv().await {
+                match serde_json::from_str::<BridgeMessage>(&raw) {
+                    Ok(msg) => {
+                        event_bus.publish(DomainEvent::ProtocolMessage {
+                            session_id: session_id.clone(),
+                            protocol_id: msg.id,
+                            name: msg.name,
+                            data: msg.data,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            "Failed to parse bridge message: {} ({} bytes)",
+                            e,
+                            raw.len()
+                        );
+                    }
+                }
+            }
+        });
+        self.protocol_handle = Some(handle);
+    }
+
     /// Perform login by walking the three-layer entry chain with pure DOM operations:
     ///
     ///   [1] www.lequ.com login page (fill form, or reuse cached profile)
@@ -387,6 +461,15 @@ impl SessionActor {
         self.browser.navigate(&server_entry_url).await?;
         let game_page_url = self.wait_for_game_page_url(Duration::from_secs(15)).await?;
 
+        // Install the page bridge BEFORE the game page loads: the init script
+        // must be registered before navigation, because the game opens its
+        // WebSocket early in boot and the bridge hooks the Connection module.
+        let protocol_rx = self
+            .browser
+            .install_page_bridge(BRIDGE_BINDING_NAME, PAGE_BRIDGE_JS)
+            .await?;
+        self.spawn_protocol_forwarder(protocol_rx);
+
         // HTTPS-First upgrades would force this page to https, where the game's
         // plaintext ws:// is blocked as mixed content. Fail loudly instead of
         // stalling on the loading screen with no traffic.
@@ -401,7 +484,20 @@ impl SessionActor {
         }
 
         self.wait_for_game_connected(&scenes, Duration::from_secs(60))
-            .await
+            .await?;
+
+        // The bridge hooks the same Connection the wait above observes, so it
+        // should be ready almost immediately; a failure here means injection
+        // broke, which must not pass silently (protocol driving would be dead).
+        let bridge_wait = Instant::now();
+        while !self.eval_bool(JS_BRIDGE_READY).await {
+            if bridge_wait.elapsed() > Duration::from_secs(10) {
+                anyhow::bail!("Page bridge failed to install on the game page");
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        tracing::info!("Page bridge installed");
+        Ok(())
     }
 
     /// Wait for the layer-2 server entry URL to appear in a top-level iframe,
@@ -626,6 +722,10 @@ impl SessionActor {
 
         // Stop script if running
         self.stop_script().await;
+
+        if let Some(handle) = self.protocol_handle.take() {
+            handle.abort();
+        }
 
         if let Err(e) = self.browser.stop().await {
             tracing::warn!("Failed to stop browser: {}", e);
