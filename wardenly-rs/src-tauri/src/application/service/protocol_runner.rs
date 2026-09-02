@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::sleep;
 
+use super::condition_eval;
 use super::script_runner::{ScriptCommand, StopReason};
 use crate::application::eventbus::SharedEventBus;
 use crate::domain::event::DomainEvent;
@@ -86,7 +87,7 @@ impl ProtocolRunner {
                 return StopReason::Manual;
             }
 
-            if !self.step_conditions_met(step) {
+            if !self.step_conditions_met(step).await {
                 tracing::info!(
                     script = %self.script.name,
                     step = %step.name,
@@ -164,36 +165,13 @@ impl ProtocolRunner {
         }
     }
 
-    fn step_conditions_met(&self, step: &ProtocolStep) -> bool {
-        self.state_conditions_met(&step.conditions)
+    async fn step_conditions_met(&self, step: &ProtocolStep) -> bool {
+        condition_eval::conditions_met(&step.conditions, &self.game_state, &self.browser, false)
+            .await
     }
 
-    /// Evaluate conditions against the shared game state. All field paths must
-    /// start with `state.`; unresolved paths count as unmet.
-    fn state_conditions_met(&self, conditions: &[FieldCondition]) -> bool {
-        let state = match self.game_state.read() {
-            Ok(state) => state,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        conditions.iter().all(|condition| {
-            if !condition.field.starts_with("state.") {
-                tracing::warn!(
-                    "State condition field must start with 'state.': {}",
-                    condition.field
-                );
-                return false;
-            }
-            match state.resolve(&condition.field) {
-                Some(value) => condition.evaluate_value(value),
-                None => {
-                    tracing::debug!("State condition field unresolved: {}", condition.field);
-                    false
-                }
-            }
-        })
-    }
-
-    /// Wait until all state conditions hold (readiness gate).
+    /// Wait until all conditions hold (readiness gate). Paths may use `state.`
+    /// (latest pushed payload) or `role.` (client role model, queried live).
     async fn wait_state(
         &mut self,
         conditions: &[FieldCondition],
@@ -205,7 +183,9 @@ impl ProtocolRunner {
             if self.stop_requested() {
                 return WaitOutcome::Stopped;
             }
-            if self.state_conditions_met(conditions) {
+            if condition_eval::conditions_met(conditions, &self.game_state, &self.browser, false)
+                .await
+            {
                 return WaitOutcome::Matched;
             }
             let now = Instant::now();

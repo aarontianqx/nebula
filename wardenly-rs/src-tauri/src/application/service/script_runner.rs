@@ -8,9 +8,11 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 use crate::application::eventbus::SharedEventBus;
+use crate::application::service::condition_eval;
 use crate::domain::event::DomainEvent;
 use crate::domain::model::{
     Action, ExprContext, OcrAction, OcrMode, OcrRule, Point, Scene, SceneMatcher, Script,
+    SharedGameState, StateRule,
 };
 use crate::infrastructure::browser::{BrowserDriver, BrowserPoint};
 use crate::infrastructure::config::resources;
@@ -52,6 +54,7 @@ pub struct ScriptRunner {
     browser: Arc<dyn BrowserDriver>,
     ocr_client: OcrClientHandle,
     event_bus: SharedEventBus,
+    game_state: SharedGameState,
     scene_matcher: SceneMatcher,
     counters: HashMap<String, i32>,
     running: Arc<AtomicBool>,
@@ -62,6 +65,7 @@ pub struct ScriptRunner {
 const MAX_CAPTURE_FAILURES: u32 = 10;
 
 impl ScriptRunner {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_id: String,
         script: Script,
@@ -69,6 +73,7 @@ impl ScriptRunner {
         browser: Arc<dyn BrowserDriver>,
         ocr_client: OcrClientHandle,
         event_bus: SharedEventBus,
+        game_state: SharedGameState,
         cmd_rx: mpsc::Receiver<ScriptCommand>,
     ) -> Self {
         Self {
@@ -78,6 +83,7 @@ impl ScriptRunner {
             browser,
             ocr_client,
             event_bus,
+            game_state,
             scene_matcher: SceneMatcher::default(),
             counters: HashMap::new(),
             running: Arc::new(AtomicBool::new(true)),
@@ -219,9 +225,21 @@ impl ScriptRunner {
             }
         }
 
-        // Execute actions sequentially, passing OCR rule for loop iteration checks
-        self.execute_actions(&step.actions, step.ocr_rule.as_ref(), &scene_name)
-            .await
+        // Check exact-state rule at the same decision point (no screenshot needed)
+        if let Some(ref state_rule) = step.state_rule {
+            if let Some(result) = self.check_state_rule(state_rule, &scene_name).await {
+                return result;
+            }
+        }
+
+        // Execute actions sequentially, passing rules for loop iteration checks
+        self.execute_actions(
+            &step.actions,
+            step.ocr_rule.as_ref(),
+            step.state_rule.as_ref(),
+            &scene_name,
+        )
+        .await
     }
 
     /// Execute a list of actions
@@ -229,6 +247,7 @@ impl ScriptRunner {
         &mut self,
         actions: &[Action],
         ocr_rule: Option<&OcrRule>,
+        state_rule: Option<&StateRule>,
         scene_name: &str,
     ) -> StepResult {
         for action in actions {
@@ -236,7 +255,9 @@ impl ScriptRunner {
                 return StepResult::Quit;
             }
 
-            let result = self.execute_action(action, ocr_rule, scene_name).await;
+            let result = self
+                .execute_action(action, ocr_rule, state_rule, scene_name)
+                .await;
             if result != StepResult::Continue {
                 return result;
             }
@@ -249,6 +270,7 @@ impl ScriptRunner {
         &mut self,
         action: &Action,
         ocr_rule: Option<&OcrRule>,
+        state_rule: Option<&StateRule>,
         scene_name: &str,
     ) -> StepResult {
         match action {
@@ -305,6 +327,7 @@ impl ScriptRunner {
                         until.as_ref(),
                         actions,
                         ocr_rule,
+                        state_rule,
                         scene_name,
                     )
                     .await;
@@ -334,6 +357,7 @@ impl ScriptRunner {
     }
 
     /// Execute a loop action with nested actions
+    #[allow(clippy::too_many_arguments)]
     async fn execute_loop(
         &mut self,
         count: i32,
@@ -341,6 +365,7 @@ impl ScriptRunner {
         until: Option<&String>,
         actions: &[Action],
         ocr_rule: Option<&OcrRule>,
+        state_rule: Option<&StateRule>,
         scene_name: &str,
     ) -> StepResult {
         let is_infinite = count < 0;
@@ -359,6 +384,14 @@ impl ScriptRunner {
                         tracing::info!(iteration, "OCR condition triggered loop exit");
                         return result;
                     }
+                }
+            }
+
+            // Check exact-state rule at the start of each iteration
+            if let Some(rule) = state_rule {
+                if let Some(result) = self.check_state_rule(rule, scene_name).await {
+                    tracing::info!(iteration, "State rule condition triggered loop exit");
+                    return result;
                 }
             }
 
@@ -454,6 +487,41 @@ impl ScriptRunner {
         }
 
         StepResult::Continue
+    }
+
+    /// Check exact-state rule (structured state instead of OCR) and return a
+    /// StepResult when it triggers. Unmet/unresolvable conditions yield None,
+    /// so execution continues and the rule can trigger on a later check.
+    async fn check_state_rule(
+        &self,
+        state_rule: &StateRule,
+        scene_name: &str,
+    ) -> Option<StepResult> {
+        let met = condition_eval::conditions_met(
+            &state_rule.conditions,
+            &self.game_state,
+            &self.browser,
+            state_rule.any,
+        )
+        .await;
+
+        tracing::info!(
+            scene = %scene_name,
+            conditions = ?state_rule.conditions,
+            any = state_rule.any,
+            condition_met = met,
+            action = ?state_rule.action,
+            "State rule evaluated"
+        );
+
+        if !met {
+            return None;
+        }
+        match state_rule.action {
+            OcrAction::QuitExhausted => Some(StepResult::ResourceExhausted),
+            OcrAction::Quit => Some(StepResult::Quit),
+            OcrAction::Skip => None, // Skip means continue to next step
+        }
     }
 
     /// Check OCR rule and return StepResult if condition is met
@@ -582,5 +650,146 @@ impl ScriptHandle {
         // to detect stop even before processing the channel message
         self.running.store(false, Ordering::Relaxed);
         let _ = self.cmd_tx.send(ScriptCommand::Stop).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::eventbus::create_event_bus;
+    use crate::domain::model::{
+        new_shared_game_state, ColorPoint, ColorValue, FieldCondition, Step,
+    };
+    use crate::infrastructure::ocr::global_ocr_client;
+    use serde_json::json;
+    use std::time::Duration;
+
+    /// Mock driver: a solid-color screen and a canned queryRole response,
+    /// using the exact wire format the real bridge produces.
+    struct MockDriver;
+
+    #[async_trait::async_trait]
+    impl BrowserDriver for MockDriver {
+        async fn start(&self) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn stop(&self) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn navigate(&self, _url: &str) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn click(&self, _x: f64, _y: f64) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn drag(&self, _from: (f64, f64), _to: (f64, f64)) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn drag_path(&self, _points: &[BrowserPoint]) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn start_screencast(&self) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn stop_screencast(&self) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn evaluate(&self, _script: &str) -> anyhow::Result<String> {
+            Ok(serde_json::to_string(&json!({"ok": true, "value": 7}).to_string()).unwrap())
+        }
+        async fn install_page_bridge(
+            &self,
+            _binding_name: &str,
+            _init_script: &str,
+        ) -> anyhow::Result<mpsc::Receiver<String>> {
+            unimplemented!()
+        }
+        async fn capture_screen(&self) -> anyhow::Result<DynamicImage> {
+            Ok(DynamicImage::ImageRgba8(image::ImageBuffer::from_pixel(
+                1080,
+                720,
+                image::Rgba([33, 0, 0, 255]),
+            )))
+        }
+        async fn input_text(&self, _selector: &str, _text: &str) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn click_element(&self, _selector: &str) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn wait_visible(&self, _selector: &str, _timeout: Duration) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn login_with_password(
+            &self,
+            _username: &str,
+            _password: &str,
+            _timeout: Duration,
+        ) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn refresh(&self) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn insert_text(&self, _text: &str) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+    }
+
+    /// End-to-end wiring: scene match → stateRule evaluated via bridge →
+    /// quit_exhausted surfaces as StopReason::ResourceExhausted.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn state_rule_quits_exhausted_when_condition_met() {
+        let script = Script {
+            name: "t".to_string(),
+            description: None,
+            version: None,
+            author: None,
+            steps: vec![Step {
+                expected_scene: "solid".to_string(),
+                timeout: None,
+                actions: vec![],
+                ocr_rule: None,
+                state_rule: Some(StateRule {
+                    any: false,
+                    conditions: vec![FieldCondition {
+                        field: "role._knightTower._teamNumInfo.num".to_string(),
+                        op: "gte".to_string(),
+                        value: json!(7),
+                    }],
+                    action: OcrAction::QuitExhausted,
+                }),
+            }],
+        };
+        let scene = Scene {
+            name: "solid".to_string(),
+            category: String::new(),
+            points: vec![ColorPoint {
+                x: 0,
+                y: 0,
+                color: ColorValue {
+                    r: 33,
+                    g: 0,
+                    b: 0,
+                    a: Some(255),
+                },
+            }],
+            actions: Default::default(),
+        };
+
+        let (_cmd_tx, cmd_rx) = mpsc::channel(8);
+        let mut runner = ScriptRunner::new(
+            "s".to_string(),
+            script,
+            vec![scene],
+            Arc::new(MockDriver),
+            global_ocr_client(),
+            create_event_bus(),
+            new_shared_game_state(),
+            cmd_rx,
+        );
+
+        let reason = runner.run().await;
+        assert_eq!(reason, StopReason::ResourceExhausted);
     }
 }

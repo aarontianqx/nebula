@@ -47,14 +47,13 @@ steps:
 
   - scene: tower_entrance_1
     timeout: 5s
-    ocrRule:
-      mode: ratio
-      roi:
-        x: 510
-        y: 602
-        width: 90
-        height: 50
-      condition: "used > 7 || used > total"
+    # 天狼：今日次数(num)已达 7 次性价比封顶，或军令耗尽 → 退出
+    # (等价原 OCR 判定 "used > 7 || used > total"，used=num+1, total=军令)
+    stateRule:
+      any: true
+      conditions:
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: 7 }
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: "$role._militaryOrder" }
       action: quit_exhausted
     actions:
       - type: loop
@@ -90,14 +89,12 @@ steps:
 
   - scene: tower_entrance_2
     timeout: 5s
-    ocrRule:
-      mode: ratio
-      roi:
-        x: 510
-        y: 602
-        width: 90
-        height: 50
-      condition: "used > 10 || used > total"
+    # 后续 boss：10 次封顶（同入口 1 的等价替换）
+    stateRule:
+      any: true
+      conditions:
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: 10 }
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: "$role._militaryOrder" }
       action: quit_exhausted
     actions:
       - type: loop
@@ -133,14 +130,12 @@ steps:
 
   - scene: tower_entrance_3
     timeout: 5s
-    ocrRule:
-      mode: ratio
-      roi:
-        x: 510
-        y: 602
-        width: 90
-        height: 50
-      condition: "used > 10 || used > total"
+    # 后续 boss：10 次封顶（同入口 1 的等价替换）
+    stateRule:
+      any: true
+      conditions:
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: 10 }
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: "$role._militaryOrder" }
       action: quit_exhausted
     actions:
       - type: loop

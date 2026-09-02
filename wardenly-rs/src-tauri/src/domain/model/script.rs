@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
+use super::protocol_script::FieldCondition;
+
 /// Script represents an automation script with metadata and execution steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Script {
@@ -42,6 +44,33 @@ pub struct Step {
     /// Optional OCR-based resource checking
     #[serde(default, rename = "ocrRule")]
     pub ocr_rule: Option<OcrRule>,
+
+    /// Optional exact-state rule (replaces OCR for protocol-covered values):
+    /// gates the step on conditions against the protocol GameState (`state.*`)
+    /// or the game's client role model (`role.*`).
+    #[serde(default, rename = "stateRule")]
+    pub state_rule: Option<StateRule>,
+}
+
+/// Exact-state rule for scene steps: structured conditions instead of
+/// screenshot OCR. Evaluated at the same decision points as `ocrRule`
+/// (before the step's actions and at each loop iteration).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateRule {
+    /// When true, ANY met condition triggers the action (OR); otherwise ALL
+    /// must hold (AND, the default).
+    #[serde(default)]
+    pub any: bool,
+
+    /// Conditions on structured state. Field paths: `state.<PROTO>.<field>`
+    /// (latest pushed payload) or `role.<field>` (client role model).
+    /// `value` may be a literal or a `$`-prefixed reference to another path
+    /// (e.g. `"$role._militaryOrder"`) for field-to-field comparison.
+    pub conditions: Vec<FieldCondition>,
+
+    /// Action to take when the rule triggers
+    #[serde(default)]
+    pub action: OcrAction,
 }
 
 /// Action represents a single action within a step.

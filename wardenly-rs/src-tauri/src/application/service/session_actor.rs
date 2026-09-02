@@ -687,6 +687,7 @@ impl SessionActor {
                 self.browser.clone(),
                 global_ocr_client(),
                 self.event_bus.clone(),
+                self.game_state.clone(),
                 cmd_rx,
             );
             runner.set_running_flag(running.clone());

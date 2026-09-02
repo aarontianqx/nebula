@@ -318,8 +318,28 @@ steps:
 ### 条件
 
 - 位置：step 级 `conditions`（不满足则跳过该 step）或 `wait_*` 的 `conditions`。
-- 形式：`{ field, op, value }`；`field` 为点路径，step 条件以 `state.<协议名>.<字段>` 引用结构化游戏状态（GameState 按协议名保存最新下行负载），wait 条件相对于响应负载。
+- 形式：`{ field, op, value }`；`field` 为点路径。
+- 路径前缀：
+  - `state.<协议名>.<字段>` — 引用结构化游戏状态（GameState 按协议名保存最新下行负载）；
+  - `role.<字段>` — 直读游戏客户端 role 模型（如 `role._militaryOrder`、`role._knightTower._teamNumInfo.num`），随时可读、无需等待推送；注意部分字段（如 `_teamNumInfo`）要先进入对应界面才由服务端下发。
+- `value` 可以是字面量，也可以是 `"$<路径>"` 引用另一个字段做字段间比较（如 `"$role._militaryOrder"`）。
 - `op`：`eq / neq / gt / gte / lt / lte / exists`（`exists` 只要求路径存在，忽略 value）。
+
+### stateRule（场景脚本的精确判定，替代 ocrRule）
+
+场景脚本的 step 除 `ocrRule` 外还支持 `stateRule`——在同一决策点（step 动作前、每次 loop 迭代前）用上面的条件判定，不再走 OCR 服务：
+
+```yaml
+  - scene: tower_entrance_1
+    stateRule:
+      any: true            # true = 任一条件满足即触发（OR）；缺省 false = 全部满足（AND）
+      conditions:
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: 7 }
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: "$role._militaryOrder" }
+      action: quit_exhausted   # quit_exhausted / quit / skip，与 ocrRule 相同
+```
+
+`join_tower.yaml` 的三处判定已从 OCR 迁移为 stateRule（阈值 7/10/10 保留）：军令数读 `role._militaryOrder`，今日刷塔次数读 `role._knightTower._teamNumInfo.num`，与界面上 "1066/8" 的显示一一对应（used = 次数+1，total = 军令）。
 
 ### 协议注册表
 

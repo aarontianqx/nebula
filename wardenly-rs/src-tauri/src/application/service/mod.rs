@@ -1,4 +1,5 @@
 mod account_service;
+mod condition_eval;
 mod group_service;
 mod protocol_runner;
 mod script_runner;

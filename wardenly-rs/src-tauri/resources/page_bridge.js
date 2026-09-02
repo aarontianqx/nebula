@@ -52,6 +52,27 @@
         return 'ERR ' + (e && e.message ? e.message : String(e));
       }
     },
+    /**
+     * Read a value from the game's own client role model (always current,
+     * maintained by the game itself — no push required).
+     * @param {string} path dotted path under role, e.g. '_militaryOrder' or
+     *   '_knightTower._teamNumInfo.num'
+     * @returns {string} JSON '{"ok":true,"value":...}' or 'ERR ...'
+     */
+    queryRole(path) {
+      try {
+        let v = window.__require('Account').default.get().role;
+        for (const seg of String(path).split('.')) {
+          if (seg === '') continue;
+          if (v === null || v === undefined) return 'ERR unresolved: ' + path;
+          v = v[seg];
+        }
+        if (v === undefined) return 'ERR unresolved: ' + path;
+        return JSON.stringify({ ok: true, value: v });
+      } catch (e) {
+        return 'ERR ' + (e && e.message ? e.message : String(e));
+      }
+    },
   };
 
   const install = () => {

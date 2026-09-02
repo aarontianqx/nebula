@@ -161,6 +161,12 @@ impl FieldCondition {
         Self::compare(actual, &self.op, &self.value)
     }
 
+    /// Evaluate with both sides already resolved — used when `value` was a
+    /// `$`-prefixed reference to another field that the caller substituted.
+    pub fn evaluate_with(&self, actual: &Value, expected: &Value) -> bool {
+        Self::compare(actual, &self.op, expected)
+    }
+
     fn compare(actual: &Value, op: &str, expected: &Value) -> bool {
         if op == "exists" {
             return true; // only reached when the path resolved
