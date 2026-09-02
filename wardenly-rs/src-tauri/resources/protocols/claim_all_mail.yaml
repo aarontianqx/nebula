@@ -1,0 +1,28 @@
+# 一键领取全部邮件附件（协议驱动，无截图/无点击）
+# 对应游戏内"邮件 → 一键领取"操作：
+#   C_2_S_MAIL_INFO 拉取邮件列表 → 有邮件则 C_2_S_MAIL_DRAW_ALL_REWARD 一键领取
+#
+# 注意用 request（发送+等待+超时重发）而不是 send_protocol + wait_protocol：
+# 刚登录完成时入城握手可能还在进行，过早的包会被服务端静默丢弃，重试可自愈。
+name: claim_all_mail
+description: 领取全部邮件附件（协议驱动）
+steps:
+  - name: fetch_mail_list
+    actions:
+      - type: request
+        protocol: C_2_S_MAIL_INFO
+        expect: S_2_C_MAILLIST_ID
+        timeout: 10s
+        retries: 3
+
+  - name: draw_all_rewards
+    conditions:
+      - { field: state.S_2_C_MAILLIST_ID.mailNums, op: gt, value: 0 }
+    actions:
+      # 服务端对一键领取的确认因邮件内容而异：有可领附件时回专用 ack，
+      # 否则只推全量资源快照；两者都算成功响应
+      - type: request
+        protocol: C_2_S_MAIL_DRAW_ALL_REWARD
+        expect_any: [S_2_C_MAIL_DRAW_ALL_REWARD, S_2_C_UPDATE_BENEFIT]
+        timeout: 15s
+        retries: 2

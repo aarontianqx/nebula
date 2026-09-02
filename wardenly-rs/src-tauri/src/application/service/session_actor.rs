@@ -1,8 +1,11 @@
 use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
-use crate::application::service::script_runner::{ScriptHandle, ScriptRunner};
+use crate::application::service::protocol_runner;
+use crate::application::service::script_runner::{self, ScriptHandle, ScriptRunner};
 use crate::domain::event::DomainEvent;
-use crate::domain::model::{Account, Scene, SceneAction, SessionInfo, SessionState};
+use crate::domain::model::{
+    new_shared_game_state, Account, Scene, SceneAction, SessionInfo, SessionState, SharedGameState,
+};
 use crate::infrastructure::browser::{BrowserDriver, ChromiumDriver};
 use crate::infrastructure::config::resources;
 use crate::infrastructure::ocr::global_ocr_client;
@@ -69,6 +72,8 @@ pub struct SessionActor {
     script_handle: Option<ScriptHandle>,
     /// Forwarder turning page-bridge pushes into ProtocolMessage events.
     protocol_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Structured game state aggregated from the protocol stream.
+    game_state: SharedGameState,
 }
 
 impl SessionActor {
@@ -93,6 +98,7 @@ impl SessionActor {
             frame_rx,
             script_handle: None,
             protocol_handle: None,
+            game_state: new_shared_game_state(),
         }
     }
 
@@ -400,14 +406,25 @@ impl SessionActor {
         Ok(())
     }
 
-    /// Forward page-bridge pushes to the event bus as ProtocolMessage events.
+    /// Forward page-bridge pushes: update the structured game state first,
+    /// then publish ProtocolMessage events (readers reacting to an event always
+    /// see a state at least as fresh as the event).
     fn spawn_protocol_forwarder(&mut self, mut rx: mpsc::Receiver<String>) {
         let event_bus = self.event_bus.clone();
         let session_id = self.id.clone();
+        let game_state = self.game_state.clone();
         let handle = tokio::spawn(async move {
             while let Some(raw) = rx.recv().await {
                 match serde_json::from_str::<BridgeMessage>(&raw) {
                     Ok(msg) => {
+                        if let Some(name) = &msg.name {
+                            match game_state.write() {
+                                Ok(mut state) => state.update(name, msg.data.clone()),
+                                Err(poisoned) => {
+                                    poisoned.into_inner().update(name, msg.data.clone())
+                                }
+                            }
+                        }
                         event_bus.publish(DomainEvent::ProtocolMessage {
                             session_id: session_id.clone(),
                             protocol_id: msg.id,
@@ -558,7 +575,16 @@ impl SessionActor {
         }
     }
 
-    /// Wait until the game's own Connection singleton reports connected.
+    /// Wait until the game is truly inside the city.
+    ///
+    /// Ready criterion = `Connection._connected` AND the bridge has observed
+    /// `S_2_C_CHAR_LOAD_END` (end of the server-side login data burst). The
+    /// WebSocket connects early in boot — possibly while a canvas dialog
+    /// (user agreement) still blocks game entry — so the WS alone cannot tell
+    /// whether the server accepts business protocols; observed login traffic
+    /// can. The agreement click is retried for the whole window, which makes
+    /// a click that landed too early self-healing.
+    ///
     /// The first-time user agreement is a canvas dialog with no DOM counterpart;
     /// it is the one place that still falls back to scene recognition + click.
     async fn wait_for_game_connected(
@@ -570,11 +596,11 @@ impl SessionActor {
 
         loop {
             if start.elapsed() > timeout {
-                anyhow::bail!("Timeout waiting for game connection");
+                anyhow::bail!("Timeout waiting for game entry (connected + login data)");
             }
 
-            if self.eval_bool(JS_GAME_CONNECTED).await {
-                tracing::info!("Game connection established, login complete");
+            if self.eval_bool(JS_GAME_CONNECTED).await && self.char_load_done() {
+                tracing::info!("Game connection established, login data loaded");
                 return Ok(());
             }
 
@@ -588,6 +614,14 @@ impl SessionActor {
             }
 
             tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Whether the bridge has observed the end of the login data burst.
+    fn char_load_done(&self) -> bool {
+        match self.game_state.read() {
+            Ok(state) => state.get("S_2_C_CHAR_LOAD_END").is_some(),
+            Err(poisoned) => poisoned.into_inner().get("S_2_C_CHAR_LOAD_END").is_some(),
         }
     }
 
@@ -630,39 +664,52 @@ impl SessionActor {
         // Stop existing script if any
         self.stop_script().await;
 
-        // Load scripts
-        let scripts = resources::load_scripts().unwrap_or_default();
-        let script = match resources::find_script(&scripts, script_name) {
-            Some(s) => s.clone(),
-            None => {
-                tracing::error!("Script not found: {}", script_name);
-                return;
-            }
-        };
-
-        // Load scenes
-        let scenes = resources::load_scenes().unwrap_or_default();
-
         // Generate unique run_id for this script execution instance
         let run_id = ulid::Ulid::new().to_string();
 
         // Create shared running flag - this allows immediate stop signal propagation
         let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        // Create script runner (uses global OCR client singleton)
-        // Pass the shared running flag so runner checks it before operations
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
-        let mut runner = ScriptRunner::new(
-            self.id.clone(),
-            script.clone(),
-            scenes,
-            self.browser.clone(),
-            global_ocr_client(),
-            self.event_bus.clone(),
-            cmd_rx,
-        );
-        // Replace the internal running flag with our shared one
-        runner.set_running_flag(running.clone());
+
+        // Scene scripts (scene recognition loop) and protocol scripts (linear
+        // protocol exchange) share the same lifecycle; only the runner differs.
+        let run: std::pin::Pin<
+            Box<dyn std::future::Future<Output = script_runner::StopReason> + Send>,
+        > = if let Some(script) = {
+            let scripts = resources::load_scripts().unwrap_or_default();
+            resources::find_script(&scripts, script_name).cloned()
+        } {
+            let scenes = resources::load_scenes().unwrap_or_default();
+            let mut runner = ScriptRunner::new(
+                self.id.clone(),
+                script,
+                scenes,
+                self.browser.clone(),
+                global_ocr_client(),
+                self.event_bus.clone(),
+                cmd_rx,
+            );
+            runner.set_running_flag(running.clone());
+            Box::pin(async move { runner.run().await })
+        } else if let Some(script) = {
+            let scripts = resources::load_protocol_scripts().unwrap_or_default();
+            resources::find_protocol_script(&scripts, script_name).cloned()
+        } {
+            let mut runner = protocol_runner::ProtocolRunner::new(
+                self.id.clone(),
+                script,
+                self.browser.clone(),
+                self.event_bus.clone(),
+                self.game_state.clone(),
+                resources::load_protocol_registry(),
+                cmd_rx,
+            );
+            runner.set_running_flag(running.clone());
+            Box::pin(async move { runner.run().await })
+        } else {
+            tracing::error!("Script not found: {}", script_name);
+            return;
+        };
 
         self.script_handle = Some(ScriptHandle {
             cmd_tx,
@@ -674,19 +721,19 @@ impl SessionActor {
         // Publish ScriptStarted event so Coordinator can track the current run_id
         self.event_bus.publish(DomainEvent::ScriptStarted {
             session_id: self.id.clone(),
-            script_name: script.name.clone(),
+            script_name: script_name.to_string(),
             run_id: run_id.clone(),
         });
 
         let session_id = self.id.clone();
-        let script_name_for_spawn = script.name.clone();
-        let script_name_for_log = script.name.clone();
+        let script_name_for_spawn = script_name.to_string();
+        let script_name_for_log = script_name.to_string();
         let event_bus = self.event_bus.clone();
         let run_id_for_event = run_id.clone();
 
-        // Spawn script runner
+        // Spawn the runner
         tokio::spawn(async move {
-            let reason = runner.run().await;
+            let reason = run.await;
             tracing::info!(
                 session_id = %session_id,
                 script = %script_name_for_spawn,

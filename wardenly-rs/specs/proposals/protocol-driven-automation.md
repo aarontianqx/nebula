@@ -1,6 +1,6 @@
 # Proposal: 协议驱动自动化落地方案
 
-> 2026-09-02 ｜ 状态：Phase 1、Phase 2 已实现（登录链路直达 + 协议桥，live 集成测试 `src-tauri/tests/login_chain.rs`、`src-tauri/tests/protocol_bridge.rs`）｜ 前置文档：[protocol-automation-recon.md](protocol-automation-recon.md)（调研事实与验证记录，本文档不再重复）
+> 2026-09-02 ｜ 状态：Phase 1–3 已实现（登录链路直达、协议桥、协议脚本引擎；live 集成测试 `src-tauri/tests/{login_chain,protocol_bridge,protocol_script}.rs`）｜ 前置文档：[protocol-automation-recon.md](protocol-automation-recon.md)（调研事实与验证记录，本文档不再重复）
 
 ## 1. 背景与决策
 
@@ -76,7 +76,7 @@
     3. `evaluate` 读顶层 iframe src（layer2 URL，带 ticket）；
     4. navigate layer2，`evaluate` 读 `#gameIframe.src`（layer3 URL，content 票据短时效，必须现取）；
     5. navigate 直达 layer3；
-    6. 等待 `window.__require` 可用 + `Connection._connected === true` 作为 Ready 判据（替代像素匹配）；
+    6. 等待 `Connection._connected === true` 且桥观测到登录数据推送结束（`S_2_C_CHAR_LOAD_END`）作为 Ready 判据（替代像素匹配；单一 `_connected` 不足以判定服务端已接受业务协议，见 Phase 3 实现纪要）；
   - 用户协议弹窗：保留现有场景识别 + 坐标点击作为兜底（首次登录出现，同意过后不再出现）。这是 Phase 1 中唯一保留像素路径的地方。
 - 状态机不变（`Idle → Starting → LoggingIn → Ready`），仅 Ready 判据改变。
 
@@ -106,6 +106,17 @@
 - `ProtocolRegistry`：从游戏 bundle 提取协议名 → id 映射与字段结构，生成为 Rust 侧资源文件（构建期脚本或一次性生成 + 版本标记）。
 
 验收： 选一个现有日常任务（如邮件一键领取），用纯协议脚本完成，全程无截图识别、无模拟点击。
+
+#### Phase 3 实现纪要（2026-09-02，以代码为准）
+
+- 协议脚本放在独立目录 `resources/protocols/*.yaml`（与场景脚本 schema 不同，不混用）；`start_script` 按名字先查场景脚本、再查协议脚本，两种脚本共用同一套 run_id / ScriptStarted / ScriptStopped 生命周期。
+- DSL 动作原语：`send_protocol` / `wait_protocol` / **`request`（发送+等待+超时重发，首选）** / `wait_state` / `wait` / `click` / `drag`；条件为字段路径比较（`state.S_2_C_X.field op value`，op 含 `exists`）。
+- `GameState` 由桥转发任务单写，按协议名存最新负载；step 级 `conditions` 直接查询。
+- `ProtocolRegistry` 已生成（`resources/protocols/registry.json`，2642 个协议，标注 bundle 版本 `mobile_v614_1334`），用于脚本启动前的协议名校验。
+- 实现中修正了两个方案时未预见的点：
+  1. **Ready 判据不够**：WS 建连早、可能被用户协议弹窗挡住入城，`_connected` 为 true 时服务端仍不处理业务协议。现 Ready 判据 = `_connected` + 桥观测到 `S_2_C_CHAR_LOAD_END`（登录数据推送结束），协议弹窗点击在整个等待窗口内持续重试（自愈）。
+  2. **服务端应答不总是专用协议**：`C_2_S_MAIL_DRAW_ALL_REWARD` 的确认视邮件内容为专用 ack 或通用资源推送 `S_2_C_UPDATE_BENEFIT`，故 `request` 支持 `expect_any` 多应答协议。
+- 验收通过：`tests/protocol_script.rs` live 跑通 `claim_all_mail`（拉列表 → 一键领取），协议交换全程 <1s；登录 + 协议弹窗兜底 + 桥安装全链路 21.9s。
 
 ### Phase 4（后续，另行立项）
 

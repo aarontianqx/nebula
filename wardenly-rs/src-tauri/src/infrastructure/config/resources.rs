@@ -1,10 +1,11 @@
-use crate::domain::model::{Scene, Script};
+use crate::domain::model::{ProtocolScript, Scene, Script};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 
 // Embed the entire scenes and scripts directories at compile time
 static SCENES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/scenes");
 static SCRIPTS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/scripts");
+static PROTOCOLS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/protocols");
 
 /// Wrapper for scene files that use wardenly-go nested format
 /// Format: { category: "...", scenes: [...] }
@@ -126,6 +127,90 @@ pub fn find_scene<'a>(scenes: &'a [Scene], name: &str) -> Option<&'a Scene> {
 /// Find a script by name
 pub fn find_script<'a>(scripts: &'a [Script], name: &str) -> Option<&'a Script> {
     scripts.iter().find(|s| s.name == name)
+}
+
+/// Load all protocol script definitions from embedded resources
+/// Automatically discovers all .yaml files in the protocols directory
+pub fn load_protocol_scripts() -> anyhow::Result<Vec<ProtocolScript>> {
+    let mut scripts = Vec::new();
+
+    for file in PROTOCOLS_DIR.files() {
+        let path = file.path();
+        let extension = path.extension().and_then(|e| e.to_str());
+
+        if !matches!(extension, Some("yaml") | Some("yml")) {
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        match file.contents_utf8() {
+            Some(content) => match serde_yaml::from_str::<ProtocolScript>(content) {
+                Ok(script) => {
+                    tracing::debug!("Loaded protocol script: {}", file_name);
+                    scripts.push(script);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse protocol script {}: {}", file_name, e);
+                }
+            },
+            None => {
+                tracing::error!("Protocol script file {} is not valid UTF-8", file_name);
+            }
+        }
+    }
+
+    tracing::info!("Loaded {} protocol scripts total", scripts.len());
+    Ok(scripts)
+}
+
+/// Find a protocol script by name
+pub fn find_protocol_script<'a>(
+    scripts: &'a [ProtocolScript],
+    name: &str,
+) -> Option<&'a ProtocolScript> {
+    scripts.iter().find(|s| s.name == name)
+}
+
+/// Protocol name → id registry extracted from a game bundle.
+/// Used to validate protocol scripts at load time; the bridge itself resolves
+/// names in-page, so a stale registry only affects validation, not execution.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProtocolRegistry {
+    /// Game bundle version this registry was extracted from
+    pub bundle_version: String,
+    /// Protocol name → numeric id
+    pub protocols: std::collections::HashMap<String, u32>,
+}
+
+impl ProtocolRegistry {
+    pub fn contains(&self, name: &str) -> bool {
+        self.protocols.contains_key(name)
+    }
+}
+
+/// Load the protocol registry (resources/protocols/registry.json).
+/// Returns None when missing or unparsable — validation is then skipped.
+pub fn load_protocol_registry() -> Option<ProtocolRegistry> {
+    let file = PROTOCOLS_DIR.get_file("registry.json")?;
+    let content = file.contents_utf8()?;
+    match serde_json::from_str::<ProtocolRegistry>(content) {
+        Ok(registry) => {
+            tracing::info!(
+                "Loaded protocol registry (bundle {}, {} protocols)",
+                registry.bundle_version,
+                registry.protocols.len()
+            );
+            Some(registry)
+        }
+        Err(e) => {
+            tracing::error!("Failed to parse protocol registry: {}", e);
+            None
+        }
+    }
 }
 
 #[cfg(test)]

@@ -195,7 +195,7 @@ pub struct OcrRegion {
 }
 
 /// Helper module for humantime duration parsing
-mod humantime_serde {
+pub(crate) mod humantime_serde {
     use serde::{de, Deserialize, Deserializer, Serializer};
     use std::time::Duration;
 

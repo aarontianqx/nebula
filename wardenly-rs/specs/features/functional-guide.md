@@ -230,7 +230,7 @@ Wardenly 是一款用于 WLY 网页游戏自动化的桌面控制工具。通过
 2. 检测到登录表单则执行密码登录（缓存的登录态可能跳过此步）
 3. 从页面 DOM 读取区服入口 iframe 地址（layer 2，URL 携带 ticket）并导航
 4. 读取 `#gameIframe.src` 得到游戏页地址（layer 3，content 票据短时效，每次启动现取），直接以顶层页面打开
-5. 等待游戏自身的 `Connection._connected === true`，确认登录成功
+5. 等待游戏自身 `Connection._connected === true` 且桥观测到登录数据推送结束（`S_2_C_CHAR_LOAD_END`），确认登录成功
 
 > 首次登录出现的"用户协议"弹窗是 canvas 绘制、无 DOM 元素，是唯一仍走场景识别 + 坐标点击的环节（同意后不再出现）。
 
@@ -275,6 +275,55 @@ send_protocol(session_id, name = "C_2_S_MAIL_INFO", payload = {})
 `name` 必须是游戏协议注册表中的协议名（`C_2_S_` 开头的上行协议）。对应的下行响应会以 `protocol_message` 事件到达。
 
 > 协议能力仅依赖游戏 bundle 暴露的协议层，不触碰二进制与加解密；游戏版本更新后协议名/id 可能漂移。
+
+## 协议脚本
+
+协议脚本（`resources/protocols/*.yaml`）是用协议原语编写的自动化任务，由 `ProtocolRunner` 线性执行一遍，全程无截图识别、无模拟点击（click/drag 仅作兜底原语）。与场景脚本（scene loop）并存，`start_script` 按名字自动选择执行引擎，两者在脚本列表中并列展示。
+
+### 结构
+
+```yaml
+name: claim_all_mail
+description: 领取全部邮件附件（协议驱动）
+steps:
+  - name: fetch_mail_list
+    actions:
+      - type: request
+        protocol: C_2_S_MAIL_INFO
+        expect: S_2_C_MAILLIST_ID
+        timeout: 10s
+        retries: 3
+
+  - name: draw_all_rewards
+    conditions:
+      - { field: state.S_2_C_MAILLIST_ID.mailNums, op: gt, value: 0 }
+    actions:
+      - type: request
+        protocol: C_2_S_MAIL_DRAW_ALL_REWARD
+        expect_any: [S_2_C_MAIL_DRAW_ALL_REWARD, S_2_C_UPDATE_BENEFIT]
+        timeout: 15s
+```
+
+### 动作原语
+
+| 原语 | 说明 |
+|---|---|
+| `request` | 发送 + 等待响应 + 超时重发（**首选**）。`expect` 单一应答 / `expect_any` 多应答；`retries` 超时重发次数；`conditions` 校验响应字段 |
+| `send_protocol` | 只发不等 |
+| `wait_protocol` | 等待某下行协议（可带字段 `conditions`） |
+| `wait_state` | 等待游戏状态满足 `conditions`（就绪门） |
+| `wait` | 等待时长（`duration: 1s`） |
+| `click` / `drag` | 画面兜底 |
+
+### 条件
+
+- 位置：step 级 `conditions`（不满足则跳过该 step）或 `wait_*` 的 `conditions`。
+- 形式：`{ field, op, value }`；`field` 为点路径，step 条件以 `state.<协议名>.<字段>` 引用结构化游戏状态（GameState 按协议名保存最新下行负载），wait 条件相对于响应负载。
+- `op`：`eq / neq / gt / gte / lt / lte / exists`（`exists` 只要求路径存在，忽略 value）。
+
+### 协议注册表
+
+`resources/protocols/registry.json` 是从游戏 bundle 提取的协议名 → id 映射（标注 bundle 版本），脚本启动前校验所有引用协议名，未知名字直接失败并报错。游戏版本更新后需重新提取（在游戏页执行 `Object.entries(__require('ProtocolBase').Protocol)` 导出）。
 
 ## 场景识别
 
