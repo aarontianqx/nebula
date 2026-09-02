@@ -10,6 +10,28 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
+/// Layer 1: find the iframe pointing at the layer-2 server entry page.
+const JS_FIND_SERVER_ENTRY_IFRAME: &str = r"(() => {
+    const src = Array.from(document.querySelectorAll('iframe'))
+        .map(f => f.src)
+        .find(s => s.includes('.wly.h5.lequ.com/index.php'));
+    return src || null;
+})()";
+
+/// Layer 2: read the game page URL (layer 3, short-lived content ticket).
+const JS_READ_GAME_IFRAME_SRC: &str = r"(() => {
+    const f = document.getElementById('gameIframe');
+    return f && f.src ? f.src : null;
+})()";
+
+/// Layer 3: the game's own Connection singleton reports connected.
+const JS_GAME_CONNECTED: &str = r"(() => {
+    try {
+        if (typeof window.__require !== 'function') return false;
+        return window.__require('Connection').default.get()._connected === true;
+    } catch (e) { return false; }
+})()";
+
 /// Handle to communicate with a SessionActor
 pub struct SessionHandle {
     pub id: String,
@@ -307,63 +329,101 @@ impl SessionActor {
         });
     }
 
-    /// Build the game URL for this account's server
-    fn game_url(&self) -> String {
-        format!(
-            "http://www.lequ.com/server/wly/s/{}",
-            self.account.server_id
-        )
+    /// Build the layer-1 entry URL (account login page) for this account's server.
+    fn entry_url(&self) -> String {
+        let s = &self.account.server_id;
+        format!("http://www.lequ.com/server/wly/s/{}/ish5/{}", s, s)
     }
 
-    /// Perform login using race-based detection.
-    /// Simultaneously waits for login form OR game scenes, handling whichever appears first.
-    /// This gracefully handles cached browser profiles that skip login entirely.
+    /// Evaluate JS that returns a string or null, and extract the string.
+    async fn eval_string(&self, script: &str) -> Option<String> {
+        let raw = self.browser.evaluate(script).await.ok()?;
+        serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()?
+            .as_str()
+            .map(|s| s.to_string())
+    }
+
+    /// Evaluate JS that returns a boolean.
+    async fn eval_bool(&self, script: &str) -> bool {
+        self.browser
+            .evaluate(script)
+            .await
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Perform login by walking the three-layer entry chain with pure DOM operations:
+    ///
+    ///   [1] www.lequ.com login page (fill form, or reuse cached profile)
+    ///   [2] s{server}.wly.h5.lequ.com server entry page (ticket in URL)
+    ///   [3] s1res.lequ.com game page (short-lived content ticket in iframe src)
+    ///
+    /// Layer 3 is opened directly as the top-level page: cross-origin iframes are
+    /// inaccessible to `evaluate`, and the game JS context is required both for the
+    /// ready criterion (`Connection._connected`) and for later protocol driving.
     async fn perform_login(&mut self) -> anyhow::Result<()> {
-        let game_url = self.game_url();
-        let timeout = Duration::from_secs(30);
-        let scene_check_interval = Duration::from_millis(500);
-        let login_form_check_interval = Duration::from_millis(300);
-
-        // Load scenes for detection
         let scenes = resources::load_scenes().unwrap_or_default();
+        let entry_url = self.entry_url();
 
-        // Navigate to game URL first
-        tracing::info!("Navigating to {} for {}", game_url, self.account.identity());
-        self.browser.navigate(&game_url).await?;
+        tracing::info!(
+            "Navigating to {} for {}",
+            entry_url,
+            self.account.identity()
+        );
+        self.browser.navigate(&entry_url).await?;
 
+        // Layer 1 → 2: log in if the form shows up, then read the server-entry
+        // iframe URL from the DOM.
+        let server_entry_url = self
+            .wait_for_server_entry_url(Duration::from_secs(30))
+            .await?;
+
+        // Layer 2 → 3: read the game iframe URL. The content ticket is short-lived
+        // (~5 min), so it must be fetched fresh and used immediately.
+        tracing::info!("Navigating to server entry page");
+        self.browser.navigate(&server_entry_url).await?;
+        let game_page_url = self.wait_for_game_page_url(Duration::from_secs(15)).await?;
+
+        // HTTPS-First upgrades would force this page to https, where the game's
+        // plaintext ws:// is blocked as mixed content. Fail loudly instead of
+        // stalling on the loading screen with no traffic.
+        tracing::info!("Navigating directly to game page");
+        self.browser.navigate(&game_page_url).await?;
+        let protocol = self.eval_string("location.protocol").await;
+        if protocol.as_deref() != Some("http:") {
+            anyhow::bail!(
+                "Game page protocol is {:?}, expected \"http:\" (ws:// would be blocked as mixed content; check --disable-features=HttpsUpgrades)",
+                protocol
+            );
+        }
+
+        self.wait_for_game_connected(&scenes, Duration::from_secs(60))
+            .await
+    }
+
+    /// Wait for the layer-2 server entry URL to appear in a top-level iframe,
+    /// submitting the login form first if it is present.
+    async fn wait_for_server_entry_url(&mut self, timeout: Duration) -> anyhow::Result<String> {
         let start = Instant::now();
         let mut login_attempted = false;
 
-        // Race loop: check for login form OR game scenes
         loop {
             if start.elapsed() > timeout {
-                anyhow::bail!("Login timeout after {:?}", timeout);
+                anyhow::bail!("Timeout waiting for server entry iframe");
             }
 
-            // Check for game scenes first (higher priority - means we're already logged in)
-            if let Some(matched_scene) = self.check_game_scenes(&scenes).await {
-                match matched_scene.name.as_str() {
-                    "user_agreement" => {
-                        tracing::info!("Detected user_agreement scene, clicking Agree");
-                        self.click_scene_action(&matched_scene, "Agree").await?;
-                        // After clicking agree, wait for main_city scene
-                        return self
-                            .wait_for_main_city(&scenes, timeout - start.elapsed())
-                            .await;
-                    }
-                    "main_city" | "main_city_shadow" => {
-                        tracing::info!("Detected {} scene, already logged in", matched_scene.name);
-                        return Ok(());
-                    }
-                    _ => {}
-                }
+            if let Some(url) = self.eval_string(JS_FIND_SERVER_ENTRY_IFRAME).await {
+                tracing::info!("Got server entry URL");
+                return Ok(url);
             }
 
-            // Check for login form (only attempt login once)
             if !login_attempted
                 && self
                     .browser
-                    .wait_visible("#username", login_form_check_interval)
+                    .wait_visible("#username", Duration::from_millis(300))
                     .await
                     .is_ok()
             {
@@ -379,33 +439,60 @@ impl SessionActor {
                     )
                     .await?;
                 login_attempted = true;
-                // After login form submission, continue loop to wait for game scenes
-                continue;
             }
 
-            // Small delay before next check iteration
-            tokio::time::sleep(scene_check_interval).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 
-    /// Check for game scenes that indicate login success.
-    /// Returns the matched scene if found.
-    async fn check_game_scenes(&self, scenes: &[Scene]) -> Option<Scene> {
-        let screen = match self.browser.capture_screen().await {
-            Ok(img) => img,
-            Err(_) => return None,
-        };
+    /// Wait for the layer-2 page to write the game URL into `#gameIframe.src`.
+    async fn wait_for_game_page_url(&self, timeout: Duration) -> anyhow::Result<String> {
+        let start = Instant::now();
 
-        // Check scenes in priority order
-        for scene_name in &["user_agreement", "main_city_shadow", "main_city"] {
-            if let Some(scene) = resources::find_scene(scenes, scene_name) {
-                if scene.matches(&screen) {
-                    return Some(scene.clone());
+        loop {
+            if start.elapsed() > timeout {
+                anyhow::bail!("Timeout waiting for game iframe URL");
+            }
+
+            if let Some(url) = self.eval_string(JS_READ_GAME_IFRAME_SRC).await {
+                return Ok(url);
+            }
+
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
+    /// Wait until the game's own Connection singleton reports connected.
+    /// The first-time user agreement is a canvas dialog with no DOM counterpart;
+    /// it is the one place that still falls back to scene recognition + click.
+    async fn wait_for_game_connected(
+        &mut self,
+        scenes: &[Scene],
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        let start = Instant::now();
+
+        loop {
+            if start.elapsed() > timeout {
+                anyhow::bail!("Timeout waiting for game connection");
+            }
+
+            if self.eval_bool(JS_GAME_CONNECTED).await {
+                tracing::info!("Game connection established, login complete");
+                return Ok(());
+            }
+
+            if let Some(scene) = resources::find_scene(scenes, "user_agreement") {
+                if let Ok(screen) = self.browser.capture_screen().await {
+                    if scene.matches(&screen) {
+                        tracing::info!("Detected user_agreement scene, clicking Agree");
+                        self.click_scene_action(scene, "Agree").await?;
+                    }
                 }
             }
-        }
 
-        None
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 
     /// Click a named action in a scene.
@@ -414,35 +501,6 @@ impl SessionActor {
             self.browser.click(point.x as f64, point.y as f64).await?;
         }
         Ok(())
-    }
-
-    /// Wait for main_city or main_city_shadow scene after user_agreement.
-    async fn wait_for_main_city(&self, scenes: &[Scene], timeout: Duration) -> anyhow::Result<()> {
-        let start = Instant::now();
-        let check_interval = Duration::from_millis(500);
-
-        loop {
-            if start.elapsed() > timeout {
-                anyhow::bail!("Timeout waiting for main_city scene");
-            }
-
-            if let Some(matched) = self.check_game_scenes(scenes).await {
-                match matched.name.as_str() {
-                    "main_city" | "main_city_shadow" => {
-                        tracing::info!("Detected {} scene, game loaded successfully", matched.name);
-                        return Ok(());
-                    }
-                    "user_agreement" => {
-                        // Still on agreement page, click again
-                        tracing::debug!("Still on user_agreement, clicking Agree again");
-                        self.click_scene_action(&matched, "Agree").await?;
-                    }
-                    _ => {}
-                }
-            }
-
-            tokio::time::sleep(check_interval).await;
-        }
     }
 
     async fn transition_to(&mut self, new_state: SessionState) {

@@ -249,6 +249,10 @@ impl BrowserDriver for ChromiumDriver {
             // Disable unnecessary features for headless
             .arg("--hide-scrollbars")
             .arg("--disable-web-security")
+            // Keep http pages on http: Chrome's HTTPS-First upgrade would force the game
+            // page to https, where its plaintext ws:// connection is blocked as mixed
+            // content and the game silently stalls on the loading screen.
+            .arg("--disable-features=HttpsUpgrades")
             .build()
             .map_err(|e| anyhow!("Failed to build browser config: {}", e))?;
 

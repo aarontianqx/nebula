@@ -44,10 +44,10 @@ pub trait BrowserDriver: Send + Sync {
     /// Stop screencast streaming
     async fn stop_screencast(&self) -> anyhow::Result<()>;
 
-    /// Execute JavaScript and return result.
+    /// Execute JavaScript in the top-level page and return the JSON-serialized result.
     ///
-    /// Part of the driver capability surface; not invoked by the current scripts.
-    #[allow(dead_code)]
+    /// Note: this only reaches the top-level page context, never cross-origin iframes;
+    /// callers needing the game JS context must navigate the tab directly to the game URL.
     async fn evaluate(&self, script: &str) -> anyhow::Result<String>;
 
     /// Capture the current screen as an image
