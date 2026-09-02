@@ -15,7 +15,7 @@ struct TransitApp: App {
                     model.start()
                 }
         } label: {
-            MenuBarLabel(status: model.proxyStatus, summary: model.summaries[.today])
+            MenuBarLabel(status: model.proxyStatus)
                 .onAppear {
                     appDelegate.model = model
                     model.start()
@@ -27,15 +27,9 @@ struct TransitApp: App {
 
 private struct MenuBarLabel: View {
     let status: ProxyStatus
-    let summary: UsageSummary?
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-            if let summary, summary.totalTokens > 0 {
-                Text(formatTokens(summary.totalTokens))
-            }
-        }
+        Image(systemName: icon)
     }
 
     private var icon: String {
