@@ -10,6 +10,7 @@ public final class ProxyService: @unchecked Sendable {
     private let eventLoopGroup: MultiThreadedEventLoopGroup
     private let httpClient: HTTPClient
     private let eventPipeline: UsageEventPipeline
+    private let flightRecorder: RequestFlightRecorder?
     private let secretStore: KeychainSecretStore
     private let routeRegistry = RouteRegistry()
     private let childChannels = ChildChannelRegistry()
@@ -24,10 +25,12 @@ public final class ProxyService: @unchecked Sendable {
         eventPipeline: UsageEventPipeline,
         secretStore: KeychainSecretStore = KeychainSecretStore(),
         threadCount: Int? = nil,
+        flightRecorder: RequestFlightRecorder? = nil,
         onStatus: StatusCallback? = nil
     ) {
         self.eventPipeline = eventPipeline
         self.secretStore = secretStore
+        self.flightRecorder = flightRecorder
         self.onStatus = onStatus
         let resolvedThreadCount = threadCount ?? 2
         eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: max(1, resolvedThreadCount))
@@ -221,6 +224,7 @@ public final class ProxyService: @unchecked Sendable {
                         httpClient: self.httpClient,
                         secretStore: self.secretStore,
                         eventPipeline: self.eventPipeline,
+                        flightRecorder: self.flightRecorder,
                         childChannels: self.childChannels,
                         metrics: self
                     ))

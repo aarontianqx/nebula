@@ -2,7 +2,7 @@
 
 > 状态：Implemented（本地验收通过）
 > 首次起草：2026-07-19
-> 本次修订：2026-07-19
+> 本次修订：2026-07-22
 > 适用范围：Transit v1 macOS 菜单栏 App 与 Widget
 
 ## 1. 背景
@@ -105,6 +105,7 @@ v1 不拆分后台 daemon。菜单栏窗口关闭不影响代理，但用户退�
 - 使用 SQLite 保存事件，并按时间、route、agent、protocol、model 聚合。
 - 支持认证透传与显式 credential injection。
 - 通过菜单栏面板与 Widget 展示本机观测到的 usage。
+- 对未完成、卡顿和异常请求提供不含业务正文的 Flight Recorder，区分客户端、Transit 与上游停滞阶段。
 
 ### 4.2 v1 非目标
 
@@ -234,6 +235,8 @@ v1 支持：
 │      ├── RouteSettings ──→ ConfigurationStore ──→ Keychain          │
 │      │                                      │                       │
 │      └── Dashboard ←── UsageQueryService ←──┼── EventStore/SQLite   │
+│              ↑                              │                       │
+│       Flight Recorder ←──── lifecycle events┼── Diagnostics SQLite │
 │                                             │                       │
 │  ProxyService ─→ Router ─→ Upstream HTTP Client                     │
 │      │                        │                                     │
@@ -294,6 +297,7 @@ TransitWidget/               WidgetKit 与 App Intents
 - `ProxyService` 持有专用 `MultiThreadedEventLoopGroup`；
 - `EventStore` 使用 GRDB writer queue，不在 NIO event loop 执行磁盘 I/O；
 - NIO 只将完成的轻量 `UsageEvent` 非阻塞送入有界队列；
+- Flight Recorder 在内存维护在途状态，阶段快照通过独立串行队列写入诊断库，不按 chunk 同步落盘；
 - `UsageViewModel` 位于 `MainActor`，只接收聚合结果和健康状态；
 - App 终止时按 Proxy → event queue → database 顺序优雅关闭。
 
@@ -304,7 +308,7 @@ TransitWidget/               WidgetKit 与 App Intents
 ### 7.1 启动
 
 1. 读取并迁移配置；
-2. 打开数据库并执行 migration；
+2. 分别打开 `usage.sqlite` 与 `diagnostics.sqlite` 并执行 migration；
 3. 校验所有 enabled route；
 4. 启动对应 listener；
 5. 发布代理健康状态；
@@ -334,6 +338,7 @@ validate → stage listeners → atomic persist → runtime commit → close old
 - 存在 enabled route 时退出需要提示 Agent 可能失去连接；
 - 系统关机时尽力 flush，但不阻塞系统退出；
 - App 崩溃后 SQLite WAL 保证已提交事件可恢复，未入队事件允许丢失。
+- 上次运行遗留的 active 诊断快照在重启时转为 stalled，并标记为应用重启中断。
 
 ### 7.4 登录启动
 
@@ -480,7 +485,28 @@ CREATE TABLE usage_events (
 
 金额使用 decimal string 写入，避免浮点误差。索引至少覆盖 time、route+time、agent+model+time。
 
-### 9.2 写入失败策略
+### 9.2 有界请求诊断库
+
+Flight Recorder 使用独立的 `diagnostics.sqlite`，不与正式统计 `usage.sqlite` 混表。每个命中 route 的请求分配随机 request ID，在内存中跟踪以下阶段和时间点：
+
+- 客户端请求开始、请求体活动与请求体结束；
+- 上游请求发起、响应头到达、响应 body 活动和响应结束；
+- SSE 有效 `data:`、comment heartbeat 与未组成完整行的传输片段；
+- 最近一次下游 write-and-flush 完成；
+- completed、failed、cancelled 或超过 60 秒无有效进展的 stalled 状态。
+
+诊断快照只包含 request ID、route ID、协议、method、阶段、时间、字节数、HTTP 状态和受控错误码；不包含 URL、query、headers、credential、请求或响应正文。原始 chunk 只在内存中做最大 8 KiB 的 SSE 行分类，且不会进入 SQLite。
+
+写入规则：
+
+- 主要阶段变化时 UPSERT 同一个 request ID；高频 body 活动最多每 5 秒持久化一次；
+- 正常 completed 后删除快照；failed、cancelled、stalled 保留用于事后诊断；
+- 最多保留 200 条和 7 天，启动及每日执行 prune 与 WAL checkpoint，目标空间约 1 MiB；
+- 诊断写入失败不得影响代理转发或正式 usage 事件。
+
+阶段解释：无响应头通常指向连接或上游；heartbeat 持续但无有效 SSE 指向上游生成停滞；上游活动时间领先下游 flush 指向 Transit/客户端背压；上游与下游均已完成但 Agent 不继续，问题位于 Agent 后续循环。
+
+### 9.3 写入失败策略
 
 - 数据面只进行非阻塞 enqueue；
 - queue 满或 SQLite 不可写时，请求仍正常转发；
@@ -489,7 +515,7 @@ CREATE TABLE usage_events (
 - 不为保留统计而无限增加内存；
 - event queue 容量由内置安全默认值控制，不接受无上限配置。
 
-### 9.3 聚合查询
+### 9.4 聚合查询
 
 支持以下维度：
 
@@ -517,7 +543,7 @@ CREATE TABLE usage_events (
 1. **Overview**：一小时/今日/七天的 input、output、cache、reasoning；
 2. **Breakdown**：按 Agent、route、protocol、model 查看；
 3. **Routes**：创建、编辑、启停 route，复制本地 base URL；
-4. **Diagnostics**：端口冲突、上游错误、usage missing、丢事件数、SQLite 状态；
+4. **Diagnostics**：端口冲突、上游错误、usage missing、丢事件数、SQLite 状态，以及活跃、卡顿和最近异常请求的 Flight Recorder；
 5. **Settings**：登录启动、数据保留、Widget 指标、Keychain secret。
 
 界面不出现固定来源标签。名称、颜色和顺序来自用户配置；没有 usage 的 route 仍显示请求数、状态与延迟。
@@ -618,6 +644,7 @@ App 暴露以下正交状态：
 - usage quality：reported / missing；
 - storage：healthy / degraded / unavailable；
 - widget snapshot：fresh / partial / stale。
+- request diagnostic：active / stalled / failed / cancelled。
 
 一次 HTTP 200 可以 `usage_quality=missing`；一次 cancelled 请求也可能已经收到完整 usage。UI 不把它们融合成含糊的单一“成功”状态。
 
@@ -631,6 +658,8 @@ App 暴露以下正交状态：
 - SQLite writer 状态；
 - 最近一次配置应用结果；
 - 显式 upstream 连接测试。
+- 活跃或异常请求当前阶段、最近 SSE 活动类型、上下行字节数和时间；
+- 正常完成请求不留诊断历史，避免把正式统计复制到临时诊断库。
 
 ## 15. 测试策略与验收
 
@@ -662,6 +691,7 @@ fixture 只使用虚构 host、model 和 token，不包含真实来源。
 - prefix 最长匹配遵守 segment 边界；
 - pass-through 与 credential injection 不串 route；
 - 日志和数据库不存在正文或明文 credential。
+- Flight Recorder 能区分 split SSE data、heartbeat 和普通 body；正常完成删除快照，stalled/failed/cancelled 有界保留。
 
 ### 15.3 App 与 Widget
 
@@ -709,3 +739,4 @@ Developer ID 签名、notarization、安装包和发布渠道验证属于 v1.0 �
 5. 菜单栏窗口关闭不停止代理；退出 App 会停止代理，这是明确的产品约束。
 6. Widget 只读 App Group 派生快照，不联网、不读数据库、不管理代理。
 7. managed OAuth 不通过 MITM 强行覆盖；不能自定义 base URL 的流量明确不可观测。
+8. 请求 Flight Recorder 采用内存状态与独立有界 SQLite 快照，不记录正文，也不依赖任何真实 Agent 或来源。
