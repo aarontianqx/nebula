@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 use crate::application::eventbus::SharedEventBus;
-use crate::application::service::condition_eval;
+use crate::application::service::{condition_eval, humanize};
 use crate::domain::event::DomainEvent;
 use crate::domain::model::{
     Action, ExprContext, OcrAction, OcrMode, OcrRule, Point, Scene, SceneMatcher, Script,
@@ -273,6 +273,9 @@ impl ScriptRunner {
         state_rule: Option<&StateRule>,
         scene_name: &str,
     ) -> StepResult {
+        // Humanization: randomized pre-action pacing (uniform for all scripts).
+        humanize::pace().await;
+
         match action {
             Action::Click { points } => {
                 if let Some(point) = points.first() {
@@ -439,6 +442,9 @@ impl ScriptRunner {
 
     /// Execute a single action without Loop support (used inside loops to avoid recursion)
     async fn execute_action_non_recursive(&mut self, action: &Action) -> StepResult {
+        // Humanization: randomized pre-action pacing (uniform for all scripts).
+        humanize::pace().await;
+
         match action {
             Action::Click { points } => {
                 if let Some(point) = points.first() {

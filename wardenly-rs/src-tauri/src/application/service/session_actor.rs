@@ -514,7 +514,40 @@ impl SessionActor {
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
         tracing::info!("Page bridge installed");
+
+        // Viewport self-check: all scene/script coordinates are absolute in the
+        // 1080x720 drawing area. If the actual page size ever drifts (browser or
+        // flag changes), clicks would silently land wrong — surface it loudly.
+        self.check_viewport().await;
         Ok(())
+    }
+
+    /// Log a warning if the game page's drawing area is not the expected
+    /// 1080x720 (read-only diagnostic).
+    async fn check_viewport(&self) {
+        const JS: &str = r"JSON.stringify({
+            w: window.innerWidth,
+            h: window.innerHeight,
+            cw: document.getElementById('GameCanvas') ? document.getElementById('GameCanvas').width : null,
+            ch: document.getElementById('GameCanvas') ? document.getElementById('GameCanvas').height : null,
+        })";
+        let Some(raw) = self.eval_string(JS).await else {
+            return;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return;
+        };
+        let get = |key: &str| v.get(key).and_then(|x| x.as_i64());
+        let (w, h, cw, ch) = (get("w"), get("h"), get("cw"), get("ch"));
+        if w != Some(1080) || h != Some(720) {
+            tracing::warn!(
+                "Viewport is {:?}x{:?} (canvas {:?}x{:?}), expected 1080x720 — scene/script coordinates may be off",
+                w,
+                h,
+                cw,
+                ch
+            );
+        }
     }
 
     /// Wait for the layer-2 server entry URL to appear in a top-level iframe,

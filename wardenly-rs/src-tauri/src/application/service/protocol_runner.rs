@@ -6,6 +6,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::sleep;
 
 use super::condition_eval;
+use super::humanize;
 use super::script_runner::{ScriptCommand, StopReason};
 use crate::application::eventbus::SharedEventBus;
 use crate::domain::event::DomainEvent;
@@ -214,6 +215,9 @@ impl ProtocolRunner {
             if self.stop_requested() {
                 return Err(StopReason::Manual);
             }
+
+            // Humanization: randomized pre-action pacing (uniform for all scripts).
+            humanize::pace().await;
 
             match action {
                 ProtocolAction::SendProtocol { protocol, payload } => {

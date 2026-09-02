@@ -481,8 +481,8 @@ impl Coordinator {
         futures::future::join_all(futures).await;
     }
 
-    /// Start scripts on all eligible sessions with 1-second staggered delay.
-    /// Skips sessions that already have a running script (no delay consumed).
+    /// Start scripts on all eligible sessions with a randomized staggered delay
+    /// (0.5–2.0s). Skips sessions that already have a running script (no delay consumed).
     pub async fn start_all_scripts_staggered(&self, session_scripts: HashMap<String, String>) {
         let sessions = self.sessions.read().await;
 
@@ -517,7 +517,9 @@ impl Coordinator {
                     );
                 }
                 if i < targets.len() - 1 {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    // Humanization: randomized stagger instead of a fixed cadence.
+                    tokio::time::sleep(crate::application::service::humanize::stagger_interval())
+                        .await;
                 }
             }
             tracing::info!("Staggered script start complete");

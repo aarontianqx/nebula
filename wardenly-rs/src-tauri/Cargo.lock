@@ -6293,6 +6293,7 @@ dependencies = [
  "image",
  "include_dir",
  "mongodb",
+ "rand 0.8.5",
  "reqwest",
  "rfd 0.16.0",
  "rusqlite",

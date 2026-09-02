@@ -51,6 +51,22 @@ where
     }
 }
 
+/// Humanization: random coordinate offset within ±2px (hand tremor), so
+/// synthetic clicks don't land on exact integers every time. Button hit areas
+/// are far larger than this, so it never changes click semantics.
+fn jitter_point(x: f64, y: f64) -> (f64, f64) {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (x + rng.gen_range(-2.0..=2.0), y + rng.gen_range(-2.0..=2.0))
+}
+
+/// Humanization: randomized mouse-down → up hold time (30–90ms), so presses
+/// don't fire at zero duration at machine cadence.
+fn human_hold() -> Duration {
+    use rand::Rng;
+    Duration::from_millis(rand::thread_rng().gen_range(30..=90))
+}
+
 /// Chromium browser driver using chromiumoxide.
 ///
 /// Resilience design (see specs/proposals/popup-resilience.md):
@@ -388,6 +404,9 @@ impl BrowserDriver for ChromiumDriver {
         let page = self.page().await?;
         let _input = self.input_lock.lock().await;
 
+        // Humanization: jitter the target and randomize the hold time.
+        let (x, y) = jitter_point(x, y);
+
         // Move mouse
         let move_params = DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, x, y);
         with_timeout(CDP_TIMEOUT, "mouse move", page.execute(move_params)).await?;
@@ -398,6 +417,8 @@ impl BrowserDriver for ChromiumDriver {
         down_params.button = Some(MouseButton::Left);
         down_params.click_count = Some(1);
         with_timeout(CDP_TIMEOUT, "mouse down", page.execute(down_params)).await?;
+
+        sleep(human_hold()).await;
 
         // Mouse up
         let mut up_params =
@@ -418,6 +439,10 @@ impl BrowserDriver for ChromiumDriver {
         let page = self.page().await?;
         let _input = self.input_lock.lock().await;
 
+        // Humanization: jitter both endpoints.
+        let from = jitter_point(from.0, from.1);
+        let to = jitter_point(to.0, to.1);
+
         // Move to start position
         let move_params =
             DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, from.0, from.1);
@@ -429,6 +454,8 @@ impl BrowserDriver for ChromiumDriver {
         down_params.button = Some(MouseButton::Left);
         down_params.click_count = Some(1);
         with_timeout(CDP_TIMEOUT, "drag down", page.execute(down_params)).await?;
+
+        sleep(human_hold()).await;
 
         // Interpolate movement in steps for smooth, realistic dragging
         let delta_x = (to.0 - from.0) / INTERPOLATION_STEPS as f64;
@@ -474,18 +501,27 @@ impl BrowserDriver for ChromiumDriver {
         let _input = self.input_lock.lock().await;
 
         let start = &points[0];
+        let start_pos = jitter_point(start.x, start.y);
 
         // Move to start position
-        let move_params =
-            DispatchMouseEventParams::new(DispatchMouseEventType::MouseMoved, start.x, start.y);
+        let move_params = DispatchMouseEventParams::new(
+            DispatchMouseEventType::MouseMoved,
+            start_pos.0,
+            start_pos.1,
+        );
         with_timeout(CDP_TIMEOUT, "drag_path move", page.execute(move_params)).await?;
 
         // Mouse down at start
-        let mut down_params =
-            DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, start.x, start.y);
+        let mut down_params = DispatchMouseEventParams::new(
+            DispatchMouseEventType::MousePressed,
+            start_pos.0,
+            start_pos.1,
+        );
         down_params.button = Some(MouseButton::Left);
         down_params.click_count = Some(1);
         with_timeout(CDP_TIMEOUT, "drag_path down", page.execute(down_params)).await?;
+
+        sleep(human_hold()).await;
 
         // Move through all intermediate points with frame-based timing
         for point in points.iter().skip(1) {
