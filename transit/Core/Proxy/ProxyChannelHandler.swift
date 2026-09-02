@@ -18,6 +18,7 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     private let httpClient: HTTPClient
     private let secretStore: KeychainSecretStore
     private let eventPipeline: UsageEventPipeline
+    private let flightRecorder: RequestFlightRecorder?
     private let childChannels: ChildChannelRegistry
     private weak var metrics: (any ProxyChannelMetrics)?
     private var current: RequestContext?
@@ -30,6 +31,7 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
         httpClient: HTTPClient,
         secretStore: KeychainSecretStore,
         eventPipeline: UsageEventPipeline,
+        flightRecorder: RequestFlightRecorder?,
         childChannels: ChildChannelRegistry,
         metrics: any ProxyChannelMetrics
     ) {
@@ -38,6 +40,7 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
         self.httpClient = httpClient
         self.secretStore = secretStore
         self.eventPipeline = eventPipeline
+        self.flightRecorder = flightRecorder
         self.childChannels = childChannels
         self.metrics = metrics
     }
@@ -89,10 +92,17 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
             delegate: delegate
         )
         let observer = UsageObserverFactory.make(protocolType: match.route.protocolType)
+        let diagnosticID = flightRecorder?.start(
+            routeID: match.route.id,
+            protocolType: match.route.protocolType,
+            method: head.method.rawValue
+        )
         let requestContext = RequestContext(
             head: head,
             match: match,
             observer: observer,
+            flightRecorder: flightRecorder,
+            diagnosticID: diagnosticID,
             bodySource: stream.source,
             bodySequence: stream.sequence
         )
@@ -112,7 +122,8 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
 
     private func handleBody(_ body: ByteBuffer, context: ChannelHandlerContext) {
         guard !discardingRequest, let current else { return }
-        current.addRequestBytes(Int64(body.readableBytes))
+        let requestBytes = current.addRequestBytes(Int64(body.readableBytes))
+        current.recordClientBodyActivity(requestBytes: requestBytes)
         current.observeRequest(
             contentType: current.head.headers.first(name: "content-type"),
             bytes: body
@@ -137,6 +148,7 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
         }
         current?.bodySource.finish()
         current?.markRequestEnded()
+        current?.recordClientBodyCompleted()
     }
 
     private func execute(_ requestContext: RequestContext, clientChannel: Channel) async {
@@ -148,6 +160,7 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
             try Task.checkCancellation()
             let built = try buildRequest(requestContext, clientEventLoop: clientChannel.eventLoop)
             requestContext.setKeyFingerprint(built.fingerprint)
+            requestContext.recordUpstreamStarted()
             let upstreamTask = httpClient.execute(
                 request: built.request,
                 delegate: delegate
@@ -155,6 +168,7 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
             requestContext.setUpstreamTask(upstreamTask)
             try Task.checkCancellation()
             try await upstreamTask.get()
+            requestContext.recordUpstreamCompleted()
             try await clientChannel.writeAndFlush(HTTPServerResponsePart.end(nil)).get()
             await requestContext.waitForRequestEnd()
             let outcome: RequestOutcome = (delegate.statusCode ?? 0) >= 400 ? .failed : .completed
@@ -296,6 +310,10 @@ final class ProxyChannelHandler: ChannelInboundHandler, @unchecked Sendable {
             errorCode: errorCode ?? observation.parserErrorCode
         )
         eventPipeline.submit(event)
+        context.recordFinished(
+            state: outcome == .completed ? .completed : (outcome == .cancelled ? .cancelled : .failed),
+            errorCode: errorCode ?? observation.parserErrorCode
+        )
         metrics?.requestFinished(observation: observation, error: error?.localizedDescription)
     }
 
@@ -362,6 +380,7 @@ private final class ProxyResponseDelegate: HTTPClientResponseDelegate, @unchecke
     private var responseContentType: String?
     private var storedStatusCode: Int?
     private var storedSentResponseHead = false
+    private var activityClassifier = SSEActivityClassifier()
 
     init(requestContext: RequestContext, clientChannel: Channel) {
         self.requestContext = requestContext
@@ -386,6 +405,7 @@ private final class ProxyResponseDelegate: HTTPClientResponseDelegate, @unchecke
             responseContentType = head.headers.first(name: "content-type")
         }
         requestContext.setStatusCode(Int(head.status.code))
+        requestContext.recordResponseHead(statusCode: Int(head.status.code))
         let responseHead = HTTPResponseHead(
             version: .http1_1,
             status: head.status,
@@ -398,12 +418,20 @@ private final class ProxyResponseDelegate: HTTPClientResponseDelegate, @unchecke
         task: HTTPClient.Task<Void>,
         _ buffer: ByteBuffer
     ) -> EventLoopFuture<Void> {
-        requestContext.addResponseBytes(Int64(buffer.readableBytes))
+        let responseBytes = requestContext.addResponseBytes(Int64(buffer.readableBytes))
         requestContext.observeResponse(
             contentType: lock.withLock { responseContentType },
             bytes: buffer
         )
-        return clientChannel.writeAndFlush(HTTPServerResponsePart.body(.byteBuffer(buffer)))
+        let activity = lock.withLock {
+            activityClassifier.classify(contentType: responseContentType, bytes: buffer)
+        }
+        requestContext.recordUpstreamActivity(kind: activity, responseBytes: responseBytes)
+        let future = clientChannel.writeAndFlush(HTTPServerResponsePart.body(.byteBuffer(buffer)))
+        future.whenSuccess { [requestContext] in
+            requestContext.recordDownstreamWriteCompleted(meaningful: activity.isMeaningful)
+        }
+        return future
     }
 
     func didFinishRequest(task: HTTPClient.Task<Void>) throws {}
@@ -413,6 +441,8 @@ private final class RequestContext: @unchecked Sendable {
     let head: HTTPRequestHead
     let match: RouteMatch
     let observer: UsageProtocolObserver
+    private let flightRecorder: RequestFlightRecorder?
+    private let diagnosticID: String?
     let bodySource: RequestBodySequence.Source
     let bodySequence: RequestBodySequence
     let startedAt = Date()
@@ -432,12 +462,16 @@ private final class RequestContext: @unchecked Sendable {
         head: HTTPRequestHead,
         match: RouteMatch,
         observer: UsageProtocolObserver,
+        flightRecorder: RequestFlightRecorder?,
+        diagnosticID: String?,
         bodySource: RequestBodySequence.Source,
         bodySequence: RequestBodySequence
     ) {
         self.head = head
         self.match = match
         self.observer = observer
+        self.flightRecorder = flightRecorder
+        self.diagnosticID = diagnosticID
         self.bodySource = bodySource
         self.bodySequence = bodySequence
     }
@@ -476,16 +510,22 @@ private final class RequestContext: @unchecked Sendable {
         }
     }
 
-    func addRequestBytes(_ count: Int64) {
+    @discardableResult
+    func addRequestBytes(_ count: Int64) -> Int64 {
         stateLock.lock()
         requestBytes += count
+        let total = requestBytes
         stateLock.unlock()
+        return total
     }
 
-    func addResponseBytes(_ count: Int64) {
+    @discardableResult
+    func addResponseBytes(_ count: Int64) -> Int64 {
         stateLock.lock()
         responseBytes += count
+        let total = responseBytes
         stateLock.unlock()
+        return total
     }
 
     func setStatusCode(_ value: Int?) {
@@ -498,6 +538,47 @@ private final class RequestContext: @unchecked Sendable {
         stateLock.lock()
         keyFingerprint = value
         stateLock.unlock()
+    }
+
+    func recordClientBodyCompleted() {
+        guard let diagnosticID else { return }
+        let bytes = stateLock.withLock { requestBytes }
+        flightRecorder?.clientBodyCompleted(id: diagnosticID, requestBytes: bytes)
+    }
+
+    func recordClientBodyActivity(requestBytes: Int64) {
+        guard let diagnosticID else { return }
+        flightRecorder?.clientBodyActivity(id: diagnosticID, requestBytes: requestBytes)
+    }
+
+    func recordUpstreamStarted() {
+        guard let diagnosticID else { return }
+        flightRecorder?.upstreamStarted(id: diagnosticID)
+    }
+
+    func recordResponseHead(statusCode: Int) {
+        guard let diagnosticID else { return }
+        flightRecorder?.responseHead(id: diagnosticID, statusCode: statusCode)
+    }
+
+    func recordUpstreamActivity(kind: ResponseActivityKind, responseBytes: Int64) {
+        guard let diagnosticID else { return }
+        flightRecorder?.upstreamActivity(id: diagnosticID, kind: kind, responseBytes: responseBytes)
+    }
+
+    func recordDownstreamWriteCompleted(meaningful: Bool) {
+        guard let diagnosticID else { return }
+        flightRecorder?.downstreamWriteCompleted(id: diagnosticID, meaningful: meaningful)
+    }
+
+    func recordUpstreamCompleted() {
+        guard let diagnosticID else { return }
+        flightRecorder?.upstreamCompleted(id: diagnosticID)
+    }
+
+    func recordFinished(state: RequestDiagnosticState, errorCode: String?) {
+        guard let diagnosticID else { return }
+        flightRecorder?.finish(id: diagnosticID, state: state, errorCode: errorCode)
     }
 
     func setUpstreamTask(_ task: HTTPClient.Task<Void>) {

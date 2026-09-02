@@ -6,6 +6,34 @@ import XCTest
 @testable import TransitCore
 
 final class ProxyIntegrationTests: XCTestCase {
+    func testCompletedProxyRequestClearsFlightRecorder() async throws {
+        let upstream = try await FixtureUpstream.start()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let eventStore = try EventStore(databaseURL: directory.appendingPathComponent("usage.sqlite"))
+        let diagnosticsStore = try RequestDiagnosticsStore(
+            databaseURL: directory.appendingPathComponent("diagnostics.sqlite")
+        )
+        let recorder = RequestFlightRecorder(store: diagnosticsStore, stallThreshold: 60)
+        let pipeline = UsageEventPipeline(store: eventStore)
+        let proxy = ProxyService(eventPipeline: pipeline, threadCount: 1, flightRecorder: recorder)
+        addTeardownBlock {
+            try? await proxy.shutdown()
+            pipeline.shutdown()
+            try? eventStore.close()
+            recorder.close()
+            try? await upstream.shutdown()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let proxyPort = try await bindProxy(proxy, upstreamPort: upstream.port, authentication: .init())
+
+        let (_, response) = try await URLSession.shared.data(for: makeRequest(port: proxyPort))
+        recorder.flush()
+
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        XCTAssertTrue(recorder.snapshots().isEmpty)
+    }
+
     func testStreamsThroughProxyAndPersistsUsage() async throws {
         let upstream = try await FixtureUpstream.start()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

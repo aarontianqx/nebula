@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var statusDistribution: [HTTPStatusSummary] = []
     @Published private(set) var breakdown: [UsageBreakdownItem] = []
     @Published private(set) var recentEvents: [UsageEvent] = []
+    @Published private(set) var requestDiagnostics: [RequestDiagnosticSnapshot] = []
+    @Published private(set) var diagnosticsStorageError: String?
     @Published private(set) var configurationIssues: [ConfigurationIssue] = []
     @Published private(set) var lastError: String?
     @Published private(set) var routeTestResults: [String: String] = [:]
@@ -37,10 +39,12 @@ final class AppModel: ObservableObject {
     private let configurationStore = ConfigurationStore()
     private let secretStore = KeychainSecretStore()
     private var eventStore: EventStore?
+    private var flightRecorder: RequestFlightRecorder?
     private var pipeline: UsageEventPipeline?
     private var proxyService: ProxyService?
     private var heartbeatTask: Task<Void, Never>?
     private var scheduledRefreshTask: Task<Void, Never>?
+    private var scheduledDiagnosticsRefreshTask: Task<Void, Never>?
     private var dataRefreshPending = false
     private var lastPruneDay: Date?
     private var modelsByPeriod: [WidgetPeriod: [ModelUsageSummary]] = [:]
@@ -77,7 +81,19 @@ final class AppModel: ObservableObject {
             }
         }
         pipeline = createdPipeline
-        proxyService = ProxyService(eventPipeline: createdPipeline) { status in
+        do {
+            let diagnosticsStore = try RequestDiagnosticsStore()
+            flightRecorder = RequestFlightRecorder(store: diagnosticsStore) {
+                refreshRelay.requestDiagnosticsRefresh()
+            }
+        } catch {
+            let message = "诊断数据库不可用：\(error.localizedDescription)"
+            initializationErrors.append(message)
+        }
+        proxyService = ProxyService(
+            eventPipeline: createdPipeline,
+            flightRecorder: flightRecorder
+        ) { status in
             refreshRelay.publish(status: status)
         }
         refreshSecretReferences()
@@ -90,6 +106,8 @@ final class AppModel: ObservableObject {
                     self.scheduleDataRefresh()
                 case .proxyStatus(let status):
                     self.updateProxyStatus(status)
+                case .diagnosticsChanged:
+                    self.scheduleDiagnosticsRefresh()
                 }
             }
         }
@@ -98,6 +116,7 @@ final class AppModel: ObservableObject {
     deinit {
         heartbeatTask?.cancel()
         scheduledRefreshTask?.cancel()
+        scheduledDiagnosticsRefreshTask?.cancel()
     }
 
     func start() {
@@ -110,6 +129,7 @@ final class AppModel: ObservableObject {
         Task {
             await applyRunnableConfiguration()
             await refresh()
+            await refreshDiagnostics()
         }
         heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -338,12 +358,15 @@ final class AppModel: ObservableObject {
         heartbeatTask = nil
         scheduledRefreshTask?.cancel()
         scheduledRefreshTask = nil
+        scheduledDiagnosticsRefreshTask?.cancel()
+        scheduledDiagnosticsRefreshTask = nil
         dataRefreshPending = false
         await heartbeat?.value
         try? await proxyService?.shutdown(gracePeriod: gracePeriod)
         pipeline?.shutdown()
         try? eventStore?.checkpoint()
         try? eventStore?.close()
+        flightRecorder?.close()
     }
 
     private func scheduleDataRefresh() {
@@ -372,10 +395,35 @@ final class AppModel: ObservableObject {
         if dataRefreshPending { scheduleDataRefresh() }
     }
 
+    private func scheduleDiagnosticsRefresh() {
+        guard scheduledDiagnosticsRefreshTask == nil else { return }
+        scheduledDiagnosticsRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.scheduledDiagnosticsRefreshTask = nil
+            await self.refreshDiagnostics()
+        }
+    }
+
+    private func refreshDiagnostics() async {
+        guard let flightRecorder else { return }
+        let snapshots = await Task.detached(priority: .utility) {
+            flightRecorder.snapshots()
+        }.value
+        if requestDiagnostics != snapshots { requestDiagnostics = snapshots }
+        let storageError = flightRecorder.storageError()
+        if diagnosticsStorageError != storageError { diagnosticsStorageError = storageError }
+    }
+
     private func heartbeat() async {
         updateOperationalStatus()
         let previousPruneDay = lastPruneDay
         await pruneIfNeeded(force: false)
+        flightRecorder?.runMaintenance()
         if previousPruneDay != lastPruneDay {
             await refresh()
         } else {
@@ -519,6 +567,7 @@ private final class AppRefreshRelay: @unchecked Sendable {
     enum Signal: Sendable {
         case dataPersisted
         case proxyStatus(ProxyStatus)
+        case diagnosticsChanged
     }
 
     typealias Handler = @Sendable (Signal) -> Void
@@ -536,6 +585,10 @@ private final class AppRefreshRelay: @unchecked Sendable {
 
     func publish(status: ProxyStatus) {
         send(.proxyStatus(status))
+    }
+
+    func requestDiagnosticsRefresh() {
+        send(.diagnosticsChanged)
     }
 
     private func send(_ signal: Signal) {

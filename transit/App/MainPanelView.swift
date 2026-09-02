@@ -294,6 +294,7 @@ private struct DiagnosticsView: View {
                         diagnosticRow("队列中", "\(model.pipelineStatus.queued)")
                         diagnosticRow("丢弃事件", "\(model.pipelineStatus.dropped)")
                         diagnosticRow("存储状态", model.storageHealthText)
+                        diagnosticRow("诊断存储", model.diagnosticsStorageError == nil ? "健康" : "异常")
                         diagnosticRow("Widget 快照", model.widgetSnapshotHealthText)
                     }
                     .padding(.vertical, 4)
@@ -307,6 +308,41 @@ private struct DiagnosticsView: View {
                         diagnosticRow("配置应用", model.lastConfigurationResult)
                     }
                     .padding(.vertical, 4)
+                }
+                GroupBox("请求 Flight Recorder") {
+                    if model.requestDiagnostics.isEmpty {
+                        Text("没有活跃或异常请求")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(spacing: 9) {
+                            ForEach(model.requestDiagnostics.prefix(20)) { item in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Image(systemName: diagnosticIcon(item.state))
+                                            .foregroundStyle(diagnosticColor(item.state))
+                                        Text(item.routeID).lineLimit(1)
+                                        Text(item.protocolType.displayName)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(item.state.displayName)
+                                    }
+                                    HStack {
+                                        Text(item.phase.displayName)
+                                        if let activity = item.lastResponseActivity {
+                                            Text("· \(activity.displayName)")
+                                        }
+                                        Spacer()
+                                        if let status = item.statusCode { Text("HTTP \(status)") }
+                                        Text("↑\(formatBytes(item.requestBytes)) ↓\(formatBytes(item.responseBytes))")
+                                        Text(item.updatedAt, style: .time)
+                                    }
+                                    .foregroundStyle(.secondary)
+                                }
+                                .font(.caption)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
                 GroupBox("HTTP 状态分布") {
                     if model.statusDistribution.isEmpty {
@@ -355,6 +391,14 @@ private struct DiagnosticsView: View {
                             .padding(.vertical, 4)
                     }
                 }
+                if let diagnosticsError = model.diagnosticsStorageError {
+                    GroupBox("诊断存储") {
+                        Label(diagnosticsError, systemImage: "externaldrive.badge.exclamationmark")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.vertical, 4)
+                    }
+                }
                 if let widgetError = model.widgetSnapshotError {
                     GroupBox("Widget") {
                         Label(widgetError, systemImage: "rectangle.badge.exclamationmark")
@@ -394,6 +438,26 @@ private struct DiagnosticsView: View {
             Text(value).monospacedDigit()
         }
     }
+
+    private func diagnosticIcon(_ state: RequestDiagnosticState) -> String {
+        switch state {
+        case .active: "arrow.triangle.2.circlepath"
+        case .stalled: "exclamationmark.triangle.fill"
+        case .completed: "checkmark.circle"
+        case .failed: "xmark.circle.fill"
+        case .cancelled: "slash.circle"
+        }
+    }
+
+    private func diagnosticColor(_ state: RequestDiagnosticState) -> Color {
+        switch state {
+        case .active: .blue
+        case .stalled: .orange
+        case .completed: .green
+        case .failed: .red
+        case .cancelled: .secondary
+        }
+    }
 }
 
 func formatTokens(_ value: Int64) -> String {
@@ -406,4 +470,8 @@ func formatTokens(_ value: Int64) -> String {
 
 private func formatLatency(_ value: Double) -> String {
     value >= 1_000 ? String(format: "%.1fs", value / 1_000) : "\(Int(value.rounded()))ms"
+}
+
+private func formatBytes(_ value: Int64) -> String {
+    value >= 1_024 ? String(format: "%.1fKB", Double(value) / 1_024) : "\(value)B"
 }
