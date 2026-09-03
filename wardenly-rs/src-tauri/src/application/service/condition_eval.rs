@@ -75,6 +75,16 @@ async fn resolve_expected(
 }
 
 /// Resolve a `state.`/`role.` path to a concrete JSON value.
+/// Also exposed to the task runner for LogState observability.
+pub(crate) async fn resolve_path_pub(
+    path: &str,
+    game_state: &SharedGameState,
+    browser: &Arc<dyn BrowserDriver>,
+) -> Option<Value> {
+    resolve_path(path, game_state, browser).await
+}
+
+/// Resolve a `state.`/`role.` path to a concrete JSON value.
 async fn resolve_path(
     path: &str,
     game_state: &SharedGameState,

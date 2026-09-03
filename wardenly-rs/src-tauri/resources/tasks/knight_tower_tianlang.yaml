@@ -26,6 +26,8 @@ steps:
           expect: S_2_C_KNIGHT_TOWER_TEAM_NUM,
           timeout: 10s,
           retries: 2 }
+      # 观测：每次刷新后打印今日次数（ident/num 是 finish 判定的输入）
+      - { type: log_state, paths: ["role._knightTower._teamNumInfo"] }
 
   # 无队且存在白名单服务器（888/11014/11020）的队伍 → 加入人最多的那支
   - name: join_team
@@ -74,6 +76,8 @@ steps:
         - { field: role._knightTower._isBattle, op: eq, value: true }
         - { field: role._knightTower._fightNum, op: lt, value: 3 }
     actions:
+      # 观测：战斗标志位（isBattle 未复位是"打尸体"的直接证据）
+      - { type: log_state, paths: ["role._knightTower._isBattle", "role._knightTower._fightNum", "role._militaryOrder"] }
       - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_TEAM_PLAYER_MOVE, payload: { channel: 1 } }
       # 等待"攻击命中或战斗结算"——结算也是本轮攻击的答案，boss 一死立即进入下一轮，
       # 避免在战斗结束窗口空等重试（曾造成 10~30s 入队延迟）

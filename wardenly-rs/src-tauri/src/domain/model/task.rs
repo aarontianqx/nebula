@@ -199,6 +199,10 @@ pub enum TaskAction {
     /// Evaluate arbitrary JS in the game page (escape hatch, last resort —
     /// e.g. calling a client function like enterKnightTower())
     EvalJs { script: String },
+
+    /// Log the current value of state./role. paths at INFO level.
+    /// Template-driven observability for diagnosing live behavior.
+    LogState { paths: Vec<String> },
 }
 
 fn default_infinite() -> i32 {

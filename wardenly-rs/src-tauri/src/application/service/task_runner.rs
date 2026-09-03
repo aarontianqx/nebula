@@ -486,6 +486,26 @@ impl TaskRunner {
                         }
                     }
                 }
+                TaskAction::LogState { paths } => {
+                    for path in paths {
+                        // Best-effort observability: unresolved paths log as such
+                        // (that fact is itself diagnostic).
+                        match condition_eval::resolve_path_pub(
+                            path,
+                            &self.game_state,
+                            &self.browser,
+                        )
+                        .await
+                        {
+                            Some(value) => {
+                                tracing::info!(step = %step_name, "state {} = {}", path, value)
+                            }
+                            None => {
+                                tracing::info!(step = %step_name, "state {} = <unresolved>", path)
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(())
