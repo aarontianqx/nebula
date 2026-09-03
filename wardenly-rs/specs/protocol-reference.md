@@ -139,6 +139,8 @@
 6. C_2_S_TEAM_PLAYER_MOVE {channel:1} 先移入 channel（**必须**，否则攻击静默无效且照样扣军令）
 7. C_2_S_TEAM_ATTACK {}                       → S_2_C_PLAYER_ATTACK（自己名字）确认命中
    —— 首击经常不落地，需 request/retry 语义（~5–10s 未确认就重发）
+   —— **等待应取 expect_any [PLAYER_ATTACK, TEAM_RESULT]**：结算也是本轮攻击的答案，
+      boss 一死立即进入下一轮；只等 PLAYER_ATTACK 会在战斗结束窗口空等重试（实测 10~30s）
    —— 每人每场最多 3 次（fightNum 0..3），第 4 次起耗金币；自动化只发到 3，金币弹窗是客户端 UI 行为，协议路径不会出现
 8. S_2_C_RESULT {state, reward_ary}          —— 结算：fightNum 清零、num+1、队伍自动解散
 9. 回到 1（teamNumInfo 战后会清空，必须重新请求 TEAM_NUM 获取）
