@@ -1,4 +1,4 @@
-use crate::domain::model::{ProtocolScript, Scene, Script};
+use crate::domain::model::{ProtocolScript, Scene, Script, Task};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 
@@ -6,6 +6,7 @@ use serde::Deserialize;
 static SCENES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/scenes");
 static SCRIPTS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/scripts");
 static PROTOCOLS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/protocols");
+static TASKS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/tasks");
 
 /// Wrapper for scene files that use wardenly-go nested format
 /// Format: { category: "...", scenes: [...] }
@@ -127,6 +128,49 @@ pub fn find_scene<'a>(scenes: &'a [Scene], name: &str) -> Option<&'a Scene> {
 /// Find a script by name
 pub fn find_script<'a>(scripts: &'a [Script], name: &str) -> Option<&'a Script> {
     scripts.iter().find(|s| s.name == name)
+}
+
+/// Load all task definitions (unified schema v2) from embedded resources
+/// Automatically discovers all .yaml files in the tasks directory
+pub fn load_tasks() -> anyhow::Result<Vec<Task>> {
+    let mut tasks = Vec::new();
+
+    for file in TASKS_DIR.files() {
+        let path = file.path();
+        let extension = path.extension().and_then(|e| e.to_str());
+
+        if !matches!(extension, Some("yaml") | Some("yml")) {
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        match file.contents_utf8() {
+            Some(content) => match serde_yaml::from_str::<Task>(content) {
+                Ok(task) => {
+                    tracing::debug!("Loaded task: {}", file_name);
+                    tasks.push(task);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse task {}: {}", file_name, e);
+                }
+            },
+            None => {
+                tracing::error!("Task file {} is not valid UTF-8", file_name);
+            }
+        }
+    }
+
+    tracing::info!("Loaded {} tasks total", tasks.len());
+    Ok(tasks)
+}
+
+/// Find a task by name
+pub fn find_task<'a>(tasks: &'a [Task], name: &str) -> Option<&'a Task> {
+    tasks.iter().find(|t| t.name == name)
 }
 
 /// Load all protocol script definitions from embedded resources

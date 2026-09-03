@@ -346,11 +346,16 @@ pub async fn capture_screenshot(
 
 #[tauri::command]
 pub fn get_scripts() -> Result<Vec<ScriptInfo>, String> {
+    let tasks = resources::load_tasks().map_err(|e| e.to_string())?;
     let scripts = resources::load_scripts().map_err(|e| e.to_string())?;
     let protocol_scripts = resources::load_protocol_scripts().map_err(|e| e.to_string())?;
-    Ok(scripts
+    Ok(tasks
         .iter()
-        .map(ScriptInfo::from)
+        .map(|t| ScriptInfo {
+            name: t.name.clone(),
+            description: t.description.clone(),
+        })
+        .chain(scripts.iter().map(ScriptInfo::from))
         .chain(protocol_scripts.iter().map(ScriptInfo::from))
         .collect())
 }

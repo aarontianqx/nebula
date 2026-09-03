@@ -1,7 +1,7 @@
 use crate::application::command::SessionCommand;
 use crate::application::eventbus::SharedEventBus;
-use crate::application::service::protocol_runner;
 use crate::application::service::script_runner::{self, ScriptHandle, ScriptRunner};
+use crate::application::service::{protocol_runner, task_runner};
 use crate::domain::event::DomainEvent;
 use crate::domain::model::{
     new_shared_game_state, Account, Scene, SceneAction, SessionInfo, SessionState, SharedGameState,
@@ -704,11 +704,29 @@ impl SessionActor {
         let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
 
-        // Scene scripts (scene recognition loop) and protocol scripts (linear
-        // protocol exchange) share the same lifecycle; only the runner differs.
+        // Unified tasks take priority; legacy scene scripts and protocol
+        // scripts share the same lifecycle; only the runner differs.
         let run: std::pin::Pin<
             Box<dyn std::future::Future<Output = script_runner::StopReason> + Send>,
-        > = if let Some(script) = {
+        > = if let Some(task) = {
+            let tasks = resources::load_tasks().unwrap_or_default();
+            resources::find_task(&tasks, script_name).cloned()
+        } {
+            let scenes = resources::load_scenes().unwrap_or_default();
+            let mut runner = task_runner::TaskRunner::new(
+                self.id.clone(),
+                task,
+                scenes,
+                self.browser.clone(),
+                global_ocr_client(),
+                self.event_bus.clone(),
+                self.game_state.clone(),
+                resources::load_protocol_registry(),
+                cmd_rx,
+            );
+            runner.set_running_flag(running.clone());
+            Box::pin(async move { runner.run().await })
+        } else if let Some(script) = {
             let scripts = resources::load_scripts().unwrap_or_default();
             resources::find_script(&scripts, script_name).cloned()
         } {

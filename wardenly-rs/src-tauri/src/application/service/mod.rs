@@ -5,6 +5,7 @@ pub(crate) mod humanize;
 mod protocol_runner;
 mod script_runner;
 mod session_actor;
+mod task_runner;
 
 pub use account_service::AccountService;
 pub use group_service::GroupService;

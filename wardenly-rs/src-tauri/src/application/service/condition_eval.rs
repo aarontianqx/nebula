@@ -42,6 +42,12 @@ async fn condition_met(
     game_state: &SharedGameState,
     browser: &Arc<dyn BrowserDriver>,
 ) -> bool {
+    // `missing` holds exactly when the path does not resolve.
+    if condition.op == "missing" {
+        return resolve_path(&condition.field, game_state, browser)
+            .await
+            .is_none();
+    }
     let Some(actual) = resolve_path(&condition.field, game_state, browser).await else {
         tracing::debug!("Condition field unresolved: {}", condition.field);
         return false;
@@ -79,7 +85,7 @@ async fn resolve_path(
             Ok(state) => state,
             Err(poisoned) => poisoned.into_inner(),
         };
-        return state.resolve(path).cloned();
+        return state.resolve(path);
     }
     if let Some(role_path) = path.strip_prefix("role.") {
         return query_role(role_path, browser).await;
@@ -91,9 +97,24 @@ async fn resolve_path(
     None
 }
 
-/// Query the client role model through the page bridge.
+/// Query the client role model through the page bridge. The bridge only
+/// understands plain field/index navigation; array selectors (`@...`) are
+/// resolved here: the plain prefix is fetched from the page, then the
+/// selector suffix is applied locally.
 async fn query_role(path: &str, browser: &Arc<dyn BrowserDriver>) -> Option<Value> {
-    let path_literal = serde_json::to_string(path).ok()?;
+    use crate::domain::model::game_state as gs;
+
+    let segments = gs::split_segments(path);
+    let selector_at = segments.iter().position(|s| s.starts_with('@'));
+    let (plain, suffix) = match selector_at {
+        Some(i) => (segments[..i].join("."), Some(segments[i..].join("."))),
+        None => (path.to_string(), None),
+    };
+    if plain.is_empty() {
+        return None;
+    }
+
+    let path_literal = serde_json::to_string(&plain).ok()?;
     let script = format!(
         "window.__wardenly ? window.__wardenly.queryRole({}) : 'ERR bridge not installed'",
         path_literal
@@ -102,11 +123,48 @@ async fn query_role(path: &str, browser: &Arc<dyn BrowserDriver>) -> Option<Valu
     let outer: Value = serde_json::from_str(&raw).ok()?;
     let inner = outer.as_str()?;
     if inner.starts_with("ERR") {
-        tracing::debug!("queryRole({}) -> {}", path, inner);
+        tracing::debug!("queryRole({}) -> {}", plain, inner);
         return None;
     }
     let parsed: Value = serde_json::from_str(inner).ok()?;
-    parsed.get("value").cloned()
+    let value = parsed.get("value").cloned()?;
+
+    match suffix {
+        None => Some(value),
+        Some(suffix) => gs::resolve_path(&value, &suffix),
+    }
+}
+
+/// Resolve `$`-prefixed references inside a payload (used by send/request
+/// actions). Any string value starting with `$` is replaced by the resolved
+/// state./role. value; resolution failure aborts the whole payload (None) —
+/// sending with a wrong id is worse than failing loudly.
+pub async fn resolve_payload_refs(
+    payload: &Value,
+    game_state: &SharedGameState,
+    browser: &Arc<dyn BrowserDriver>,
+) -> Option<Value> {
+    match payload {
+        Value::String(s) if s.starts_with('$') => resolve_path(&s[1..], game_state, browser).await,
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(Box::pin(resolve_payload_refs(item, game_state, browser)).await?);
+            }
+            Some(Value::Array(out))
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                out.insert(
+                    k.clone(),
+                    Box::pin(resolve_payload_refs(v, game_state, browser)).await?,
+                );
+            }
+            Some(Value::Object(out))
+        }
+        _ => Some(payload.clone()),
+    }
 }
 
 #[cfg(test)]

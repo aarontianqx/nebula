@@ -1,11 +1,13 @@
 mod account;
 mod expr;
-mod game_state;
 mod group;
-mod protocol_script;
 mod scene;
 mod script;
 mod session;
+mod task;
+
+pub(crate) mod game_state;
+pub(crate) mod protocol_script;
 
 pub use account::Account;
 pub use expr::ExprContext;
@@ -15,3 +17,6 @@ pub use protocol_script::{FieldCondition, ProtocolAction, ProtocolScript, Protoc
 pub use scene::{ColorPoint, ColorValue, Scene, SceneAction, SceneMatcher};
 pub use script::{Action, OcrAction, OcrMode, OcrRule, Point, Script, ScriptInfo, StateRule, Step};
 pub use session::{SessionInfo, SessionState};
+pub use task::{
+    MatchPredicate, NoMatchPolicy, NoMatchRule, QuitReason, Task, TaskAction, TaskInfo, TaskStep,
+};

@@ -132,14 +132,16 @@ pub enum ProtocolAction {
 
 /// A comparison against a numeric/bool/string field of a JSON document.
 /// `gt/gte/lt/lte` require both sides numeric; `eq/neq` also work for
-/// strings and bools. A missing field always evaluates to false.
+/// strings and bools; `contains/ends_with` are string ops. `exists` holds
+/// when the path resolves, `missing` when it does not. A list `value` means
+/// any-hit for eq/contains/ends_with.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldCondition {
     /// Dotted field path (see GameState::resolve / resolve_path)
     pub field: String,
 
-    /// Comparison operator (eq, neq, gt, gte, lt, lte, exists).
-    /// `exists` ignores `value` and holds when the path resolves.
+    /// Comparison operator (eq, neq, gt, gte, lt, lte, exists, missing,
+    /// contains, ends_with)
     pub op: String,
 
     /// Value to compare against
@@ -150,10 +152,13 @@ pub struct FieldCondition {
 impl FieldCondition {
     /// Evaluate against a JSON document root (e.g. one protocol payload).
     pub fn evaluate(&self, root: &Value) -> bool {
+        if self.op == "missing" {
+            return resolve_path(root, &self.field).is_none();
+        }
         let Some(actual) = resolve_path(root, &self.field) else {
             return false;
         };
-        self.evaluate_value(actual)
+        self.evaluate_value(&actual)
     }
 
     /// Evaluate against an already-resolved value (e.g. from GameState::resolve).
@@ -167,9 +172,21 @@ impl FieldCondition {
         Self::compare(actual, &self.op, expected)
     }
 
+    /// Raw three-way comparison, exposed for array-selector filtering.
+    pub(crate) fn compare_public(actual: &Value, op: &str, expected: &Value) -> bool {
+        Self::compare(actual, op, expected)
+    }
+
     fn compare(actual: &Value, op: &str, expected: &Value) -> bool {
         if op == "exists" {
             return true; // only reached when the path resolved
+        }
+        // List expected value: any-hit semantics for equality/string ops.
+        if let Value::Array(items) = expected {
+            if matches!(op, "eq" | "contains" | "ends_with") {
+                return items.iter().any(|e| Self::compare(actual, op, e));
+            }
+            return false;
         }
         let numeric = actual.as_f64().zip(expected.as_f64());
         match (op, numeric) {
@@ -182,6 +199,16 @@ impl FieldCondition {
             // Non-numeric equality (strings, bools, null)
             ("eq", None) => actual == expected,
             ("neq", None) => actual != expected,
+            ("contains", None) => actual
+                .as_str()
+                .zip(expected.as_str())
+                .map(|(a, b)| a.contains(b))
+                .unwrap_or(false),
+            ("ends_with", None) => actual
+                .as_str()
+                .zip(expected.as_str())
+                .map(|(a, b)| a.ends_with(b))
+                .unwrap_or(false),
             _ => false,
         }
     }
