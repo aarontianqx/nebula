@@ -53,6 +53,20 @@ steps:
         timeout: 10s
         retries: 1
 
+  # 无队时周期性刷新队伍列表（约 1~2s 一轮），等白名单队伍出现
+  - name: refresh_team_info
+    match:
+      conditions:
+        - { field: role._knightTower._selfteamId, op: eq, value: -1 }
+        - { field: role._knightTower._teamNumInfo, op: exists }
+    actions:
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
+          payload: { ident: 1 },
+          expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
+          timeout: 10s,
+          retries: 2 }
+
   # 战斗中且攻击次数未满 → 移入 channel 并攻击（首击可能不落地，request 自带重试）
   - name: fight
     match:
