@@ -110,6 +110,33 @@
 
 上面每一环都有明确的请求协议和可观测的下行推送/模型字段，不需要任何截图检测。剩余的客户端侧信息只有静态配置（难度表 `KnightTowerJson`、消耗/复活规则）——这些在 bundle 的客户端 JSON 里，属离线可读数据。
 
+### 4.4 实测验证的完整自动化流程（2026-09-03，7 轮真实组队战斗）
+
+以下流程在真实账号上跑通 7 轮（num 0→7），每步都有协议级确认信号：
+
+```
+1. role._knightTower.enterKnightTower()      → S_2_C_TEAM_NUM {num, count, chaos_level}
+2. C_2_S_TEAM_NUM_INFO {ident}               → S_2_C_TEAM_INFO（队伍列表）
+3. 按 player_count 选人多的队，过滤 limit_level/server_limit
+4. C_2_S_TEAM_JOIN {ident, create_id, server_id_len, server_id}
+                                              → S_2_C_PLAYER_INFO / PLAYER_COUNT 确认入队
+5. 等 S_2_C_TEAM_START（_isBattle=true）      —— 开战
+6. C_2_S_TEAM_PLAYER_MOVE {channel:1} 先移入 channel（**必须**，否则攻击静默无效且照样扣军令）
+7. C_2_S_TEAM_ATTACK {}                       → S_2_C_PLAYER_ATTACK（自己名字）确认命中
+   —— 首击经常不落地，需 request/retry 语义（~5–10s 未确认就重发）
+   —— 每人每场最多 3 次（fightNum 0..3），第 4 次起耗金币；自动化只发到 3，金币弹窗是客户端 UI 行为，协议路径不会出现
+8. S_2_C_RESULT {state, reward_ary}          —— 结算：fightNum 清零、num+1、队伍自动解散
+9. 回到 1（teamNumInfo 战后会清空，必须重新 enterKnightTower 获取）
+```
+
+实测要点：
+
+- **退出**：待命时用 `C_2_S_TEAM_LEAVE {}` → `S_2_C_PLAYER_LEAVE` 确认；结算后队伍自动解散无需手动退；
+- **num 语义**：今日参与次数（含未命中的 phantom 攻击），界面显示 `军令/(num+1)`（如 `1066/8`）；7 是天狼性价比阈值，之后仍可打但性价比低；
+- **teamState 不可靠**（战中/重组期间会与实际不符），以 `selfteamId + _isBattle + TEAM_RECONNECT` 为准；
+- **军令会计**：未命中 channel 的"幽灵攻击"也扣军令——先 MOVE 后 ATTACK 是硬性顺序；
+- 战斗中重连用 `C_2_S_TEAM_PLAYER_INFO {}` 拉 `S_2_C_TEAM_RECONNECT {cur_boss_soldier_num, over_time, num}` 恢复现场。
+
 ## 5. 自助查询任意协议的方法
 
 1. **找名字**：`grep -i tower wardenly-rs/src-tauri/resources/protocols/registry.json`（或在游戏页 `Object.keys(__require('ProtocolBase').Protocol)`）；
