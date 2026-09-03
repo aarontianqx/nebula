@@ -1,0 +1,66 @@
+# 武魁高塔·混沌（ident=2，boss 240~300级；每日上限暂按 10 次，达到后自动停止）
+# 循环：加载塔信息 → 选白名单服务器中人数最多的队伍加入 → 等开战 →
+#       移入 channel 后攻击（≤3 次，永不触发金币路径）→ 结算 → 重新组队
+name: 武魁高塔·混沌
+description: 武魁高塔组队刷塔：混沌（240~300级，每日暂按 10 次）
+on_no_match: { policy: wait, timeout: 120s }   # 无匹配时等队伍出现
+steps:
+  # 模板顺序即优先级：终止判定放最前（ident 校验防止读到其他 boss 的信息）
+  - name: finish
+    match:
+      conditions:
+        - { field: role._knightTower._teamNumInfo.ident, op: eq, value: 2 }
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: 10 }
+    actions:
+      - { type: quit, reason: exhausted }
+
+  # teamNumInfo 缺失（首次/战后清空）→ 重新加载混沌塔信息（纯协议，无 UI 依赖）
+  - name: reload_tower_info
+    match:
+      conditions:
+        - { field: role._knightTower._teamNumInfo, op: missing }
+    actions:
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM,
+          payload: { ident: 2 },
+          expect: S_2_C_KNIGHT_TOWER_TEAM_NUM,
+          timeout: 10s,
+          retries: 2 }
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
+          payload: { ident: 2 },
+          expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
+          timeout: 10s,
+          retries: 2 }
+
+  # 无队且存在白名单服务器（888/11014/11020）的队伍 → 加入人最多的那支
+  - name: join_team
+    match:
+      conditions:
+        - { field: role._knightTower._selfteamId, op: eq, value: -1 }
+        - { field: "state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"])", op: exists }
+    actions:
+      - type: request
+        protocol: C_2_S_KNIGHT_TOWER_TEAM_JOIN
+        payload:
+          ident: 2
+          create_id: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"]).@max(player_count).create_id"
+          server_id_len: 21
+          server_id: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"]).@max(player_count).server_id"
+        expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_INFO, S_2_C_KNIGHT_TOWER_PLAYER_COUNT]
+        timeout: 10s
+        retries: 2
+
+  # 战斗中且攻击次数未满 → 移入 channel 并攻击（首击可能不落地，request 自带重试）
+  - name: fight
+    match:
+      conditions:
+        - { field: role._knightTower._isBattle, op: eq, value: true }
+        - { field: role._knightTower._fightNum, op: lt, value: 3 }
+    actions:
+      - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_TEAM_PLAYER_MOVE, payload: { channel: 1 } }
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK,
+          expect: S_2_C_KNIGHT_TOWER_PLAYER_ATTACK,
+          timeout: 8s,
+          retries: 3 }

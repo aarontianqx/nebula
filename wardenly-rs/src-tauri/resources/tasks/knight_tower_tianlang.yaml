@@ -1,26 +1,25 @@
-# 武魁高塔组队刷塔（统一模板 v2，协议驱动）
+# 武魁高塔·天狼（ident=1，boss 220级；每日上限 7 次，达到后性价比骤降自动停止）
 # 循环：加载塔信息 → 选白名单服务器中人数最多的队伍加入 → 等开战 →
 #       移入 channel 后攻击（≤3 次，永不触发金币路径）→ 结算 → 重新组队
-# 终止：今日次数 num 达到阈值（天狼 7 次；其他 boss 改 finish 的 value 即可）
-name: knight_tower
-description: 武魁高塔组队刷塔（协议驱动）
+name: 武魁高塔·天狼
+description: 武魁高塔组队刷塔：天狼（220级，每日 7 次）
 on_no_match: { policy: wait, timeout: 120s }   # 无匹配时等队伍出现
 steps:
-  # 模板顺序即优先级：终止判定放最前
+  # 模板顺序即优先级：终止判定放最前（ident 校验防止读到其他 boss 的信息）
   - name: finish
     match:
       conditions:
+        - { field: role._knightTower._teamNumInfo.ident, op: eq, value: 1 }
         - { field: role._knightTower._teamNumInfo.num, op: gte, value: 7 }
     actions:
       - { type: quit, reason: exhausted }
 
-  # teamNumInfo 缺失（首次/战后清空）→ 重新加载塔信息（纯协议，无 UI 依赖）
+  # teamNumInfo 缺失（首次/战后清空）→ 重新加载天狼塔信息（纯协议，无 UI 依赖）
   - name: reload_tower_info
     match:
       conditions:
         - { field: role._knightTower._teamNumInfo, op: missing }
     actions:
-      # ident=1 是天狼（220级）；其他 boss 改 ident（等价于客户端 enterKnightTower(ident)）
       - { type: request,
           protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM,
           payload: { ident: 1 },
