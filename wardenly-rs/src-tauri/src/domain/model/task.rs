@@ -172,9 +172,9 @@ pub enum TaskAction {
         conditions: Vec<FieldCondition>,
         #[serde(default)]
         retries: u32,
-        /// After all retries time out: fail the task (default) or treat the
-        /// action as done and let the state machine re-evaluate (for actions
-        /// whose relevance can expire mid-wait, e.g. attacking a dying boss)
+        /// After all retries time out: continue (default — hand back to the
+        /// state machine) or fail the task. `fail` is an explicit opt-in for
+        /// hard gates only; game-level timeouts must never kill a task.
         #[serde(default)]
         on_timeout: OnTimeout,
     },
@@ -217,12 +217,13 @@ pub enum QuitReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnTimeout {
-    /// Fail the step (and the task) — default, for hard requirements
+    /// Treat the action as done; the state machine re-evaluates — default.
+    /// Game-level timeouts must never kill a task.
     #[default]
-    Fail,
-    /// Treat the action as done; the state machine re-evaluates — for
-    /// actions whose relevance can expire mid-wait
     Continue,
+    /// Fail the step (and the task). Explicit opt-in for hard gates only —
+    /// writing this requires justification in the template.
+    Fail,
 }
 
 /// Task info for frontend display

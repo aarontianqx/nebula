@@ -46,7 +46,20 @@
         const P = window.__require('ProtocolBase').Protocol;
         const id = P[name];
         if (typeof id !== 'number') return 'ERR unknown protocol: ' + name;
-        c.send(id, payload || {});
+        const data = Object.assign({}, payload || {});
+        // Auto-fill *_len companion fields from their string field, matching
+        // the client's stringUTFLen semantics (UTF-8 byte length). Lets
+        // templates pass raw strings without hard-coding lengths that break
+        // on other servers (e.g. server_id differs across regions).
+        for (const key of Object.keys(data)) {
+          if (key.endsWith('_len')) {
+            const base = key.slice(0, -4);
+            if (typeof data[base] === 'string') {
+              data[key] = new TextEncoder().encode(data[base]).length;
+            }
+          }
+        }
+        c.send(id, data);
         return 'OK';
       } catch (e) {
         return 'ERR ' + (e && e.message ? e.message : String(e));

@@ -3,7 +3,7 @@
 #       移入 channel 后攻击（≤3 次，永不触发金币路径）→ 结算 → 重新组队
 name: 武魁高塔·天狼
 description: 武魁高塔组队刷塔：天狼（220级，每日 7 次）
-on_no_match: { policy: wait, timeout: 120s }   # 无匹配时等队伍出现
+on_no_match: { policy: wait, timeout: 24h }    # 无匹配时等队伍出现（长时间无队伍也不自动退出）
 steps:
   # 模板顺序即优先级：终止判定放最前（ident 校验防止读到其他 boss 的信息）
   - name: finish
@@ -14,7 +14,7 @@ steps:
     actions:
       - { type: quit, reason: exhausted }
 
-  # teamNumInfo 缺失（首次/战后清空）→ 重新加载天狼塔信息（纯协议，无 UI 依赖）
+  # teamNumInfo 缺失（首次/战后清空）→ 重新加载今日次数（纯协议，无 UI 依赖）
   - name: reload_tower_info
     match:
       conditions:
@@ -26,12 +26,6 @@ steps:
           expect: S_2_C_KNIGHT_TOWER_TEAM_NUM,
           timeout: 10s,
           retries: 2 }
-      - { type: request,
-          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
-          payload: { ident: 1 },
-          expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
-          timeout: 10s,
-          retries: 2 }
 
   # 无队且存在白名单服务器（888/11014/11020）的队伍 → 加入人最多的那支
   - name: join_team
@@ -40,16 +34,24 @@ steps:
         - { field: role._knightTower._selfteamId, op: eq, value: -1 }
         - { field: "state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"])", op: exists }
     actions:
+      # 每次执行先拉最新队伍列表（多人环境下队伍随时满员/开战/解散，旧列表不可用）
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
+          payload: { ident: 1 },
+          expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
+          timeout: 10s,
+          retries: 2 }
+      # server_id_len 由桥按 server_id 自动计算（跨服长度不同，不能写死）；
+      # JOIN 失败（队伍已没）不判死刑，交回状态机拉新列表选下一队
       - type: request
         protocol: C_2_S_KNIGHT_TOWER_TEAM_JOIN
         payload:
           ident: 1
           create_id: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"]).@max(player_count).create_id"
-          server_id_len: 21
           server_id: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"]).@max(player_count).server_id"
         expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_INFO, S_2_C_KNIGHT_TOWER_PLAYER_COUNT]
         timeout: 10s
-        retries: 2
+        retries: 1
 
   # 战斗中且攻击次数未满 → 移入 channel 并攻击（首击可能不落地，request 自带重试）
   - name: fight
@@ -65,5 +67,4 @@ steps:
           protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK,
           expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, S_2_C_KNIGHT_TOWER_RESULT],
           timeout: 8s,
-          retries: 1,
-          on_timeout: continue }
+          retries: 1 }

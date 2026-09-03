@@ -562,8 +562,16 @@ impl TaskRunner {
         let Some(payload) =
             condition_eval::resolve_payload_refs(payload, &self.game_state, &self.browser).await
         else {
-            tracing::error!(step = %step_name, "Failed to resolve payload $-references for {}", protocol);
-            return Err(StopReason::Error);
+            // A $-ref that no longer resolves is a race, not an error: the
+            // selection basis vanished mid-step (e.g. the team list just went
+            // empty). Skip the action and let the state machine re-evaluate
+            // with the fresh data.
+            tracing::warn!(
+                step = %step_name,
+                "Skipping {}: payload $-references unresolved (selection basis gone)",
+                protocol
+            );
+            return Ok(());
         };
 
         let name_literal = match serde_json::to_string(protocol) {
@@ -1062,5 +1070,56 @@ mod tests {
             elapsed >= Duration::from_millis(900),
             "stale RESULT answered the wait (drain broken), elapsed={elapsed:?}"
         );
+    }
+
+    /// An unresolvable payload $-reference (selection basis vanished mid-step,
+    /// e.g. the team list went empty) skips the action instead of failing the
+    /// task — the state machine re-evaluates with fresh data.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unresolvable_payload_ref_skips_action() {
+        let task = Task {
+            name: "t".to_string(),
+            description: None,
+            on_no_match: NoMatchRule::default(),
+            steps: vec![once_step(
+                "join",
+                vec![TaskAction::SendProtocol {
+                    protocol: "C_2_S_TEST".to_string(),
+                    payload: json!({
+                        "create_id": "$state.NOPE.missing.path",
+                    }),
+                }],
+            )],
+        };
+        let (mut runner, _cmd_tx) = build_runner(task);
+        let reason = runner.run().await;
+        assert_eq!(reason, StopReason::Completed);
+    }
+
+    /// The default on_timeout policy is Continue: a request that times out
+    /// (without an explicit `on_timeout: fail`) must not kill the task.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn request_timeout_defaults_to_continue() {
+        let task = Task {
+            name: "t".to_string(),
+            description: None,
+            on_no_match: NoMatchRule::default(),
+            steps: vec![once_step(
+                "req",
+                vec![TaskAction::Request {
+                    protocol: "C_2_S_TEST".to_string(),
+                    payload: json!({}),
+                    expect: Some("S_2_C_NEVER_ARRIVES".to_string()),
+                    expect_any: vec![],
+                    timeout: Some(Duration::from_millis(300)),
+                    conditions: vec![],
+                    retries: 0,
+                    on_timeout: Default::default(),
+                }],
+            )],
+        };
+        let (mut runner, _cmd_tx) = build_runner(task);
+        let reason = runner.run().await;
+        assert_eq!(reason, StopReason::Completed);
     }
 }

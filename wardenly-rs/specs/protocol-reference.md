@@ -135,6 +135,8 @@
 3. 按 player_count 选人多的队，过滤 limit_level/server_limit/server_id 白名单
 4. C_2_S_TEAM_JOIN {ident, create_id, server_id_len, server_id}
                                               → S_2_C_PLAYER_INFO / PLAYER_COUNT 确认入队
+   —— server_id_len 由桥按 server_id 自动计算（stringUTFLen 语义），跨服长度不同不能写死
+   —— 多人环境下队伍随时满员/开战/解散：JOIN 前先重新拉列表，JOIN 失败（超时）交回状态机重选，不判任务失败
 5. 等 S_2_C_TEAM_START（_isBattle=true）      —— 开战
 6. C_2_S_TEAM_PLAYER_MOVE {channel:1} 先移入 channel（**必须**，否则攻击静默无效且照样扣军令）
 7. C_2_S_TEAM_ATTACK {}                       → S_2_C_PLAYER_ATTACK（自己名字）确认命中
