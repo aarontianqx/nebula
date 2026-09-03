@@ -282,4 +282,53 @@ mod tests {
         assert!(find_scene(&scenes, "another_scene").is_some());
         assert!(find_scene(&scenes, "non_existent").is_none());
     }
+
+    /// Every protocol name referenced by embedded task templates must exist
+    /// in the registry — catches typos at build time instead of at task start
+    /// on a user's machine.
+    #[test]
+    fn task_templates_reference_known_protocols() {
+        use crate::domain::model::TaskAction;
+        let registry = load_protocol_registry().expect("registry must load");
+        let tasks = load_tasks().expect("tasks must load");
+        assert!(!tasks.is_empty(), "expected at least one embedded task");
+
+        fn collect(actions: &[TaskAction], out: &mut Vec<String>) {
+            for action in actions {
+                match action {
+                    TaskAction::SendProtocol { protocol, .. } => out.push(protocol.clone()),
+                    TaskAction::Request {
+                        protocol,
+                        expect,
+                        expect_any,
+                        ..
+                    } => {
+                        out.push(protocol.clone());
+                        out.extend(expect.iter().cloned());
+                        out.extend(expect_any.iter().cloned());
+                    }
+                    TaskAction::WaitProtocol { protocol, .. } => out.push(protocol.clone()),
+                    TaskAction::Loop { actions, .. } => collect(actions, out),
+                    _ => {}
+                }
+            }
+        }
+
+        for task in tasks {
+            let mut names = Vec::new();
+            for step in &task.steps {
+                collect(&step.actions, &mut names);
+            }
+            let unknown: Vec<_> = names
+                .into_iter()
+                .filter(|n| !registry.contains(n))
+                .collect();
+            assert!(
+                unknown.is_empty(),
+                "task '{}' references unknown protocols: {:?}",
+                task.name,
+                unknown
+            );
+        }
+    }
 }

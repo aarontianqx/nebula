@@ -63,7 +63,7 @@ steps:
       # 避免在战斗结束窗口空等重试（曾造成 10~30s 入队延迟）
       - { type: request,
           protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK,
-          expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, S_2_C_KNIGHT_TOWER_TEAM_RESULT],
+          expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, S_2_C_KNIGHT_TOWER_RESULT],
           timeout: 8s,
           retries: 1,
           on_timeout: continue }

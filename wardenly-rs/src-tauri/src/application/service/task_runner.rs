@@ -1018,7 +1018,7 @@ mod tests {
                     protocol: "C_2_S_TEST".to_string(),
                     payload: json!({}),
                     expect: None,
-                    expect_any: vec!["S_2_C_KNIGHT_TOWER_TEAM_RESULT".to_string()],
+                    expect_any: vec!["S_2_C_KNIGHT_TOWER_RESULT".to_string()],
                     timeout: Some(Duration::from_secs(1)),
                     conditions: vec![],
                     retries: 0,
@@ -1048,7 +1048,7 @@ mod tests {
             bus.publish(DomainEvent::ProtocolMessage {
                 session_id: "s".to_string(),
                 protocol_id: 3118,
-                name: Some("S_2_C_KNIGHT_TOWER_TEAM_RESULT".to_string()),
+                name: Some("S_2_C_KNIGHT_TOWER_RESULT".to_string()),
                 data: json!({}),
             });
         });
