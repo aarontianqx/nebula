@@ -14,14 +14,19 @@ steps:
     actions:
       - { type: quit, reason: exhausted }
 
-  # teamNumInfo 缺失（首次/战后清空）→ 重新加载塔信息
+  # teamNumInfo 缺失（首次/战后清空）→ 重新加载塔信息（纯协议，无 UI 依赖）
   - name: reload_tower_info
     match:
       conditions:
         - { field: role._knightTower._teamNumInfo, op: missing }
     actions:
-      - { type: eval_js, script: "__require('Account').default.get().role._knightTower.enterKnightTower()" }
-      - { type: wait_protocol, protocol: S_2_C_KNIGHT_TOWER_TEAM_NUM, timeout: 10s }
+      # ident=1 是天狼（220级）；其他 boss 改 ident（等价于客户端 enterKnightTower(ident)）
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM,
+          payload: { ident: 1 },
+          expect: S_2_C_KNIGHT_TOWER_TEAM_NUM,
+          timeout: 10s,
+          retries: 2 }
       - { type: request,
           protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
           payload: { ident: 1 },

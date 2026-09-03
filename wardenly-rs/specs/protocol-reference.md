@@ -115,9 +115,10 @@
 以下流程在真实账号上跑通 7 轮（num 0→7），每步都有协议级确认信号：
 
 ```
-1. role._knightTower.enterKnightTower()      → S_2_C_TEAM_NUM {num, count, chaos_level}
-2. C_2_S_TEAM_NUM_INFO {ident}               → S_2_C_TEAM_INFO（队伍列表）
-3. 按 player_count 选人多的队，过滤 limit_level/server_limit
+1. C_2_S_TEAM_NUM {ident:1}                  → S_2_C_TEAM_NUM {num, count, chaos_level}
+   （等价于客户端 enterKnightTower(1)，无需打开任何界面）
+2. C_2_S_TEAM_NUM_INFO {ident:1}             → S_2_C_TEAM_INFO（队伍列表）
+3. 按 player_count 选人多的队，过滤 limit_level/server_limit/server_id 白名单
 4. C_2_S_TEAM_JOIN {ident, create_id, server_id_len, server_id}
                                               → S_2_C_PLAYER_INFO / PLAYER_COUNT 确认入队
 5. 等 S_2_C_TEAM_START（_isBattle=true）      —— 开战
@@ -126,11 +127,13 @@
    —— 首击经常不落地，需 request/retry 语义（~5–10s 未确认就重发）
    —— 每人每场最多 3 次（fightNum 0..3），第 4 次起耗金币；自动化只发到 3，金币弹窗是客户端 UI 行为，协议路径不会出现
 8. S_2_C_RESULT {state, reward_ary}          —— 结算：fightNum 清零、num+1、队伍自动解散
-9. 回到 1（teamNumInfo 战后会清空，必须重新 enterKnightTower 获取）
+9. 回到 1（teamNumInfo 战后会清空，必须重新请求 TEAM_NUM 获取）
 ```
 
 实测要点：
 
+- **进塔/读队/加入全部可以纯协议，无需打开任何界面**：客户端的 `enterKnightTower(ident)` 等价于 `C_2_S_KNIGHT_TOWER_TEAM_NUM {ident}`（bundle 源码确认，ident 为 boss 标识，天狼=1）。2026-09-03 在新账号上验证：不发任何 UI 事件，`TEAM_NUM → TEAM_NUM_INFO（队伍列表）→ TEAM_JOIN（入队成功）` 全链路成立；
+- 注意：客户端收到 `S_2_C_TEAM_NUM` 响应后**会自己打开塔界面**（bundle 内建行为）。这对自动化无影响（数据不依赖画面），但"画面完全不动"是做不到的——也不需要；
 - **退出**：待命时用 `C_2_S_TEAM_LEAVE {}` → `S_2_C_PLAYER_LEAVE` 确认；结算后队伍自动解散无需手动退；
 - **num 语义**：今日参与次数（含未命中的 phantom 攻击），界面显示 `军令/(num+1)`（如 `1066/8`）；7 是天狼性价比阈值，之后仍可打但性价比低；
 - **teamState 不可靠**（战中/重组期间会与实际不符），以 `selfteamId + _isBattle + TEAM_RECONNECT` 为准；
