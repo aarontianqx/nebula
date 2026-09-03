@@ -322,10 +322,25 @@ impl BrowserDriver for ChromiumDriver {
         *self.dialog_handle.write().await = Some(dialog_handle);
         *self.target_handle.write().await = Some(target_handle);
 
-        tracing::info!(
-            "Browser started successfully for session {}",
-            self.session_id
-        );
+        // Log the actual browser binary version — CDP event shapes differ
+        // across Chrome versions, which matters when diagnosing parse failures
+        // on other machines.
+        if let Some(b) = self.browser.read().await.as_ref() {
+            match b.version().await {
+                Ok(v) => tracing::info!(
+                    "Browser started successfully for session {} ({})",
+                    self.session_id,
+                    v.product
+                ),
+                Err(e) => {
+                    tracing::info!(
+                        "Browser started successfully for session {}",
+                        self.session_id
+                    );
+                    tracing::debug!("Could not query browser version: {}", e);
+                }
+            }
+        }
         Ok(())
     }
 
