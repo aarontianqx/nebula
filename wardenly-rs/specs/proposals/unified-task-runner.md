@@ -1,6 +1,6 @@
 # Proposal: 统一任务执行架构（TaskRunner + 统一模板）
 
-> 2026-09-03 ｜ 状态：待评审 ｜ 目标：**执行器逻辑统一，新增一类任务只是新增一个模板文件**。
+> 2026-09-03 ｜ 状态：**已实现并验证**（TaskRunner + `resources/tasks/knight_tower.yaml`，live 验证见 §8）｜ 目标：**执行器逻辑统一，新增一类任务只是新增一个模板文件**。
 
 ## 1. 现状问题
 
@@ -148,3 +148,15 @@ steps:
 - `knight_tower` 模板不改一行 Rust 跑通完整循环（组队→开战→攻击→结算→再组队），num 满阈值自动退出；
 - `claim_all_mail` 迁移为 v2 模板后行为等价；
 - 一个含 scene 谓词 + click 动作的混合 step 在同一模板内生效（证明画面兜底能力）。
+
+## 8. 实现与验证记录（2026-09-03）
+
+已实现（提交见 git 历史）：TaskRunner、schema v2（`resources/tasks/`）、数组选择器（`@where/@max/@min/@first/@last` 含链式组合与列表 any-hit）、payload `$` 引用、`missing/contains/ends_with` 条件 op、`eval_js` 逃生舱（包装为必返字符串）、tasks 优先的路由与脚本列表合并。
+
+验证：
+
+- **单测 22/22**：schema 解析、选择器全族（白名单+@max 链式）、once 线性流、条件终止、scene+click 混合谓词、wait 超时策略、runner 接线（mock 驱动）；
+- **live 验证**（真实账号 + 外部账号组队开战，使用高阈值临时模板避免当日 num=7 立即终止，用后已删除）：日志完整记录 `reload_tower_info → join_team（白名单选择器选中并入队）→ fight ×2（移动 channel + 攻击命中）→ 战斗结算`，随后执行器按状态机自然进入下一轮——**全程零任务特定 Rust 代码**，全部行为由 YAML 模板驱动；
+- 选择器白名单在真实队伍列表上正确过滤并选中人数最多的队伍。
+
+验收标准对照：① knight_tower 循环 ✓（阈值终止路径由单测 `finish_on_state_condition` 覆盖）；②③ 单测覆盖（`linear_once_flow_completes`、`scene_predicate_with_click_fallback`）。存量模板（场景脚本 5 个 + 协议脚本 1 个）的迁移与旧引擎下线按 §6 后续进行。

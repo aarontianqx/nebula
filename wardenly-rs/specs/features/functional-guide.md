@@ -345,6 +345,55 @@ steps:
 
 `resources/protocols/registry.json` 是从游戏 bundle 提取的协议名 → id 映射（标注 bundle 版本），脚本启动前校验所有引用协议名，未知名字直接失败并报错。游戏版本更新后需重新提取（在游戏页执行 `Object.entries(__require('ProtocolBase').Protocol)` 导出）。
 
+## 统一任务模板（v2，推荐）
+
+任务模板（`resources/tasks/*.yaml`）是自动化的推荐写法：**执行器（TaskRunner）统一且与任务无关，新增一类任务只是新增一个模板文件**。执行模型是状态匹配循环——模板顺序即优先级，每轮执行第一个谓词成立的 step；`once: true` 的 step 每次运行只执行一次（线性流程是全 once 的特例，循环任务不标 once）。
+
+```yaml
+name: knight_tower
+description: 武魁高塔组队刷塔（协议驱动）
+on_no_match: { policy: wait, timeout: 120s }   # 无匹配时：wait 等待 / quit 结束（默认 quit）
+steps:
+  - name: finish                     # 顺序即优先级，终止条件放最前
+    match:
+      conditions:
+        - { field: role._knightTower._teamNumInfo.num, op: gte, value: 7 }
+    actions:
+      - { type: quit, reason: exhausted }
+
+  - name: fight                      # 战斗中 fightNum<3 就反复匹配（状态循环）
+    match:
+      conditions:
+        - { field: role._knightTower._isBattle, op: eq, value: true }
+        - { field: role._knightTower._fightNum, op: lt, value: 3 }
+    actions:
+      - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_TEAM_PLAYER_MOVE, payload: { channel: 1 } }
+      - { type: request, protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK,
+          expect: S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, timeout: 8s, retries: 3 }
+
+  # 画面兜底与协议在同模板混用：
+  # - name: dismiss_popup
+  #   match: { scene: some_popup }
+  #   actions: [{ type: click, points: [{x: 540, y: 400}] }]
+```
+
+### 谓词（match）
+
+- `scene: <场景名>`：截图场景识别（与 conditions 可同用，AND）；
+- `conditions: [...]`：state./role. 条件（同 stateRule 语法）；
+- `once: true`：每次运行最多执行一次。
+
+### 动作原语
+
+`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries）/ wait_protocol / wait_state`、`eval_js`（逃生舱：执行任意 JS，如调用客户端函数）。
+
+### payload 的 `$` 引用与数组选择器
+
+- payload 字符串以 `$` 开头时发送前解析为 state./role. 路径值（如 `"$state.X.ary.@max(n).id"`）；
+- 路径支持链式数组选择器：`@first / @last / @max(field) / @min(field) / @where(field, op, value)`；`@where` 返回过滤后的数组（value 给列表时任一命中），需配合 `@first`/`@max` 或索引取值；
+- 例（白名单选队）：`battle_team_info_ary.@where(server_id, ends_with, ["-888","-11014","-11020"]).@max(player_count).create_id`；
+- 条件 op：`eq / neq / gt / gte / lt / lte / exists / missing / contains / ends_with`（后两者为字符串 op，value 为列表时任一命中）。
+
 ## 场景识别
 
 ### 场景定义
