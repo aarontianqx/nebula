@@ -95,3 +95,4 @@ wardenly-rs/
 |--------------------------|-----------------------------------------------|
 | Features & usage         | `specs/features/functional-guide.md`          |
 | UI/UX design             | `specs/features/ui-design.md`                 |
+| Game protocol reference  | `specs/protocol-reference.md`                 |
