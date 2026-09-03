@@ -379,6 +379,11 @@ impl TaskRunner {
                     }
                     let timeout = timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
                     let expect_refs: Vec<&str> = expects.iter().map(String::as_str).collect();
+                    // Drain buffered events before the first send: a request's
+                    // response must post-date the request. Messages that pile
+                    // up between waits (e.g. the PREVIOUS battle's RESULT)
+                    // must never answer a new wait.
+                    while events.try_recv().is_ok() {}
                     let mut attempt = 0u32;
                     loop {
                         self.send_protocol(protocol, payload, step_name).await?;
@@ -994,5 +999,68 @@ mod tests {
         let (mut runner, _cmd_tx) = build_runner(task);
         let reason = runner.run().await;
         assert_eq!(reason, StopReason::Completed);
+    }
+
+    /// A request's response must post-date its send: stale buffered events
+    /// (e.g. the previous battle's RESULT) must never answer a new wait.
+    /// The runner drains the receiver before the first send; without draining,
+    /// this wait would match the stale RESULT instantly instead of timing out.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn request_drains_stale_events_before_send() {
+        let event_bus = create_event_bus();
+        let task = Task {
+            name: "t".to_string(),
+            description: None,
+            on_no_match: NoMatchRule::default(),
+            steps: vec![once_step(
+                "attack",
+                vec![TaskAction::Request {
+                    protocol: "C_2_S_TEST".to_string(),
+                    payload: json!({}),
+                    expect: None,
+                    expect_any: vec!["S_2_C_KNIGHT_TOWER_TEAM_RESULT".to_string()],
+                    timeout: Some(Duration::from_secs(1)),
+                    conditions: vec![],
+                    retries: 0,
+                    on_timeout: crate::domain::model::OnTimeout::Continue,
+                }],
+            )],
+        };
+
+        let (_cmd_tx2, cmd_rx) = mpsc::channel(8);
+        let mut runner = TaskRunner::new(
+            "s".to_string(),
+            task,
+            vec![],
+            Arc::new(MockDriver),
+            global_ocr_client(),
+            event_bus.clone(),
+            new_shared_game_state(),
+            None,
+            cmd_rx,
+        );
+
+        // A RESULT lands before the request's send (pacing buys us the window)
+        // and must be drained, not matched.
+        let bus = event_bus.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            bus.publish(DomainEvent::ProtocolMessage {
+                session_id: "s".to_string(),
+                protocol_id: 3118,
+                name: Some("S_2_C_KNIGHT_TOWER_TEAM_RESULT".to_string()),
+                data: json!({}),
+            });
+        });
+
+        let start = std::time::Instant::now();
+        let reason = runner.run().await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(reason, StopReason::Completed);
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "stale RESULT answered the wait (drain broken), elapsed={elapsed:?}"
+        );
     }
 }
