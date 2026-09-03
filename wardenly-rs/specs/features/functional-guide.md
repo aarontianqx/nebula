@@ -385,7 +385,9 @@ steps:
 
 ### 动作原语
 
-`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries）/ wait_protocol / wait_state`、`eval_js`（逃生舱：执行任意 JS，如调用客户端函数）。
+`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries，on_timeout: fail|continue）/ wait_protocol / wait_state`、`eval_js`（逃生舱：执行任意 JS，如调用客户端函数）。
+
+> `on_timeout: continue` 用于"相关性会随时间失效"的请求（如攻击将死的 boss）：重试耗尽后不判任务失败，而是交回状态机重新评估（战斗若已结束，自然流转到其它 step）。默认 `fail`。
 
 ### payload 的 `$` 引用与数组选择器
 

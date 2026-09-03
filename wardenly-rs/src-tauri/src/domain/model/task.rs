@@ -172,6 +172,11 @@ pub enum TaskAction {
         conditions: Vec<FieldCondition>,
         #[serde(default)]
         retries: u32,
+        /// After all retries time out: fail the task (default) or treat the
+        /// action as done and let the state machine re-evaluate (for actions
+        /// whose relevance can expire mid-wait, e.g. attacking a dying boss)
+        #[serde(default)]
+        on_timeout: OnTimeout,
     },
 
     /// Wait for a downstream protocol message
@@ -206,6 +211,18 @@ fn default_infinite() -> i32 {
 pub enum QuitReason {
     Completed,
     Exhausted,
+}
+
+/// What a request action does when all retries time out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnTimeout {
+    /// Fail the step (and the task) — default, for hard requirements
+    #[default]
+    Fail,
+    /// Treat the action as done; the state machine re-evaluates — for
+    /// actions whose relevance can expire mid-wait
+    Continue,
 }
 
 /// Task info for frontend display

@@ -57,7 +57,21 @@
                                      ◀── S_2_C_RESULT（boss 结算+奖励）
 ```
 
-### 4.2 关键问题 → 协议答案
+### 4.2 Boss 表与按 boss 独立计数
+
+客户端 `StaticData.knightTower._data.Boss`（2026-09-03 实测提取）：
+
+| ident | boss | lvLimit | 难度档（boss 等级） | 每日次数上限（实测/暂定） |
+|---|---|---|---|---|
+| 1 | 天狼 | 100 | 100~220 | 7（实测） |
+| 2 | 混沌 | 240 | 240~300 | 10（暂定） |
+| 3 | 穷奇 | 310 | 310~350 | 10（暂定） |
+| 4 | 饕餮 | 360 | 360~400 | 10（暂定） |
+
+- `C_2_S_TEAM_NUM {ident}` 按 boss 分别返回**各自独立的今日次数** `num`（客户端 `teamNumInfo` 一次只装一个 boss，含 `ident` 字段，可作为"当前目标 boss"状态）；
+- 客户端配置里 boss 只有中文名（天狼/混沌/穷奇/饕餮），ident 为纯数字；wardenly 的 per-boss 模板（`resources/tasks/knight_tower_{tianlang,hundun}.yaml`）按此表配置。
+
+### 4.3 关键问题 → 协议答案
 
 **今日刷了几次 / 军令剩多少（现有 OCR 替代已用）**
 

@@ -157,6 +157,7 @@ steps:
 
 - **单测 22/22**：schema 解析、选择器全族（白名单+@max 链式）、once 线性流、条件终止、scene+click 混合谓词、wait 超时策略、runner 接线（mock 驱动）；
 - **live 验证**（真实账号 + 外部账号组队开战，使用高阈值临时模板避免当日 num=7 立即终止，用后已删除）：日志完整记录 `reload_tower_info → join_team（白名单选择器选中并入队）→ fight ×2（移动 channel + 攻击命中）→ 战斗结算`，随后执行器按状态机自然进入下一轮——**全程零任务特定 Rust 代码**，全部行为由 YAML 模板驱动；
+- **live 验证 2（2026-09-03，混沌 ident=2，126 区（s11020）测试账号，使用正式模板 `武魁高塔·混沌`）**：`reload_tower_info → join_team → fight ×4 → 攻击命中（角色名归因正确）→ 战斗结算` 通过；过程中发现并修复两点：① `request` 增加 `on_timeout: continue`（战斗结束窗口内的攻击超时不再误杀任务，交回状态机重新评估）；② per-boss 模板拆分后 boss 选择=脚本下拉框（否掉轮转链设计，符合高等级玩家不打低等级 boss 的需求）；
 - 选择器白名单在真实队伍列表上正确过滤并选中人数最多的队伍。
 
 验收标准对照：① knight_tower 循环 ✓（阈值终止路径由单测 `finish_on_state_condition` 覆盖）；②③ 单测覆盖（`linear_once_flow_completes`、`scene_predicate_with_click_fallback`）。存量模板（场景脚本 5 个 + 协议脚本 1 个）的迁移与旧引擎下线按 §6 后续进行。

@@ -23,7 +23,13 @@ use wardenly_lib::application::service::SessionActor;
 use wardenly_lib::domain::event::DomainEvent;
 use wardenly_lib::domain::model::Account;
 
-const TASK_NAME: &str = "zz_test_kt";
+fn task_name() -> String {
+    std::env::var("WLY_TEST_TASK").unwrap_or_else(|_| "zz_test_kt".to_string())
+}
+
+fn role_name() -> String {
+    std::env::var("WLY_TEST_ROLE").expect("WLY_TEST_ROLE is required (the account's in-game role name)")
+}
 
 async fn next_event(events: &mut tokio::sync::broadcast::Receiver<DomainEvent>) -> DomainEvent {
     loop {
@@ -45,11 +51,12 @@ async fn knight_tower_full_loop() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    // The throwaway template must exist (compile-time embedded resource).
+    // The task template must exist (compile-time embedded resource).
+    let task_name = task_name();
     let tasks = wardenly_lib::infrastructure::config::resources::load_tasks().unwrap();
     assert!(
-        tasks.iter().any(|t| t.name == TASK_NAME),
-        "create resources/tasks/{TASK_NAME}.yaml (high-threshold copy of knight_tower.yaml) before running this test"
+        tasks.iter().any(|t| t.name == task_name),
+        "task {task_name} not found in resources/tasks"
     );
 
     let user = std::env::var("WLY_TEST_USER").expect("WLY_TEST_USER is required");
@@ -83,7 +90,7 @@ async fn knight_tower_full_loop() {
     handle
         .cmd_tx
         .send(SessionCommand::StartScript {
-            script_name: TASK_NAME.to_string(),
+            script_name: task_name.clone(),
         })
         .await
         .unwrap();
@@ -109,7 +116,7 @@ async fn knight_tower_full_loop() {
                         joined = true;
                     }
                     "S_2_C_KNIGHT_TOWER_PLAYER_ATTACK" => {
-                        if data.get("name").and_then(|v| v.as_str()) == Some("") {
+                        if data.get("name").and_then(|v| v.as_str()) == Some(role_name().as_str()) {
                             my_attacks += 1;
                             println!(">>> my attack landed ({my_attacks})");
                         }

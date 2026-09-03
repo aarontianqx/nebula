@@ -18,5 +18,6 @@ pub use scene::{ColorPoint, ColorValue, Scene, SceneAction, SceneMatcher};
 pub use script::{Action, OcrAction, OcrMode, OcrRule, Point, Script, ScriptInfo, StateRule, Step};
 pub use session::{SessionInfo, SessionState};
 pub use task::{
-    MatchPredicate, NoMatchPolicy, NoMatchRule, QuitReason, Task, TaskAction, TaskInfo, TaskStep,
+    MatchPredicate, NoMatchPolicy, NoMatchRule, OnTimeout, QuitReason, Task, TaskAction, TaskInfo,
+    TaskStep,
 };

@@ -63,4 +63,5 @@ steps:
           protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK,
           expect: S_2_C_KNIGHT_TOWER_PLAYER_ATTACK,
           timeout: 8s,
-          retries: 3 }
+          retries: 3,
+          on_timeout: continue }   # 战斗可能随时结束：攻击超时视为失效，交回状态机重新评估

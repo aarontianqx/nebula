@@ -366,6 +366,7 @@ impl TaskRunner {
                     timeout,
                     conditions,
                     retries,
+                    on_timeout,
                 } => {
                     let expects: Vec<String> = expect
                         .iter()
@@ -390,6 +391,19 @@ impl TaskRunner {
                             WaitOutcome::Timeout => {
                                 attempt += 1;
                                 if attempt > *retries {
+                                    if matches!(
+                                        on_timeout,
+                                        crate::domain::model::OnTimeout::Continue
+                                    ) {
+                                        tracing::warn!(
+                                            step = %step_name,
+                                            "Request {} -> {:?} timed out after {} attempt(s), continuing",
+                                            protocol,
+                                            expects,
+                                            attempt
+                                        );
+                                        break;
+                                    }
                                     tracing::error!(
                                         step = %step_name,
                                         "Request {} -> {:?} timed out after {} attempt(s)",
