@@ -28,7 +28,8 @@ fn task_name() -> String {
 }
 
 fn role_name() -> String {
-    std::env::var("WLY_TEST_ROLE").expect("WLY_TEST_ROLE is required (the account's in-game role name)")
+    std::env::var("WLY_TEST_ROLE")
+        .expect("WLY_TEST_ROLE is required (the account's in-game role name)")
 }
 
 async fn next_event(events: &mut tokio::sync::broadcast::Receiver<DomainEvent>) -> DomainEvent {
