@@ -153,7 +153,12 @@ impl FieldCondition {
     /// Evaluate against a JSON document root (e.g. one protocol payload).
     pub fn evaluate(&self, root: &Value) -> bool {
         if self.op == "missing" {
-            return resolve_path(root, &self.field).is_none();
+            // null is the game client's "no value" (e.g. post-battle model
+            // reset) — it must count as missing, or refresh logic keyed on
+            // `missing` never refires.
+            return resolve_path(root, &self.field)
+                .filter(|v| !v.is_null())
+                .is_none();
         }
         let Some(actual) = resolve_path(root, &self.field) else {
             return false;
@@ -179,7 +184,9 @@ impl FieldCondition {
 
     fn compare(actual: &Value, op: &str, expected: &Value) -> bool {
         if op == "exists" {
-            return true; // only reached when the path resolved
+            // Only reached when the path resolved; a resolved null still
+            // means "no value" (client reset), so it is not "exists".
+            return !actual.is_null();
         }
         // List expected value: any-hit semantics for equality/string ops.
         if let Value::Array(items) = expected {

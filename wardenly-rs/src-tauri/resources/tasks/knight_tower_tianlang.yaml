@@ -14,11 +14,15 @@ steps:
     actions:
       - { type: quit, reason: exhausted }
 
-  # teamNumInfo 缺失（首次/战后清空）→ 重新加载今日次数（纯协议，无 UI 依赖）
+  # teamNumInfo 缺失（首次/战后客户端置 null）→ 重新加载今日次数（纯协议，无 UI 依赖）。
+  # 此请求同时承担"退出战斗结算界面"的作用：结算弹窗的确定按钮 = 重新发 TEAM_NUM，
+  # 其响应会刷新 teamNumInfo 并把画面切回塔界面（客户端源码确认）。
+  # 战中禁止发送：战中到达的 TEAM_NUM 响应不会更新 teamNumInfo，纯属浪费。
   - name: reload_tower_info
     match:
       conditions:
         - { field: role._knightTower._teamNumInfo, op: missing }
+        - { field: role._knightTower._isBattle, op: eq, value: false }
     actions:
       - { type: request,
           protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM,
@@ -36,15 +40,18 @@ steps:
         - { field: role._knightTower._selfteamId, op: eq, value: -1 }
         - { field: "state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"])", op: exists }
     actions:
-      # 每次执行先拉最新队伍列表（多人环境下队伍随时满员/开战/解散，旧列表不可用）
+      # 每次执行先拉最新队伍列表（多人环境下队伍随时满员/开战/解散，旧列表不可用）。
+      # 短超时：已入队/战中等状态下服务器可能不回此请求，状态机每轮会自然重试，
+      # 长超时只会在开战瞬间造成数十秒失明（实测一场战斗仅 ~8s）。
       - { type: request,
           protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
           payload: { ident: 1 },
           expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
-          timeout: 10s,
-          retries: 2 }
+          timeout: 4s,
+          retries: 1 }
       # server_id_len 由桥按 server_id 自动计算（跨服长度不同，不能写死）；
-      # JOIN 失败（队伍已没）不判死刑，交回状态机拉新列表选下一队
+      # JOIN 失败（队伍已没）不判死刑，交回状态机拉新列表选下一队；
+      # abort_if：若入队瞬间恰逢开战（RECONNECT 置 isBattle），立即转去战斗
       - type: request
         protocol: C_2_S_KNIGHT_TOWER_TEAM_JOIN
         payload:
@@ -52,8 +59,10 @@ steps:
           create_id: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"]).@max(player_count).create_id"
           server_id: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\", \"-11014\", \"-11020\"]).@max(player_count).server_id"
         expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_INFO, S_2_C_KNIGHT_TOWER_PLAYER_COUNT]
-        timeout: 10s
+        timeout: 5s
         retries: 1
+        abort_if:
+          - { field: role._knightTower._isBattle, op: eq, value: true }
 
   # 无队时周期性刷新队伍列表（约 1~2s 一轮），等白名单队伍出现
   - name: refresh_team_info
@@ -66,8 +75,8 @@ steps:
           protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
           payload: { ident: 1 },
           expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
-          timeout: 10s,
-          retries: 2 }
+          timeout: 4s,
+          retries: 1 }
 
   # 战斗中且攻击次数未满 → 移入 channel 并攻击（首击可能不落地，request 自带重试）
   - name: fight
@@ -79,10 +88,14 @@ steps:
       # 观测：战斗标志位（isBattle 未复位是"打尸体"的直接证据）
       - { type: log_state, paths: ["role._knightTower._isBattle", "role._knightTower._fightNum", "role._militaryOrder"] }
       - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_TEAM_PLAYER_MOVE, payload: { channel: 1 } }
-      # 等待"攻击命中或战斗结算"——结算也是本轮攻击的答案，boss 一死立即进入下一轮，
-      # 避免在战斗结束窗口空等重试（曾造成 10~30s 入队延迟）
-      - { type: request,
-          protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK,
-          expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, S_2_C_KNIGHT_TOWER_RESULT],
-          timeout: 8s,
-          retries: 1 }
+      # 等待"攻击命中或战斗结算"——结算也是本轮攻击的答案。
+      # abort_if 是双保险：RESULT 在 step 匹配与发送之间到达时（实测每场必现的竞态），
+      # 客户端 0.3s 内复位 isBattle，本请求立即中止而不是向死 boss 幽灵攻击并白烧
+      # 2×8s 超时与军令
+      - type: request
+        protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK
+        expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, S_2_C_KNIGHT_TOWER_RESULT]
+        timeout: 8s
+        retries: 1
+        abort_if:
+          - { field: role._knightTower._isBattle, op: eq, value: false }

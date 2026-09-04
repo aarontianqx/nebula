@@ -57,6 +57,9 @@ pub struct TaskRunner {
 enum WaitOutcome {
     Matched,
     Timeout,
+    /// An `abort_if` condition took hold — the wait's premise is gone
+    /// (e.g. battle over); hand back to the state machine immediately.
+    Aborted,
     Stopped,
 }
 
@@ -97,7 +100,7 @@ impl TaskRunner {
 
     /// Main execution loop.
     pub async fn run(&mut self) -> StopReason {
-        tracing::info!(task = %self.task.name, "Task started");
+        tracing::info!(session = %self.session_id, task = %self.task.name, "Task started");
 
         if let Err(reason) = self.validate_protocols() {
             return reason;
@@ -117,7 +120,7 @@ impl TaskRunner {
                     no_match_since = None;
                     // Clone what we need so the loop can borrow self mutably.
                     let step = self.task.steps[idx].clone();
-                    tracing::info!(task = %self.task.name, step = %step.name, "Step matched");
+                    tracing::info!(session = %self.session_id, task = %self.task.name, step = %step.name, "Step matched");
                     self.event_bus.publish(DomainEvent::ScriptStepExecuted {
                         session_id: self.session_id.clone(),
                         step_index: idx,
@@ -133,7 +136,16 @@ impl TaskRunner {
                         .execute_actions(&step.actions, &step.name, &mut events)
                         .await
                     {
-                        tracing::error!(task = %self.task.name, step = %step.name, "Step failed: {:?}", reason);
+                        // A quit action (completed/exhausted) or manual stop is
+                        // a normal ending, not a failure — don't log ERROR.
+                        match reason {
+                            StopReason::Error => {
+                                tracing::error!(session = %self.session_id, task = %self.task.name, step = %step.name, "Step failed: {:?}", reason)
+                            }
+                            _ => {
+                                tracing::info!(session = %self.session_id, task = %self.task.name, step = %step.name, "Step ended: {:?}", reason)
+                            }
+                        }
                         return reason;
                     }
 
@@ -143,7 +155,7 @@ impl TaskRunner {
                 }
                 None => match self.task.on_no_match.policy {
                     NoMatchPolicy::Quit => {
-                        tracing::info!(task = %self.task.name, "No step matches, task completed");
+                        tracing::info!(session = %self.session_id, task = %self.task.name, "No step matches, task completed");
                         return StopReason::Completed;
                     }
                     NoMatchPolicy::Wait => {
@@ -155,6 +167,7 @@ impl TaskRunner {
                             .unwrap_or(Duration::from_secs(120));
                         if since.elapsed() > timeout {
                             tracing::info!(
+                                session = %self.session_id,
                                 task = %self.task.name,
                                 "No step matched within {:?}, task completed",
                                 timeout
@@ -367,6 +380,7 @@ impl TaskRunner {
                     conditions,
                     retries,
                     on_timeout,
+                    abort_if,
                 } => {
                     let expects: Vec<String> = expect
                         .iter()
@@ -379,6 +393,25 @@ impl TaskRunner {
                     }
                     let timeout = timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
                     let expect_refs: Vec<&str> = expects.iter().map(String::as_str).collect();
+                    // Resolve $-refs once per action execution. If the
+                    // selection basis is gone (e.g. the team list just went
+                    // empty), skip the whole action: waiting for a response
+                    // to a request we never sent would be a fake timeout.
+                    let Some(resolved_payload) = condition_eval::resolve_payload_refs(
+                        payload,
+                        &self.game_state,
+                        &self.browser,
+                    )
+                    .await
+                    else {
+                        tracing::warn!(
+                            session = %self.session_id,
+                            step = %step_name,
+                            "Skipping {}: payload $-references unresolved (selection basis gone)",
+                            protocol
+                        );
+                        continue;
+                    };
                     // Drain buffered events before the first send: a request's
                     // response must post-date the request. Messages that pile
                     // up between waits (e.g. the PREVIOUS battle's RESULT)
@@ -386,12 +419,43 @@ impl TaskRunner {
                     while events.try_recv().is_ok() {}
                     let mut attempt = 0u32;
                     loop {
-                        self.send_protocol(protocol, payload, step_name).await?;
+                        // The request's premise may have expired between step
+                        // match and send, or between attempts (e.g. the battle
+                        // ended while earlier actions ran) — never send into
+                        // an aborted state; hand back to the state machine.
+                        if !abort_if.is_empty()
+                            && condition_eval::conditions_met(
+                                abort_if,
+                                &self.game_state,
+                                &self.browser,
+                                false,
+                            )
+                            .await
+                        {
+                            tracing::info!(
+                                session = %self.session_id,
+                                step = %step_name,
+                                "Request {} aborted by abort_if before send",
+                                protocol
+                            );
+                            break;
+                        }
+                        self.send_protocol(protocol, &resolved_payload, step_name)
+                            .await?;
                         match self
-                            .wait_protocol(&expect_refs, conditions, timeout, events)
+                            .wait_protocol(&expect_refs, conditions, timeout, abort_if, events)
                             .await
                         {
                             WaitOutcome::Matched => break,
+                            WaitOutcome::Aborted => {
+                                tracing::info!(
+                                    session = %self.session_id,
+                                    step = %step_name,
+                                    "Request {} wait aborted by abort_if",
+                                    protocol
+                                );
+                                break;
+                            }
                             WaitOutcome::Stopped => return Err(StopReason::Manual),
                             WaitOutcome::Timeout => {
                                 attempt += 1;
@@ -401,6 +465,7 @@ impl TaskRunner {
                                         crate::domain::model::OnTimeout::Continue
                                     ) {
                                         tracing::warn!(
+                                            session = %self.session_id,
                                             step = %step_name,
                                             "Request {} -> {:?} timed out after {} attempt(s), continuing",
                                             protocol,
@@ -410,6 +475,7 @@ impl TaskRunner {
                                         break;
                                     }
                                     tracing::error!(
+                                        session = %self.session_id,
                                         step = %step_name,
                                         "Request {} -> {:?} timed out after {} attempt(s)",
                                         protocol,
@@ -419,6 +485,7 @@ impl TaskRunner {
                                     return Err(StopReason::Error);
                                 }
                                 tracing::warn!(
+                                    session = %self.session_id,
                                     step = %step_name,
                                     "Request {} -> {:?} timed out, retrying ({}/{})",
                                     protocol,
@@ -437,10 +504,10 @@ impl TaskRunner {
                 } => {
                     let timeout = timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
                     match self
-                        .wait_protocol(&[protocol.as_str()], conditions, timeout, events)
+                        .wait_protocol(&[protocol.as_str()], conditions, timeout, &[], events)
                         .await
                     {
-                        WaitOutcome::Matched => {}
+                        WaitOutcome::Matched | WaitOutcome::Aborted => {}
                         WaitOutcome::Timeout => {
                             tracing::error!(step = %step_name, "Timeout ({:?}) waiting for protocol {}", timeout, protocol);
                             return Err(StopReason::Error);
@@ -454,7 +521,8 @@ impl TaskRunner {
                 } => {
                     let timeout = timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
                     match self.wait_state(conditions, timeout).await {
-                        WaitOutcome::Matched => {}
+                        // wait_state has no abort_if input; Aborted is unreachable.
+                        WaitOutcome::Matched | WaitOutcome::Aborted => {}
                         WaitOutcome::Timeout => {
                             tracing::error!(step = %step_name, "Timeout ({:?}) waiting for game state", timeout);
                             return Err(StopReason::Error);
@@ -498,10 +566,10 @@ impl TaskRunner {
                         .await
                         {
                             Some(value) => {
-                                tracing::info!(step = %step_name, "state {} = {}", path, value)
+                                tracing::info!(session = %self.session_id, step = %step_name, "state {} = {}", path, value)
                             }
                             None => {
-                                tracing::info!(step = %step_name, "state {} = <unresolved>", path)
+                                tracing::info!(session = %self.session_id, step = %step_name, "state {} = <unresolved>", path)
                             }
                         }
                     }
@@ -622,15 +690,26 @@ impl TaskRunner {
     }
 
     /// Wait for a downstream message of any of the given protocols whose
-    /// payload satisfies all conditions.
+    /// payload satisfies all conditions. While waiting, `abort_if` conditions
+    /// are polled on a short tick: when they hold, the wait ends as Aborted
+    /// (the wait's premise is gone — e.g. the battle ended mid-wait).
     async fn wait_protocol(
         &mut self,
         protocols: &[&str],
         conditions: &[FieldCondition],
         timeout: Duration,
+        abort_if: &[FieldCondition],
         events: &mut broadcast::Receiver<DomainEvent>,
     ) -> WaitOutcome {
+        const ABORT_POLL: Duration = Duration::from_millis(200);
         let deadline = Instant::now() + timeout;
+
+        if !abort_if.is_empty()
+            && condition_eval::conditions_met(abort_if, &self.game_state, &self.browser, false)
+                .await
+        {
+            return WaitOutcome::Aborted;
+        }
 
         loop {
             if self.stop_requested() {
@@ -658,12 +737,27 @@ impl TaskRunner {
                         }
                         Ok(_) => {}
                         Err(broadcast::error::RecvError::Lagged(n)) => {
-                            tracing::warn!("Protocol event stream lagged by {} messages", n);
+                            tracing::warn!(session = %self.session_id, "Protocol event stream lagged by {} messages", n);
                         }
                         Err(broadcast::error::RecvError::Closed) => return WaitOutcome::Stopped,
                     }
                 }
-                _ = sleep(deadline - now) => return WaitOutcome::Timeout,
+                // Tick: re-check the deadline and poll abort conditions.
+                // Abort polling lives only here (not per event) so a message
+                // flood can't turn into a CDP-eval storm.
+                _ = sleep((deadline - now).min(ABORT_POLL)) => {
+                    if !abort_if.is_empty()
+                        && condition_eval::conditions_met(
+                            abort_if,
+                            &self.game_state,
+                            &self.browser,
+                            false,
+                        )
+                        .await
+                    {
+                        return WaitOutcome::Aborted;
+                    }
+                }
             }
         }
     }
@@ -1051,6 +1145,7 @@ mod tests {
                     conditions: vec![],
                     retries: 0,
                     on_timeout: crate::domain::model::OnTimeout::Continue,
+                    abort_if: vec![],
                 }],
             )],
         };
@@ -1135,11 +1230,75 @@ mod tests {
                     conditions: vec![],
                     retries: 0,
                     on_timeout: Default::default(),
+                    abort_if: vec![],
                 }],
             )],
         };
         let (mut runner, _cmd_tx) = build_runner(task);
         let reason = runner.run().await;
         assert_eq!(reason, StopReason::Completed);
+    }
+
+    /// abort_if aborts an in-flight wait the moment its premise vanishes
+    /// (e.g. battle RESULT resets isBattle mid-wait): no full timeout burn,
+    /// and the task hands back to the state machine (Continue semantics).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn request_aborts_when_abort_if_holds_mid_wait() {
+        let game_state = new_shared_game_state();
+        let task = Task {
+            name: "t".to_string(),
+            description: None,
+            on_no_match: NoMatchRule::default(),
+            steps: vec![once_step(
+                "attack",
+                vec![TaskAction::Request {
+                    protocol: "C_2_S_TEST".to_string(),
+                    payload: json!({}),
+                    expect: Some("S_2_C_NEVER_ARRIVES".to_string()),
+                    expect_any: vec![],
+                    timeout: Some(Duration::from_secs(5)),
+                    conditions: vec![],
+                    retries: 3,
+                    on_timeout: crate::domain::model::OnTimeout::Continue,
+                    abort_if: vec![FieldCondition {
+                        field: "state.S_2_C_BATTLE_OVER".to_string(),
+                        op: "exists".to_string(),
+                        value: json!(null),
+                    }],
+                }],
+            )],
+        };
+        let (cmd_tx, cmd_rx) = mpsc::channel(8);
+        let mut runner = TaskRunner::new(
+            "s".to_string(),
+            task,
+            vec![],
+            Arc::new(MockDriver),
+            global_ocr_client(),
+            create_event_bus(),
+            game_state.clone(),
+            None,
+            cmd_rx,
+        );
+        let _cmd_tx = cmd_tx; // keep the command channel open
+
+        // The premise vanishes 300ms into the wait.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            game_state
+                .write()
+                .unwrap()
+                .update("S_2_C_BATTLE_OVER", json!({}));
+        });
+
+        let start = std::time::Instant::now();
+        let reason = runner.run().await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(reason, StopReason::Completed);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "abort_if did not short-circuit the wait, elapsed={elapsed:?}"
+        );
     }
 }

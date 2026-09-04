@@ -177,6 +177,14 @@ pub enum TaskAction {
         /// hard gates only; game-level timeouts must never kill a task.
         #[serde(default)]
         on_timeout: OnTimeout,
+        /// Abort the request when these conditions hold: checked before the
+        /// first send, before each retry, and polled during the wait. The
+        /// request's premise can expire between step match and send (e.g. the
+        /// battle ended while earlier actions ran); aborting hands back to
+        /// the state machine immediately instead of burning a send + full
+        /// timeout against a stale target.
+        #[serde(default)]
+        abort_if: Vec<FieldCondition>,
     },
 
     /// Wait for a downstream protocol message

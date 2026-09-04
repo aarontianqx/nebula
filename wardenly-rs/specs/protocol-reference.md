@@ -152,8 +152,13 @@
 
 - **进塔/读队/加入全部可以纯协议，无需打开任何界面**：客户端的 `enterKnightTower(ident)` 等价于 `C_2_S_KNIGHT_TOWER_TEAM_NUM {ident}`（bundle 源码确认，ident 为 boss 标识，天狼=1）。2026-09-03 在新账号上验证：不发任何 UI 事件，`TEAM_NUM → TEAM_NUM_INFO（队伍列表）→ TEAM_JOIN（入队成功）` 全链路成立；
 - 注意：客户端收到 `S_2_C_TEAM_NUM` 响应后**会自己打开塔界面**（bundle 内建行为）。这对自动化无影响（数据不依赖画面），但"画面完全不动"是做不到的——也不需要；
+- **RESULT 时客户端模型全量复位**（`_onKnightTowerResult` → `clear()`，纯协议处理、不依赖任何界面）：`_isBattle=false`、`_selfteamId=-1`、`_teamNumInfo=null`、`_fightNum=0`。2026-09-04 实测：RESULT 后 ~0.3s 内全部生效；
+- **"退出战斗结算"按钮 = 重新发 `C_2_S_KNIGHT_TOWER_TEAM_NUM {ident}`**（结算面板 `ok_btn` → `_onClose()` → `enterKnightTower()`，源码确认）。其响应在非战斗分支会刷新 `_teamNumInfo` 并 `REPLACE_ALL` 切回塔界面——自动化无需点击任何按钮，战后重发 TEAM_NUM 即同时完成"退出结算画面"与"刷新今日次数"。客户端战后**不会**自动重拉，不发就永远停留在 null；
+- **战中禁止发 TEAM_NUM**：`_onKnightTowerTeamNum` 在 `is_re_connect || _isBattle` 分支不更新 `_teamNumInfo`（仅重连时更新），还会强制把画面拉回战斗视图。战中拉次数 = 纯浪费 + 画面干扰；
+- **`fightNum` 的维护**：开战时由 `S_2_C_TEAM_RECONNECT.num` 初始化（0），攻击命中后增加，RESULT 时清零；≥3 后客户端走 `_goldRelive` 金币复活路径（自动化用 `fightNum<3` 谓词规避，永不触发）；
+- 队长侧链路（供将来队长模板参考）：建队 = `C_2_S_KNIGHT_TOWER_SET_CUR_BOSS_ID {boss_level}` + `C_2_S_KNIGHT_TOWER_TEAM_CREATE {ident, limit_level, server_limit, chaos_level}`（chaos_level 取 `teamNumInfo.chaos_level`）；开战 = 打开战斗视图，其 `start()` 自动发 `C_2_S_KNIGHT_TOWER_TEAM_START`（非重连且非战中时）；
 - **退出**：待命时用 `C_2_S_TEAM_LEAVE {}` → `S_2_C_PLAYER_LEAVE` 确认；结算后队伍自动解散无需手动退；
-- **num 语义**：今日参与次数（含未命中的 phantom 攻击），界面显示 `军令/(num+1)`（如 `1066/8`）；7 是天狼性价比阈值，之后仍可打但性价比低；
+- **num 语义**：今日参与场次（含未命中的 phantom 参与），界面显示 `军令/(num+1)`（如 `1066/8`）——军令只在开战参与时扣，第 N 场耗 N 令，战斗内 3 次攻击不额外耗令；7 是天狼性价比阈值，之后仍可打但性价比低；
 - **teamState 不可靠**（战中/重组期间会与实际不符），以 `selfteamId + _isBattle + TEAM_RECONNECT` 为准；
 - **军令会计**：未命中 channel 的"幽灵攻击"也扣军令——先 MOVE 后 ATTACK 是硬性顺序；
 - 战斗中重连用 `C_2_S_TEAM_PLAYER_INFO {}` 拉 `S_2_C_TEAM_RECONNECT {cur_boss_soldier_num, over_time, num}` 恢复现场。

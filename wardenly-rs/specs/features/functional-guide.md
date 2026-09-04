@@ -323,7 +323,8 @@ steps:
   - `state.<协议名>.<字段>` — 引用结构化游戏状态（GameState 按协议名保存最新下行负载）；
   - `role.<字段>` — 直读游戏客户端 role 模型（如 `role._militaryOrder`、`role._knightTower._teamNumInfo.num`），随时可读、无需等待推送；注意部分字段（如 `_teamNumInfo`）要先进入对应界面才由服务端下发。
 - `value` 可以是字面量，也可以是 `"$<路径>"` 引用另一个字段做字段间比较（如 `"$role._militaryOrder"`）。
-- `op`：`eq / neq / gt / gte / lt / lte / exists`（`exists` 只要求路径存在，忽略 value）。
+- `op`：`eq / neq / gt / gte / lt / lte / exists / missing`（`missing` 只要求路径解析不出**非 null 值**，忽略 value）。
+- **null 语义**：游戏客户端复位模型时把字段置 null（如战后 `role._knightTower._teamNumInfo = null`）——null 一律视为"无值"：`missing` 命中、`exists` 不命中。刷新类谓词（`missing → 重新拉取`）依赖这一语义才能在每次战后重燃。
 
 ### stateRule（场景脚本的精确判定，替代 ocrRule）
 
@@ -385,9 +386,10 @@ steps:
 
 ### 动作原语
 
-`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries，on_timeout: fail|continue）/ wait_protocol / wait_state`、`eval_js`（逃生舱：执行任意 JS，如调用客户端函数）。
+`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries，on_timeout: fail|continue，abort_if）/ wait_protocol / wait_state`、`eval_js`（逃生舱：执行任意 JS，如调用客户端函数）。
 
-> `on_timeout: continue` 用于"相关性会随时间失效"的请求（如攻击将死的 boss）：重试耗尽后不判任务失败，而是交回状态机重新评估（战斗若已结束，自然流转到其它 step）。默认 `fail`。
+> `on_timeout: continue` 用于"相关性会随时间失效"的请求（如攻击将死的 boss）：重试耗尽后不判任务失败，而是交回状态机重新评估（战斗若已结束，自然流转到其它 step）。默认 `continue`。
+> `abort_if: [conditions]` 用于"前提可能中途失效"的请求：发送前、每次重试前、等待中（200ms 轮询）都会检查；条件成立立即中止并交回状态机，不重试不超时。典型用法：攻击请求配 `abort_if: isBattle==false`——RESULT 在 step 匹配与发送之间到达时（每场必现的竞态），避免向死 boss 幽灵攻击、白烧超时。
 
 ### payload 的 `$` 引用与数组选择器
 

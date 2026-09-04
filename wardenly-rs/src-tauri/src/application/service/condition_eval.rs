@@ -42,10 +42,13 @@ async fn condition_met(
     game_state: &SharedGameState,
     browser: &Arc<dyn BrowserDriver>,
 ) -> bool {
-    // `missing` holds exactly when the path does not resolve.
+    // `missing` holds exactly when the path does not resolve to a non-null
+    // value — the game client nulls model fields on reset (e.g. knight tower
+    // clears teamNumInfo at battle end), and null must mean "no value".
     if condition.op == "missing" {
         return resolve_path(&condition.field, game_state, browser)
             .await
+            .filter(|v| !v.is_null())
             .is_none();
     }
     let Some(actual) = resolve_path(&condition.field, game_state, browser).await else {

@@ -161,3 +161,17 @@ steps:
 - 选择器白名单在真实队伍列表上正确过滤并选中人数最多的队伍。
 
 验收标准对照：① knight_tower 循环 ✓（阈值终止路径由单测 `finish_on_state_condition` 覆盖）；②③ 单测覆盖（`linear_once_flow_completes`、`scene_predicate_with_click_fallback`）。存量模板（场景脚本 5 个 + 协议脚本 1 个）的迁移与旧引擎下线按 §6 后续进行。
+
+## 9. 多账号实战问题与修复（2026-09-04）
+
+888 区多账号实战暴露三个问题，经 live 观测（队员身份连打 7 场全程协议+模型时间线）与 bundle 静态分析（KnightTower 模型/战斗视图/结算面板源码）定位并修复：
+
+1. **战后 10~20s 才重新入队**：每场战斗 RESULT 恰好落在 fight step 匹配与 request 发送之间的 ~0.5s 窗口，发送前 drain 把 RESULT 丢弃 → 攻击发向死 boss（服务器不回包）→ 白烧 2×8s 超时 + 幽灵攻击军令。修复：`request` 新增 `abort_if`（发送前/重试前/等待中 200ms 轮询），攻击请求配 `abort_if: isBattle==false`。
+2. **打满日限后不退出、不停攻击**：RESULT 时客户端把 `_teamNumInfo` 置 **null**（`_onKnightTowerResult → clear()`，源码确认），而 `missing` 只认"路径解析失败"——null 被误认为"有值"，`reload_tower_info` 首场战后永不触发，num 永远停在登录时的旧值，`finish` 永不成立。修复：条件求值中 **null 一律视为无值**（`missing` 命中、`exists` 不命中）。配套模板修正：reload 增加 `isBattle==false` 守卫（`_onKnightTowerTeamNum` 战中分支不更新 teamNumInfo，源码确认）。
+3. **开战瞬间个别号不攻击**：战斗实测仅 ~8s；卡在 unanswered 请求窗口（入队后 TEAM_NUM_INFO 无响应，3×10s）的号会错过整场。修复：join/refresh 请求超时降至 4~5s、retries 降 1（状态机每轮自然重试）；JOIN 请求配 `abort_if: isBattle==true`（入队瞬间恰逢开战立即转战斗）。
+
+关键认知（源码级）：**"退出战斗结算"按钮 = 重发 `C_2_S_KNIGHT_TOWER_TEAM_NUM`**（结算面板 `ok_btn → enterKnightTower()`），响应会刷新次数并切回塔界面——战后 reload 一步同时完成"退出结算画面"和"刷新判停数据"，无需任何坐标点击。
+
+**live 验证 3（2026-09-04，888 区测试账号，修复后的天狼模板 + solo 队长注入）**：RESULT 后 1.0s 触发 reload（num 刷新 0→1）、1.7s 完成重新入队（修复前 ~17s）；`aborted by abort_if before send` 日志确认幽灵攻击零发送；军令零浪费。
+
+**live 验证 4（2026-09-04 晚，9 账号真实车队，天狼下午场 + 混沌晚场）**：天狼场 8 号满 7 自动退出（ResourceExhausted ×8）；混沌场 7 号全部打满 10 自动退出、次数每场精准刷新、abort_if 拦截 52+ 次幽灵攻击、战中入队竞态由 abort_if 正常接管。新发现并已修复/记录：① 攻击确认改认自己名字（`$role.accName`），不再被队友广播提前释放（原实现节奏可能超发，触及第 4 击金币路径的风险敞口）；② `fightNum` 快速连场残留（0→1→2 跨场递增，来源待确认，保守方向）；③ 阵亡复活弹窗（客户端自动弹，确定=扣金）由模板用 `eval_js` 销毁视图兜底，不碰坐标。
