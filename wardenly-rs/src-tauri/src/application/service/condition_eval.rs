@@ -51,7 +51,10 @@ async fn condition_met(
             .filter(|v| !v.is_null())
             .is_none();
     }
-    let Some(actual) = resolve_path(&condition.field, game_state, browser).await else {
+    let Some(actual) = resolve_path(&condition.field, game_state, browser)
+        .await
+        .or_else(|| condition.default.clone())
+    else {
         tracing::debug!("Condition field unresolved: {}", condition.field);
         return false;
     };
@@ -306,6 +309,7 @@ mod tests {
             field: field.to_string(),
             op: op.to_string(),
             value,
+            default: None,
         }
     }
 

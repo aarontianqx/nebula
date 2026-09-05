@@ -762,6 +762,7 @@ mod tests {
                         field: "role._knightTower._teamNumInfo.num".to_string(),
                         op: "gte".to_string(),
                         value: json!(7),
+                        default: None,
                     }],
                     action: OcrAction::QuitExhausted,
                 }),

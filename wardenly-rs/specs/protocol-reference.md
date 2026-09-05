@@ -172,6 +172,16 @@
 - **`fightNum` 跨场残留**（实测）：快速连场时新场开局读数可能带上上一场的计数（观测到 0→1→2 逐场递增），来源（服务器 RECONNECT.num 回报 vs 客户端竞态）待确认。影响是保守方向（少打，不会多打）；3 次上限的判定因此叠加"自己命中确认"双保险；
 - **攻击确认延迟**：服务器约 7s 一个回合处理攻击，命中广播并非即时；队员侧节奏天然同步到这个回合周期。
 
+### 4.6 打折商城（集市）协议族（2026-09-05，live 验证）
+
+- **加载**：打开集市视图客户端发 `C_2_S_DISCOUNT_SHOP_INFO {}`；纯协议可直发。响应两条：
+  - `S_2_C_DISCOUNT_SHOP_INFO {count, gift:[{id, buyNum}]}`——`buyNum` = **个人已购**（从未购买则无该条目）；
+  - `S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM {count, gift:[{id, buyNum}]}`——`buyNum` = **全服已购**；他人购买时还有 `S_2_C_DISCOUNT_SHOP_GIFT_BUY_TOTAL_NUM` 实时广播。
+- **商品表**：不在本协议族里——在客户端活动详情 `role.activity.getActivityInfo(61)`（`S_2_C_ACTIVITY_INFO` 分片下发，字节数组分块、**index 递减、index=0 为最后一片**，客户端拼好后 `bytesToString` 成 JSON）。每项：`{name, price, oldPrice, discount, limitNum(个人限购), count(全服总量), level(等级门槛), viplevel(vip 门槛), bag, reward:["type x id x num"]}`；购买用的 `ident` 是该数组的**下标**。内容物名称用 `StaticDataUtil.getCostInfo(type, id, num)` 解析。
+- **购买**：`C_2_S_DISCOUNT_SHOP_GIFT_BUY {ident}` → `S_2_C_DISCOUNT_SHOP_GIFT_BUY {index, buyNum(个人已购), buyTotalNum}`。实测 888 区完整往返，扣款精确（135 金/单酒馆礼盒）。
+- **拒绝是静默的**：vip/等级/限购不满足时服务器**不回任何包**（无错误提示协议），所以模板必须在客户端侧判全部门槛再发购买，超时即视为未成交交回状态机。
+- 本期商品（2026-09-05 集市）名称对照：战魂血玉=血玉礼盒（ident 4）、东海鲛珠=鲛珠礼包（11）、琉璃灯盏=许愿大礼包（5）、五花马=五花马礼包（1）、酒馆礼包=酒馆礼盒（3）。**活动换货 ident 会漂移**，模板第一步强制做 ident→名称校验，对不上直接失败。
+
 ## 5. 自助查询任意协议的方法
 
 1. **找名字**：`grep -i tower wardenly-rs/src-tauri/resources/protocols/registry.json`（或在游戏页 `Object.keys(__require('ProtocolBase').Protocol)`）；

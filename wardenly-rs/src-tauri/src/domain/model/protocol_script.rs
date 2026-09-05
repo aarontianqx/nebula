@@ -147,6 +147,13 @@ pub struct FieldCondition {
     /// Value to compare against
     #[serde(default)]
     pub value: Value,
+
+    /// Substitute for the actual value when the field path does not resolve
+    /// (e.g. a purchase-count entry that only exists after the first buy).
+    /// Ignored by the `missing` op. Use only when absence has a safe meaning
+    /// — an unresolvable path otherwise fails the condition.
+    #[serde(default)]
+    pub default: Option<Value>,
 }
 
 impl FieldCondition {
@@ -160,7 +167,7 @@ impl FieldCondition {
                 .filter(|v| !v.is_null())
                 .is_none();
         }
-        let Some(actual) = resolve_path(root, &self.field) else {
+        let Some(actual) = resolve_path(root, &self.field).or_else(|| self.default.clone()) else {
             return false;
         };
         self.evaluate_value(&actual)
@@ -234,6 +241,7 @@ mod tests {
             field: field.to_string(),
             op: op.to_string(),
             value,
+            default: None,
         };
 
         assert!(cond("mailNums", "gt", json!(0)).evaluate(&doc));
@@ -242,6 +250,30 @@ mod tests {
         assert!(cond("nested.flag", "eq", json!(true)).evaluate(&doc));
         assert!(!cond("missing", "eq", json!(0)).evaluate(&doc));
         assert!(!cond("mailNums", "bogus", json!(0)).evaluate(&doc));
+    }
+
+    /// `default` substitutes when the path does not resolve (e.g. a buy-count
+    /// entry that only exists after the first purchase); a resolved value
+    /// ignores the default.
+    #[test]
+    fn field_condition_default_substitution() {
+        let doc = json!({"bought": 3});
+        let mut c = FieldCondition {
+            field: "absent".to_string(),
+            op: "lt".to_string(),
+            value: json!(5),
+            default: Some(json!(0)),
+        };
+        assert!(c.evaluate(&doc)); // absent → default 0 < 5
+        c.field = "bought".to_string();
+        assert!(c.evaluate(&doc)); // resolved 3 < 5
+        c.value = json!(3);
+        assert!(!c.evaluate(&doc)); // resolved 3, not < 3
+                                    // Without a default, an unresolvable path fails as before.
+        c.default = None;
+        c.field = "absent".to_string();
+        c.value = json!(5);
+        assert!(!c.evaluate(&doc));
     }
 
     #[test]
