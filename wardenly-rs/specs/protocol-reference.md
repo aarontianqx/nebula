@@ -176,7 +176,26 @@
 
 1. **找名字**：`grep -i tower wardenly-rs/src-tauri/resources/protocols/registry.json`（或在游戏页 `Object.keys(__require('ProtocolBase').Protocol)`）；
 2. **看字段结构**：bundle 里搜 `type=a.Protocol.<名字>`，前方几百字符就是字段定义（`this.fields=[...]` 列出顺序，`this.<字段>={type:...}` 给出类型）；
-3. **看真实数据**：live session 里 patch `_parsePacket` 抓包（`tests/` 下的集成测试和调研文档 §9 都有现成做法）；或直接读客户端模型 `__require('Account').default.get().role`。
+3. **看真实数据**：live session 里 patch `_parsePacket` 抓包（`tests/` 下的集成测试和调研文档 §9 都有现成做法）；或直接读客户端模型 `__require('Account').default.get().role`；
+4. **最省事：事件流水**。每个会话的全部协议流量（下行 + 上行，含游戏自己发的）都落在 `logs/sessions/*.jsonl`（见 functional-guide「事件流水」节）。手动玩一遍功能再翻流水，就是最快的侦察方式。
+
+### 5.1 常用参数取数表
+
+| 参数 | 取数路径 | 来源 |
+|---|---|---|
+| 银币 | `state.S_2_C_UPDATE_BENEFIT.money` | 资源每次变化服务器全量推 |
+| 金币 | `state.S_2_C_UPDATE_BENEFIT.goldenCoins` / `role.gold` | 同上 / 客户端模型 |
+| 军令 | `state.S_2_C_UPDATE_BENEFIT.militoryOrder` / `role._militaryOrder` | 同上 / 客户端模型（官方字段拼写错误是 militoryOrder） |
+| 军功/战功 | `state.S_2_C_UPDATE_BENEFIT.geste` | 同上 |
+| 声望 | `state.S_2_C_UPDATE_BENEFIT.prestige` | 同上 |
+| 粮草 | `state.S_2_C_UPDATE_BENEFIT.food` | 同上 |
+| 兵力 | `state.S_2_C_UPDATE_BENEFIT.soldier_num` | 同上 |
+| 将魂 | `state.S_2_C_UPDATE_BENEFIT.soul_num` | 同上 |
+| 角色名 | `role.accName` | 客户端模型（`isSelf` 判定用它） |
+| 等级 | `role.level` | 客户端模型 |
+| 高塔今日次数 | `role._knightTower._teamNumInfo.num`（含 `.ident` 校验目标 boss） | 客户端模型，战后需重新拉（见 §4.5） |
+
+> 写任务时不确定路径对不对：用内置模板「调试·资源快照」跑一次，日志里就是当前真实值。
 
 ## 6. 已知注意事项
 

@@ -59,13 +59,14 @@
             }
           }
         }
+        // Flag so the patched Connection.send can tag this as automation-originated.
+        state.selfSend = true;
         c.send(id, data);
         return 'OK';
       } catch (e) {
         return 'ERR ' + (e && e.message ? e.message : String(e));
       }
-    },
-    /**
+    },    /**
      * Read a value from the game's own client role model (always current,
      * maintained by the game itself — no push required).
      * @param {string} path dotted path under role, e.g. '_militaryOrder' or
@@ -123,6 +124,27 @@
           return data;
         };
         c.__wardenlyPatched = true;
+      }
+
+      // Report client-originated upstream sends too: wrapping Connection.send
+      // turns the page into a full traffic logger (kind='up'). Sends made
+      // through __wardenly.send (automation) are flagged self=true so journals
+      // can tell them apart from the game's own UI-driven traffic.
+      if (!c.__wardenlySendPatched) {
+        const origSend = c.send.bind(c);
+        c.send = function (id, data) {
+          try {
+            const byAutomation = state.selfSend === true;
+            state.selfSend = false;
+            const clean = Object.assign({}, data || {});
+            delete clean.pp;
+            report({ dir: 'up', self: byAutomation, id: id, name: id2name[id] || null, data: clean });
+          } catch (e) {
+            /* observe-only; never interfere */
+          }
+          return origSend(id, data);
+        };
+        c.__wardenlySendPatched = true;
       }
 
       state.ready = true;

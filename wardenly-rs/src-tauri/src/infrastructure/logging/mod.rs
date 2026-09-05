@@ -1,5 +1,7 @@
 //! Logging infrastructure with file output support for release builds.
 
+pub mod journal;
+
 use crate::infrastructure::config::paths;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};

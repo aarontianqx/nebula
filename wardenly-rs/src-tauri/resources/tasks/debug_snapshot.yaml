@@ -1,0 +1,16 @@
+# 调试工具：打印当前账号的资源快照到日志（log_state → 主日志 + 事件流水）。
+# 不做任何游戏操作，打印完立即结束。写新任务前可以用它确认取数路径是否正确。
+name: 调试·资源快照
+description: 打印当前账号资源快照（军令/金币/银币/粮草/兵力/塔次数等）到日志，不做任何操作
+on_no_match: { policy: quit }
+steps:
+  # 空谓词 + once：永远匹配一次，打完就 quit
+  - name: snapshot
+    match:
+      once: true
+    actions:
+      # 资源全量快照（服务器每次变化都会推，登录后也有一份）
+      - { type: log_state, paths: ["state.S_2_C_UPDATE_BENEFIT"] }
+      # 客户端实时模型读数（不等推送）
+      - { type: log_state, paths: ["role.accName", "role.level", "role.gold", "role._militaryOrder", "role._knightTower._teamNumInfo"] }
+      - { type: quit, reason: completed }

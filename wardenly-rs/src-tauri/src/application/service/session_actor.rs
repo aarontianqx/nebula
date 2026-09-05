@@ -51,6 +51,14 @@ struct BridgeMessage {
     id: u32,
     name: Option<String>,
     data: serde_json::Value,
+    /// "up" marks a client-originated send (wrapped Connection.send); absent
+    /// means a downstream packet (patched _parsePacket).
+    #[serde(default)]
+    dir: Option<String>,
+    /// Upstream only: true when the send came from the automation bridge
+    /// (`__wardenly.send`), false when the game client itself sent it.
+    #[serde(default, rename = "self")]
+    self_: Option<bool>,
 }
 
 /// Handle to communicate with a SessionActor
@@ -74,6 +82,9 @@ pub struct SessionActor {
     protocol_handle: Option<tokio::task::JoinHandle<()>>,
     /// Structured game state aggregated from the protocol stream.
     game_state: SharedGameState,
+    /// Per-session event journal (logs/sessions/*.jsonl), started with the
+    /// session; best-effort, None if the log dir is unusable.
+    journal: Option<crate::infrastructure::logging::journal::SessionJournal>,
 }
 
 impl SessionActor {
@@ -99,6 +110,7 @@ impl SessionActor {
             script_handle: None,
             protocol_handle: None,
             game_state: new_shared_game_state(),
+            journal: None,
         }
     }
 
@@ -203,6 +215,12 @@ impl SessionActor {
     /// Start the session. Returns true if successful, false if failed.
     async fn start_session(&mut self) -> bool {
         self.transition_to(SessionState::Starting).await;
+
+        // Start the event journal before anything else so the whole login
+        // chain and all later traffic land in it.
+        self.journal = crate::infrastructure::logging::journal::SessionJournal::start(
+            &self.account.identity(),
+        );
 
         // Start browser
         if let Err(e) = self.browser.start().await {
@@ -408,15 +426,27 @@ impl SessionActor {
 
     /// Forward page-bridge pushes: update the structured game state first,
     /// then publish ProtocolMessage events (readers reacting to an event always
-    /// see a state at least as fresh as the event).
+    /// see a state at least as fresh as the event). Upstream sends (dir="up")
+    /// go to the journal only — they are observations of what was sent, not
+    /// game state.
     fn spawn_protocol_forwarder(&mut self, mut rx: mpsc::Receiver<String>) {
         let event_bus = self.event_bus.clone();
         let session_id = self.id.clone();
         let game_state = self.game_state.clone();
+        let journal = self.journal.clone();
         let handle = tokio::spawn(async move {
             while let Some(raw) = rx.recv().await {
                 match serde_json::from_str::<BridgeMessage>(&raw) {
                     Ok(msg) => {
+                        if msg.dir.as_deref() == Some("up") {
+                            if let Some(j) = &journal {
+                                j.up(msg.id, &msg.name, msg.self_.unwrap_or(false), &msg.data);
+                            }
+                            continue;
+                        }
+                        if let Some(j) = &journal {
+                            j.down(msg.id, &msg.name, &msg.data);
+                        }
                         if let Some(name) = &msg.name {
                             match game_state.write() {
                                 Ok(mut state) => state.update(name, msg.data.clone()),
@@ -818,6 +848,10 @@ impl SessionActor {
 
     async fn cleanup(&mut self) {
         tracing::info!("Session {} cleaning up", self.id);
+
+        if let Some(j) = &self.journal {
+            j.meta("session_stop", &self.account.identity());
+        }
 
         // Stop script if running
         self.stop_script().await;
