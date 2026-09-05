@@ -1,111 +1,119 @@
 # 集市·打折商城（活动开启期间有效）
 # 抢购优先级：战魂血玉 > 东海鲛珠 > 琉璃灯盏 > 五花马 > 酒馆礼包
-# 名称对照（本期活动实测）：战魂血玉=血玉礼盒 东海鲛珠=鲛珠礼包 琉璃灯盏=许愿大礼包
-#   五花马=五花马礼包 酒馆礼包=酒馆礼盒
+# 全动态设计：ident/价格/限购/门槛由 jslib 按【内容物名称】从当期商品表反查
+# （存到 state._js.market），活动换货、换顺序、商品缺失（自动跳过）都不需要改模板。
 # 安全设计：
-#   1. verify_idents 先读客户端活动详情核对 ident→商品名，对不上（活动换货）立即失败，一单不买；
-#   2. 全部购买门槛（vip/等级/个人限购/全服余量）客户端先判——服务器对拒绝是静默的（不回包），
-#      不能靠报错兜底；每条购买前刷新一次计数；限购到顶/售罄后谓词失效，自然落到下一商品；
-#   3. 计数路径带 default: 0（从没买过 = 条目不存在 = 已购 0）。
+#   1. 全部购买门槛（vip/等级/个人限购/全服余量）客户端先判——服务器对拒绝是静默的；
+#   2. 每条购买前刷新一次计数；限购到顶/售罄后谓词失效，自然落到下一商品；
+#   3. 计数路径带 default: 0（从没买过 = 条目不存在 = 已购 0）；
+#   4. 响应确认核对 index 与计划 ident 一致，防止错单。
 name: 集市·打折商城
 description: 打折商城抢购：战魂血玉>东海鲛珠>琉璃灯盏>五花马>酒馆礼包，到限购/售罄/vip不足自动结束
 on_no_match: { policy: quit }    # 没有可买的 = 任务完成
 steps:
-  - name: verify_idents
+  # 计算购买计划：按内容物名反查当期商品，存 state._js.market；活动关闭则直接失败
+  - name: plan
     match:
       once: true
     actions:
       - { type: log_state, paths: ["role.gold", "role.vipLevel", "role.level"] }
-      # ident 防呆：名字对不上就返回 ERR 终止任务（eval_js 的 ERR 会让任务失败）
-      - type: eval_js
-        script: "try{var items=window.__require('Account').default.get().role.activity.getActivityInfo(61);var want={4:'血玉礼盒',11:'鲛珠礼包',5:'许愿大礼包',1:'五花马礼包',3:'酒馆礼盒'};var bad='';for(var k in want){if(!items[k]||items[k].name!==want[k]){bad+='ident '+k+' expect '+want[k]+' got '+(items[k]&&items[k].name)+'; '}};bad?('ERR '+bad):'OK match'}catch(e){'ERR '+e.message}"
+      - type: call_js
+        name: discount_shop_plan
+        args: { 战魂血玉: true, 东海鲛珠: true, 琉璃灯盏: true, 五花马: true, 酒馆礼包: true }
+        store: market
+      - { type: log_state, paths: ["state._js.market"] }
 
-  # 战魂血玉（血玉礼盒，1600金，vip6/lv300，个人限5，全服500）
+  # 战魂血玉（本期：血玉礼盒，1600金，vip6/lv300，个人限5，全服500）
   - name: buy_战魂血玉
     match:
       conditions:
-        - { field: role.vipLevel, op: gte, value: 6 }
-        - { field: role.level, op: gte, value: 300 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, 4).@first.buyNum", op: lt, value: 5, default: 0 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, 4).@first.buyNum", op: lt, value: 500, default: 0 }
+        - { field: "state._js.market.战魂血玉.ident", op: exists }
+        - { field: role.vipLevel, op: gte, value: "$state._js.market.战魂血玉.viplevel" }
+        - { field: role.level, op: gte, value: "$state._js.market.战魂血玉.level" }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, "$state._js.market.战魂血玉.ident").@first.buyNum', op: lt, value: "$state._js.market.战魂血玉.limitNum", default: 0 }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, "$state._js.market.战魂血玉.ident").@first.buyNum', op: lt, value: "$state._js.market.战魂血玉.count", default: 0 }
     actions:
       - { type: request, protocol: C_2_S_DISCOUNT_SHOP_INFO, payload: {}, expect: S_2_C_DISCOUNT_SHOP_INFO, timeout: 4s, retries: 1 }
       - type: request
         protocol: C_2_S_DISCOUNT_SHOP_GIFT_BUY
-        payload: { ident: 4 }
+        payload: { ident: "$state._js.market.战魂血玉.ident" }
         expect: S_2_C_DISCOUNT_SHOP_GIFT_BUY
-        conditions: [{ field: index, op: eq, value: 4 }]
+        conditions: [{ field: index, op: eq, value: "$state._js.market.战魂血玉.ident" }]
         timeout: 4s
         retries: 0
 
-  # 东海鲛珠（鲛珠礼包，1200金，vip5/lv200，个人限6，全服299）
+  # 东海鲛珠（本期：鲛珠礼包，1200金，vip5/lv200，个人限6，全服299）
   - name: buy_东海鲛珠
     match:
       conditions:
-        - { field: role.vipLevel, op: gte, value: 5 }
-        - { field: role.level, op: gte, value: 200 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, 11).@first.buyNum", op: lt, value: 6, default: 0 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, 11).@first.buyNum", op: lt, value: 299, default: 0 }
+        - { field: "state._js.market.东海鲛珠.ident", op: exists }
+        - { field: role.vipLevel, op: gte, value: "$state._js.market.东海鲛珠.viplevel" }
+        - { field: role.level, op: gte, value: "$state._js.market.东海鲛珠.level" }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, "$state._js.market.东海鲛珠.ident").@first.buyNum', op: lt, value: "$state._js.market.东海鲛珠.limitNum", default: 0 }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, "$state._js.market.东海鲛珠.ident").@first.buyNum', op: lt, value: "$state._js.market.东海鲛珠.count", default: 0 }
     actions:
       - { type: request, protocol: C_2_S_DISCOUNT_SHOP_INFO, payload: {}, expect: S_2_C_DISCOUNT_SHOP_INFO, timeout: 4s, retries: 1 }
       - type: request
         protocol: C_2_S_DISCOUNT_SHOP_GIFT_BUY
-        payload: { ident: 11 }
+        payload: { ident: "$state._js.market.东海鲛珠.ident" }
         expect: S_2_C_DISCOUNT_SHOP_GIFT_BUY
-        conditions: [{ field: index, op: eq, value: 11 }]
+        conditions: [{ field: index, op: eq, value: "$state._js.market.东海鲛珠.ident" }]
         timeout: 4s
         retries: 0
 
-  # 琉璃灯盏（许愿大礼包，888金，vip2/lv100，个人限1，全服500）
+  # 琉璃灯盏（本期：许愿大礼包，888金，vip2/lv100，个人限1，全服500）
   - name: buy_琉璃灯盏
     match:
       conditions:
-        - { field: role.vipLevel, op: gte, value: 2 }
-        - { field: role.level, op: gte, value: 100 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, 5).@first.buyNum", op: lt, value: 1, default: 0 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, 5).@first.buyNum", op: lt, value: 500, default: 0 }
+        - { field: "state._js.market.琉璃灯盏.ident", op: exists }
+        - { field: role.vipLevel, op: gte, value: "$state._js.market.琉璃灯盏.viplevel" }
+        - { field: role.level, op: gte, value: "$state._js.market.琉璃灯盏.level" }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, "$state._js.market.琉璃灯盏.ident").@first.buyNum', op: lt, value: "$state._js.market.琉璃灯盏.limitNum", default: 0 }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, "$state._js.market.琉璃灯盏.ident").@first.buyNum', op: lt, value: "$state._js.market.琉璃灯盏.count", default: 0 }
     actions:
       - { type: request, protocol: C_2_S_DISCOUNT_SHOP_INFO, payload: {}, expect: S_2_C_DISCOUNT_SHOP_INFO, timeout: 4s, retries: 1 }
       - type: request
         protocol: C_2_S_DISCOUNT_SHOP_GIFT_BUY
-        payload: { ident: 5 }
+        payload: { ident: "$state._js.market.琉璃灯盏.ident" }
         expect: S_2_C_DISCOUNT_SHOP_GIFT_BUY
-        conditions: [{ field: index, op: eq, value: 5 }]
+        conditions: [{ field: index, op: eq, value: "$state._js.market.琉璃灯盏.ident" }]
         timeout: 4s
         retries: 0
 
-  # 五花马（五花马礼包，225金，vip5/lv100，个人限25，全服9999）
+  # 五花马（本期：五花马礼包，225金，vip5/lv100，个人限25，全服9999）
   - name: buy_五花马
     match:
       conditions:
-        - { field: role.vipLevel, op: gte, value: 5 }
-        - { field: role.level, op: gte, value: 100 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, 1).@first.buyNum", op: lt, value: 25, default: 0 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, 1).@first.buyNum", op: lt, value: 9999, default: 0 }
+        - { field: "state._js.market.五花马.ident", op: exists }
+        - { field: role.vipLevel, op: gte, value: "$state._js.market.五花马.viplevel" }
+        - { field: role.level, op: gte, value: "$state._js.market.五花马.level" }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, "$state._js.market.五花马.ident").@first.buyNum', op: lt, value: "$state._js.market.五花马.limitNum", default: 0 }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, "$state._js.market.五花马.ident").@first.buyNum', op: lt, value: "$state._js.market.五花马.count", default: 0 }
     actions:
       - { type: request, protocol: C_2_S_DISCOUNT_SHOP_INFO, payload: {}, expect: S_2_C_DISCOUNT_SHOP_INFO, timeout: 4s, retries: 1 }
       - type: request
         protocol: C_2_S_DISCOUNT_SHOP_GIFT_BUY
-        payload: { ident: 1 }
+        payload: { ident: "$state._js.market.五花马.ident" }
         expect: S_2_C_DISCOUNT_SHOP_GIFT_BUY
-        conditions: [{ field: index, op: eq, value: 1 }]
+        conditions: [{ field: index, op: eq, value: "$state._js.market.五花马.ident" }]
         timeout: 4s
         retries: 0
 
-  # 酒馆礼包（酒馆礼盒，135金，vip1/lv100，个人限10，全服999）
+  # 酒馆礼包（本期：酒馆礼盒，135金，vip1/lv100，个人限10，全服999）
   - name: buy_酒馆礼包
     match:
       conditions:
-        - { field: role.vipLevel, op: gte, value: 1 }
-        - { field: role.level, op: gte, value: 100 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, 3).@first.buyNum", op: lt, value: 10, default: 0 }
-        - { field: "state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, 3).@first.buyNum", op: lt, value: 999, default: 0 }
+        - { field: "state._js.market.酒馆礼包.ident", op: exists }
+        - { field: role.vipLevel, op: gte, value: "$state._js.market.酒馆礼包.viplevel" }
+        - { field: role.level, op: gte, value: "$state._js.market.酒馆礼包.level" }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_INFO.gift.@where(id, eq, "$state._js.market.酒馆礼包.ident").@first.buyNum', op: lt, value: "$state._js.market.酒馆礼包.limitNum", default: 0 }
+        - { field: 'state.S_2_C_DISCOUNT_SHOP_GIFT_BUY_NUM.gift.@where(id, eq, "$state._js.market.酒馆礼包.ident").@first.buyNum', op: lt, value: "$state._js.market.酒馆礼包.count", default: 0 }
     actions:
       - { type: request, protocol: C_2_S_DISCOUNT_SHOP_INFO, payload: {}, expect: S_2_C_DISCOUNT_SHOP_INFO, timeout: 4s, retries: 1 }
       - type: request
         protocol: C_2_S_DISCOUNT_SHOP_GIFT_BUY
-        payload: { ident: 3 }
+        payload: { ident: "$state._js.market.酒馆礼包.ident" }
         expect: S_2_C_DISCOUNT_SHOP_GIFT_BUY
-        conditions: [{ field: index, op: eq, value: 3 }]
+        conditions: [{ field: index, op: eq, value: "$state._js.market.酒馆礼包.ident" }]
         timeout: 4s
         retries: 0

@@ -23,6 +23,20 @@ impl GameState {
         self.latest.insert(name.to_string(), data);
     }
 
+    /// Merge one field into an object-valued entry (creating it if absent).
+    /// Used by `call_js` to publish computed results under `_js.<store>`.
+    pub fn update_field(&mut self, name: &str, field: &str, data: Value) {
+        let mut entry = self
+            .latest
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+        if let Value::Object(ref mut map) = entry {
+            map.insert(field.to_string(), data);
+        }
+        self.latest.insert(name.to_string(), entry);
+    }
+
     /// Latest payload seen for a protocol.
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.latest.get(name)
@@ -30,7 +44,8 @@ impl GameState {
 
     /// Resolve a dotted path like `state.S_2_C_MAILLIST_ID.mailNums`.
     /// The leading `state.` selects the game state as the root. Supports
-    /// array selectors (see resolve_path). Returns an owned value.
+    /// array selectors (see resolve_path) and `$state.` references inside
+    /// `@where` values (resolved against this same state). Returns an owned value.
     pub fn resolve(&self, path: &str) -> Option<Value> {
         let path = path.strip_prefix("state.")?;
         let mut segments = path.split('.');
@@ -40,7 +55,7 @@ impl GameState {
         if rest.is_empty() {
             return Some(payload.clone());
         }
-        resolve_path(payload, &rest)
+        resolve_path_with(payload, &rest, &|p| self.resolve(p))
     }
 }
 
@@ -60,14 +75,26 @@ pub fn new_shared_game_state() -> SharedGameState {
 ///   `@max(field)` / `@min(field)`       element with max/min numeric field
 ///   `@where(field, op, value)`          keep elements whose field satisfies
 ///                                       op/value; value may be a JSON list
-///                                       (any-hit). Empty result → None.
+///                                       (any-hit) or a `$`-reference resolved
+///                                       via the caller's resolver
 ///
 /// Dot splitting respects brackets/parens so selector values may contain
 /// dots (e.g. strings). Returns an owned value (selectors may allocate).
 pub fn resolve_path(root: &Value, path: &str) -> Option<Value> {
+    resolve_path_with(root, path, &|_| None)
+}
+
+/// Like resolve_path, but `@where` values starting with `$` are resolved
+/// through `resolver` (GameState passes itself so selectors can reference
+/// `state.` paths dynamically).
+pub fn resolve_path_with(
+    root: &Value,
+    path: &str,
+    resolver: &dyn Fn(&str) -> Option<Value>,
+) -> Option<Value> {
     let mut value = root.clone();
     for seg in split_segments(path) {
-        value = apply_segment(&value, &seg)?;
+        value = apply_segment(&value, &seg, resolver)?;
     }
     Some(value)
 }
@@ -102,9 +129,13 @@ pub fn split_segments(path: &str) -> Vec<String> {
     out
 }
 
-fn apply_segment(value: &Value, seg: &str) -> Option<Value> {
+fn apply_segment(
+    value: &Value,
+    seg: &str,
+    resolver: &dyn Fn(&str) -> Option<Value>,
+) -> Option<Value> {
     if let Some(sel) = seg.strip_prefix('@') {
-        return apply_selector(value, sel);
+        return apply_selector(value, sel, resolver);
     }
     match value {
         Value::Object(map) => map.get(seg).cloned(),
@@ -113,7 +144,11 @@ fn apply_segment(value: &Value, seg: &str) -> Option<Value> {
     }
 }
 
-fn apply_selector(value: &Value, sel: &str) -> Option<Value> {
+fn apply_selector(
+    value: &Value,
+    sel: &str,
+    resolver: &dyn Fn(&str) -> Option<Value>,
+) -> Option<Value> {
     let arr = value.as_array()?;
     match sel {
         "first" => return arr.first().cloned(),
@@ -133,7 +168,7 @@ fn apply_selector(value: &Value, sel: &str) -> Option<Value> {
             .cloned();
     }
     if let Some(args) = sel.strip_prefix("where(").and_then(|s| s.strip_suffix(')')) {
-        let (field, op, expected) = parse_where_args(args)?;
+        let (field, op, expected) = parse_where_args(args, resolver)?;
         let filtered: Vec<Value> = arr
             .iter()
             .filter(|item| {
@@ -172,8 +207,12 @@ fn numeric_field(
 }
 
 /// Parse `field, op, value` — value is JSON if it starts with `[{"` or parses
-/// as a scalar literal, otherwise a bare string (quotes stripped).
-fn parse_where_args(args: &str) -> Option<(String, String, Value)> {
+/// as a scalar literal, a `$`-reference resolved via `resolver`, otherwise a
+/// bare string (quotes stripped).
+fn parse_where_args(
+    args: &str,
+    resolver: &dyn Fn(&str) -> Option<Value>,
+) -> Option<(String, String, Value)> {
     let parts = split_top_level_commas(args);
     if parts.len() != 3 {
         return None;
@@ -181,8 +220,14 @@ fn parse_where_args(args: &str) -> Option<(String, String, Value)> {
     let field = parts[0].trim().to_string();
     let op = parts[1].trim().to_string();
     let raw = parts[2].trim();
-    let value = serde_json::from_str(raw)
-        .unwrap_or_else(|_| Value::String(raw.trim_matches('"').to_string()));
+    // A quoted `$`-reference resolves via the resolver; unquoted JSON parses
+    // as a literal; otherwise a bare string (quotes stripped).
+    let unquoted = raw.trim_matches('"');
+    let value = if let Some(path) = unquoted.strip_prefix('$') {
+        resolver(path)?
+    } else {
+        serde_json::from_str(raw).unwrap_or_else(|_| Value::String(unquoted.to_string()))
+    };
     Some((field, op, value))
 }
 
@@ -288,5 +333,30 @@ mod tests {
             resolve_path(&v, "teams.@where(player_count, gte, 2).@first.name"),
             Some(json!("b"))
         );
+    }
+
+    /// `@where` values may be `$state.` references, resolved against the same
+    /// GameState (quoted or bare); unresolvable refs fail the selector.
+    #[test]
+    fn where_value_state_reference() {
+        let mut state = GameState::default();
+        state.update(
+            "S_2_C_SHOP",
+            json!({"gift": [{"id": 4, "buyNum": 2}, {"id": 11, "buyNum": 0}]}),
+        );
+        state.update_field("_js", "market", json!({"战魂血玉": {"ident": 4}}));
+
+        let path = "state.S_2_C_SHOP.gift.@where(id, eq, \"$state._js.market.战魂血玉.ident\").@first.buyNum";
+        assert_eq!(state.resolve(path), Some(json!(2)));
+
+        // bare (unquoted) $-ref resolves too
+        let bare =
+            "state.S_2_C_SHOP.gift.@where(id, eq, $state._js.market.战魂血玉.ident).@first.buyNum";
+        assert_eq!(state.resolve(bare), Some(json!(2)));
+
+        // unresolvable $-ref → selector yields no match → None
+        let missing =
+            "state.S_2_C_SHOP.gift.@where(id, eq, $state._js.market.不存在.ident).@first.buyNum";
+        assert_eq!(state.resolve(missing), None);
     }
 }

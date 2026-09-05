@@ -208,6 +208,20 @@ pub enum TaskAction {
     /// e.g. calling a client function like enterKnightTower())
     EvalJs { script: String },
 
+    /// Call a named snippet from the embedded JS library (resources/jslib,
+    /// each file defines `main(args)`). Return contract: 'OK' (or any value)
+    /// = success, 'ERR ...' = fail the task. With `store`, the snippet's
+    /// JSON return value is merged into GameState under `_js.<store>` for
+    /// later $-references in conditions/payloads ("compute once, reference
+    /// everywhere" — e.g. resolving activity item idents by content name).
+    CallJs {
+        name: String,
+        #[serde(default)]
+        args: Option<Value>,
+        #[serde(default)]
+        store: Option<String>,
+    },
+
     /// Log the current value of state./role. paths at INFO level.
     /// Template-driven observability for diagnosing live behavior.
     LogState { paths: Vec<String> },
@@ -257,6 +271,32 @@ impl From<&Task> for TaskInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// YAML anchors/aliases resolve transparently in the task schema —
+    /// templates can factor out repeated step/action blocks without runner
+    /// support (e.g. per-item buy steps that share one shape).
+    #[test]
+    fn parse_task_yaml_with_anchors() {
+        let yaml = r#"
+name: anchored
+steps:
+  - name: first
+    match: &buy_match
+      conditions:
+        - { field: state.X.num, op: lt, value: 5 }
+    actions: &buy_actions
+      - { type: request, protocol: C_2_S_A, expect: S_2_C_B, timeout: 4s }
+  - name: second
+    match: *buy_match
+    actions: *buy_actions
+"#;
+        let task: Task = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(task.steps.len(), 2);
+        assert_eq!(task.steps[0].match_.conditions.len(), 1);
+        assert_eq!(task.steps[1].match_.conditions.len(), 1);
+        assert_eq!(task.steps[0].actions.len(), 1);
+        assert_eq!(task.steps[1].actions.len(), 1);
+    }
 
     #[test]
     fn parse_task_yaml() {

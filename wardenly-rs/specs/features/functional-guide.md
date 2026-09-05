@@ -404,10 +404,26 @@ steps:
 
 ### 动作原语
 
-`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries，on_timeout: fail|continue，abort_if）/ wait_protocol / wait_state`、`eval_js`（逃生舱：执行任意 JS，如调用客户端函数）。
+`click / drag / wait / loop / incr / decr / quit(reason: completed|exhausted)`、`send_protocol / request（expect 或 expect_any，retries，on_timeout: fail|continue，abort_if）/ wait_protocol / wait_state`、`eval_js`（一次性逃生舱）、`call_js`（调用 jslib 具名函数，见下）、`log_state`（模板级状态打印）。
 
 > `on_timeout: continue` 用于"相关性会随时间失效"的请求（如攻击将死的 boss）：重试耗尽后不判任务失败，而是交回状态机重新评估（战斗若已结束，自然流转到其它 step）。默认 `continue`。
 > `abort_if: [conditions]` 用于"前提可能中途失效"的请求：发送前、每次重试前、等待中（200ms 轮询）都会检查；条件成立立即中止并交回状态机，不重试不超时。典型用法：攻击请求配 `abort_if: isBattle==false`——RESULT 在 step 匹配与发送之间到达时（每场必现的竞态），避免向死 boss 幽灵攻击、白烧超时。
+
+### JS 代码库（jslib）
+
+可复用的 JS 逻辑统一维护在 `resources/jslib/*.js`（编译期内嵌），每个文件定义 `function main(args)`，模板用 `call_js` 按名调用并传参：
+
+```yaml
+- type: call_js
+  name: discount_shop_plan          # resources/jslib/discount_shop_plan.js
+  args: { 战魂血玉: true, 酒馆礼包: true }
+  store: market                     # 可选：函数返回的 JSON 存入 state._js.market
+```
+
+- 返回契约：`'OK'`/任意值=成功，`'ERR ...'`=任务失败（与 eval_js 相同）；
+- `store` 把函数返回的 JSON 合并进 GameState 的 `_js.<store>` 键，后续条件/payload 用 `$state._js.market.xxx` 引用——"先计算后引用"的标准模式（如按内容物名反查活动商品 ident）；
+- `@where` 选择器的值同样支持 `$state.` 引用：`@where(id, eq, "$state._js.market.战魂血玉.ident")`；
+- 分工：**一次性**的视图/杂项操作用 `eval_js`（如关弹窗）；**可复用**的逻辑一律进 jslib，不要在 YAML 里内联大段 JS。
 
 ### payload 的 `$` 引用与数组选择器
 

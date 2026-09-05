@@ -7,6 +7,7 @@ static SCENES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/scenes");
 static SCRIPTS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/scripts");
 static PROTOCOLS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/protocols");
 static TASKS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/tasks");
+static JSLIB_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/resources/jslib");
 
 /// Wrapper for scene files that use wardenly-go nested format
 /// Format: { category: "...", scenes: [...] }
@@ -168,6 +169,32 @@ pub fn load_tasks() -> anyhow::Result<Vec<Task>> {
     Ok(tasks)
 }
 
+/// Load the JS snippet library (resources/jslib/*.js, embedded).
+/// Returns name (filename without .js) -> source. Each file must define
+/// `function main(args)`; templates invoke snippets via the `call_js` action.
+pub fn load_jslib() -> std::collections::HashMap<String, String> {
+    let mut lib = std::collections::HashMap::new();
+    for file in JSLIB_DIR.files() {
+        let path = file.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("js") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        match file.contents_utf8() {
+            Some(content) => {
+                lib.insert(name.to_string(), content.to_string());
+            }
+            None => {
+                tracing::error!("jslib file {} is not valid UTF-8", name);
+            }
+        }
+    }
+    tracing::info!("Loaded {} jslib snippets", lib.len());
+    lib
+}
+
 /// Find a task by name
 pub fn find_task<'a>(tasks: &'a [Task], name: &str) -> Option<&'a Task> {
     tasks.iter().find(|t| t.name == name)
@@ -326,6 +353,39 @@ mod tests {
             assert!(
                 unknown.is_empty(),
                 "task '{}' references unknown protocols: {:?}",
+                task.name,
+                unknown
+            );
+        }
+    }
+
+    /// Every jslib snippet referenced by embedded task templates must exist —
+    /// same build-time fail-fast rationale as protocol validation.
+    #[test]
+    fn task_templates_reference_known_jslib_snippets() {
+        use crate::domain::model::TaskAction;
+        let lib = load_jslib();
+        let tasks = load_tasks().expect("tasks must load");
+
+        fn collect(actions: &[TaskAction], out: &mut Vec<String>) {
+            for action in actions {
+                match action {
+                    TaskAction::CallJs { name, .. } => out.push(name.clone()),
+                    TaskAction::Loop { actions, .. } => collect(actions, out),
+                    _ => {}
+                }
+            }
+        }
+
+        for task in tasks {
+            let mut names = Vec::new();
+            for step in &task.steps {
+                collect(&step.actions, &mut names);
+            }
+            let unknown: Vec<_> = names.into_iter().filter(|n| !lib.contains_key(n)).collect();
+            assert!(
+                unknown.is_empty(),
+                "task '{}' references unknown jslib snippets: {:?}",
                 task.name,
                 unknown
             );

@@ -581,6 +581,10 @@ impl TaskRunner {
                         }
                     }
                 }
+                TaskAction::CallJs { name, args, store } => {
+                    self.call_js(name, args.as_ref(), store.as_deref(), step_name)
+                        .await?;
+                }
                 TaskAction::LogState { paths } => {
                     for path in paths {
                         // Best-effort observability: unresolved paths log as such
@@ -604,6 +608,65 @@ impl TaskRunner {
             }
         }
         Ok(())
+    }
+
+    /// Execute a named jslib snippet (resources/jslib/<name>.js, defines
+    /// `main(args)`). 'ERR ...' return fails the task. With `store`, the
+    /// snippet's JSON return is merged into GameState under `_js.<store>`.
+    async fn call_js(
+        &mut self,
+        name: &str,
+        args: Option<&serde_json::Value>,
+        store: Option<&str>,
+        step_name: &str,
+    ) -> Result<(), StopReason> {
+        let jslib = resources::load_jslib();
+        let Some(source) = jslib.get(name) else {
+            tracing::error!(session = %self.session_id, step = %step_name, "Unknown jslib snippet: {}", name);
+            return Err(StopReason::Error);
+        };
+        let args_json = serde_json::to_string(&args.cloned().unwrap_or(serde_json::Value::Null))
+            .map_err(|_| StopReason::Error)?;
+        // Wrap like eval_js: always returns a string, JS errors surface as ERR.
+        let wrapped = format!(
+            "(() => {{ try {{ {} ; const r = main({}); return r === undefined ? 'OK' : String(r); }} catch (e) {{ return 'ERR ' + (e && e.message ? e.message : String(e)); }} }})()",
+            source, args_json
+        );
+        match self.browser.evaluate(&wrapped).await {
+            Ok(raw) if !raw.contains("ERR") => {
+                tracing::debug!(session = %self.session_id, step = %step_name, "call_js {} -> {}", name, raw);
+                if let Some(store_key) = store {
+                    // evaluate returns the JS value JSON-serialized; unwrap the
+                    // string, then parse the snippet's JSON return.
+                    let outer: serde_json::Value =
+                        serde_json::from_str(&raw).map_err(|_| StopReason::Error)?;
+                    let Some(text) = outer.as_str() else {
+                        tracing::error!(session = %self.session_id, step = %step_name, "call_js {}: store requires a string return", name);
+                        return Err(StopReason::Error);
+                    };
+                    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+                        tracing::error!(session = %self.session_id, step = %step_name, "call_js {}: store value is not JSON: {}", name, e);
+                        StopReason::Error
+                    })?;
+                    match self.game_state.write() {
+                        Ok(mut state) => state.update_field("_js", store_key, value),
+                        Err(poisoned) => {
+                            poisoned.into_inner().update_field("_js", store_key, value)
+                        }
+                    }
+                    tracing::info!(session = %self.session_id, step = %step_name, "call_js {} stored _js.{}", name, store_key);
+                }
+                Ok(())
+            }
+            Ok(raw) => {
+                tracing::error!(session = %self.session_id, step = %step_name, "call_js {} error: {}", name, raw);
+                Err(StopReason::Error)
+            }
+            Err(e) => {
+                tracing::error!(session = %self.session_id, step = %step_name, "call_js {} failed: {}", name, e);
+                Err(StopReason::Error)
+            }
+        }
     }
 
     /// Execute a loop action (single level, like the legacy runner).
