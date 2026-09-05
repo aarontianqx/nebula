@@ -414,7 +414,7 @@ steps:
 - payload 字符串以 `$` 开头时发送前解析为 state./role. 路径值（如 `"$state.X.ary.@max(n).id"`）；
 - 路径支持链式数组选择器：`@first / @last / @max(field) / @min(field) / @where(field, op, value)`；`@where` 返回过滤后的数组（value 给列表时任一命中），需配合 `@first`/`@max` 或索引取值；
 - 例（白名单选队）：`battle_team_info_ary.@where(server_id, ends_with, ["-888","-11014","-11020"]).@max(player_count).create_id`；
-- 条件 op：`eq / neq / gt / gte / lt / lte / exists / missing / contains / ends_with`（后两者为字符串 op，value 为列表时任一命中）。
+- 条件 op：`eq / neq / gt / gte / lt / lte / exists / missing / contains / ends_with / not_contains`（contains/ends_with 为字符串 op，value 为列表时任一命中；contains 对 JSON 数组是元素任一相等，not_contains 是其否定——适合"draw_index 不含某 ident"这类未领取判定）。
 
 ## 场景识别
 

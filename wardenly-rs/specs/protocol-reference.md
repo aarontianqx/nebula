@@ -182,6 +182,15 @@
 - **拒绝是静默的**：vip/等级/限购不满足时服务器**不回任何包**（无错误提示协议），所以模板必须在客户端侧判全部门槛再发购买，超时即视为未成交交回状态机。
 - 本期商品（2026-09-05 集市）名称对照：战魂血玉=血玉礼盒（ident 4）、东海鲛珠=鲛珠礼包（11）、琉璃灯盏=许愿大礼包（5）、五花马=五花马礼包（1）、酒馆礼包=酒馆礼盒（3）。**活动换货 ident 会漂移**，模板第一步强制做 ident→名称校验，对不上直接失败。
 
+### 4.7 群雄逐鹿（Tournament）协议族（2026-09-05，live 验证）
+
+- **状态**：`C_2_S_TOURNAMENT_LOAD {}` → `S_2_C_TOURNAMENT_LOAD {start_time, end_time, rank, cur_integral, max_integral, cur_credit, battle_num, win_num, num, draw_index[]}`——`battle_num` 今日场次（上限 30）、`win_num` 今日胜场、`cur_integral` 本周积分、`draw_index` 已领日奖 ident。
+- **挑战**：`C_2_S_TOURNAMENT_ENTER_MATCH {}`（空载荷，自动匹配）→ 战斗结果**近乎即时**下发 `S_2_C_TOURNAMENT_BATTLE_RESULT {ret, atk_player, def_player, report_id, report_address}`（实测 ~50ms），客户端不需要进任何界面、不看战斗动画；每场后 `S_2_C_TOURNAMENT_BATTLE_RESULT_NOTIFY {cur_integral, cur_credit, battle_num, win_num}` 刷新计数。
+- **日奖**（`qxMatchReward` 静态表，6 档）：场次 3/5/10（ident 1/2/5，matchType 0）、胜场 1/3/5（ident 3/4/6，matchType 1）。领取：`C_2_S_TOURNAMENT_DRAW_REWARD {ident}` → `S_2_C_TOURNAMENT_DRAW_REWARD {ident}`；已领记录在 `TOURNAMENT_LOAD.draw_index`。
+- **积分周奖**（`qxIntegralReward` 静态表，7 档）：领取线 `integralLimit` 1199/1599/1999/2199/2299/2399（第 7 档 99999 为封顶名义档）；领取条件 `cur_integral > integralLimit`（严格大于）。状态：`C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO {}` → `{num, draw_index[已领领取线]}`；领取：`C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD {integral: <领取线>}`。
+- 胜负与积分：胜 +50、负 +21~38（按档），积分影响排名；`S_2_C_TOURNAMENT_BATTLE_RESULT` 无显式胜负字段（胜负以 `win_num` 增量为准，战报是二进制 DT_REPORT）。
+- 排名奖（`qxRankReward`）赛季结算发放，不可日常领取。
+
 ## 5. 自助查询任意协议的方法
 
 1. **找名字**：`grep -i tower wardenly-rs/src-tauri/resources/protocols/registry.json`（或在游戏页 `Object.keys(__require('ProtocolBase').Protocol)`）；

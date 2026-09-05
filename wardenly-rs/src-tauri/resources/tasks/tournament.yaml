@@ -1,0 +1,144 @@
+# 群雄逐鹿（每日活动）
+# 流程：拉状态 → 领奖（日奖 6 档：场次 3/5/10、胜场 1/3/5）→ 领积分周奖（7 档，领取线 1199~2399）
+#       → 挑战直到打满 30 场（新达标奖励在后续轮次自然被领取）
+# 服务器侧战斗结果近乎即时（<0.1s），不需要处理战斗动画；每场后重新拉取计数。
+# 防漂移：启动时校验静态奖励表（档位数/阈值），配置变了直接失败不乱领。
+name: 群雄逐鹿
+description: 群雄逐鹿：打满每日 30 场 + 领日奖（场次/胜场）+ 领积分周奖
+on_no_match: { policy: quit }
+steps:
+  # 配置防呆（once）：日奖 6 档、积分 7 档阈值与本期一致才继续
+  - name: verify_config
+    match:
+      once: true
+    actions:
+      - type: eval_js
+        script: "try{var S=window.__require('StaticData').default.instance;var m=S._qxMatchReward.json;var want={1:[0,3],2:[0,5],3:[1,1],4:[1,3],5:[0,10],6:[1,5]};var bad='';for(var k in want){var e=m[k];if(!e||~~e.matchType!==want[k][0]||~~e.matchNum!==want[k][1]){bad+=k+';'}}var ig=S._qxIntegralReward.json;var lim=[1199,1599,1999,2199,2299,2399];for(var i=1;i<=6;i++){if(!ig[i]||~~ig[i].integralLimit!==lim[i-1]){bad+='ig'+i+';'}};bad?('ERR config drift: '+bad):'OK'}catch(e){'ERR '+e.message}"
+
+  # 拉当前状态（会话内首次；state 缺失才拉，之后每场/每奖后都会刷新）
+  - name: reload
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD, op: missing }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 2 }
+      - { type: log_state, paths: ["state.S_2_C_TOURNAMENT_LOAD"] }
+
+  # ---- 日奖（draw_index 记录已领 ident；not_contains = 未领）----
+  - name: draw_对战3场
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.battle_num, op: gte, value: 3 }
+        - { field: state.S_2_C_TOURNAMENT_LOAD.draw_index, op: not_contains, value: 1, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_REWARD, payload: { ident: 1 }, expect: S_2_C_TOURNAMENT_DRAW_REWARD, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }
+
+  - name: draw_对战5场
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.battle_num, op: gte, value: 5 }
+        - { field: state.S_2_C_TOURNAMENT_LOAD.draw_index, op: not_contains, value: 2, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_REWARD, payload: { ident: 2 }, expect: S_2_C_TOURNAMENT_DRAW_REWARD, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }
+
+  - name: draw_胜利1场
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.win_num, op: gte, value: 1 }
+        - { field: state.S_2_C_TOURNAMENT_LOAD.draw_index, op: not_contains, value: 3, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_REWARD, payload: { ident: 3 }, expect: S_2_C_TOURNAMENT_DRAW_REWARD, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }
+
+  - name: draw_胜利3场
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.win_num, op: gte, value: 3 }
+        - { field: state.S_2_C_TOURNAMENT_LOAD.draw_index, op: not_contains, value: 4, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_REWARD, payload: { ident: 4 }, expect: S_2_C_TOURNAMENT_DRAW_REWARD, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }
+
+  - name: draw_对战10场
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.battle_num, op: gte, value: 10 }
+        - { field: state.S_2_C_TOURNAMENT_LOAD.draw_index, op: not_contains, value: 5, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_REWARD, payload: { ident: 5 }, expect: S_2_C_TOURNAMENT_DRAW_REWARD, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }
+
+  - name: draw_胜利5场
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.win_num, op: gte, value: 5 }
+        - { field: state.S_2_C_TOURNAMENT_LOAD.draw_index, op: not_contains, value: 6, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_REWARD, payload: { ident: 6 }, expect: S_2_C_TOURNAMENT_DRAW_REWARD, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }
+
+  # ---- 积分周奖（严格大于领取线；已领线记录在 DRAW_INTEGRAL_INFO.draw_index）----
+  - name: draw_integral_1199
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.cur_integral, op: gt, value: 1199 }
+        - { field: state.S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO.draw_index, op: not_contains, value: 1199, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO, payload: {}, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD, payload: { integral: 1199 }, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_REWARD, timeout: 4s, retries: 0 }
+
+  - name: draw_integral_1599
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.cur_integral, op: gt, value: 1599 }
+        - { field: state.S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO.draw_index, op: not_contains, value: 1599, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO, payload: {}, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD, payload: { integral: 1599 }, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_REWARD, timeout: 4s, retries: 0 }
+
+  - name: draw_integral_1999
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.cur_integral, op: gt, value: 1999 }
+        - { field: state.S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO.draw_index, op: not_contains, value: 1999, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO, payload: {}, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD, payload: { integral: 1999 }, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_REWARD, timeout: 4s, retries: 0 }
+
+  - name: draw_integral_2199
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.cur_integral, op: gt, value: 2199 }
+        - { field: state.S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO.draw_index, op: not_contains, value: 2199, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO, payload: {}, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD, payload: { integral: 2199 }, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_REWARD, timeout: 4s, retries: 0 }
+
+  - name: draw_integral_2299
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.cur_integral, op: gt, value: 2299 }
+        - { field: state.S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO.draw_index, op: not_contains, value: 2299, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO, payload: {}, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD, payload: { integral: 2299 }, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_REWARD, timeout: 4s, retries: 0 }
+
+  - name: draw_integral_2399
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.cur_integral, op: gt, value: 2399 }
+        - { field: state.S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO.draw_index, op: not_contains, value: 2399, default: [] }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_INFO, payload: {}, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_INFO, timeout: 4s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_DRAW_INTEGRAL_REWARD, payload: { integral: 2399 }, expect: S_2_C_TOURNAMENT_DRAW_INTEGRAL_REWARD, timeout: 4s, retries: 0 }
+
+  # ---- 挑战（每日 30 场；结果近乎即时，等 RESULT 确认后拉新计数）----
+  - name: battle
+    match:
+      conditions:
+        - { field: state.S_2_C_TOURNAMENT_LOAD.battle_num, op: lt, value: 30, default: 0 }
+    actions:
+      - { type: request, protocol: C_2_S_TOURNAMENT_ENTER_MATCH, payload: {}, expect: S_2_C_TOURNAMENT_BATTLE_RESULT, timeout: 15s, retries: 1 }
+      - { type: request, protocol: C_2_S_TOURNAMENT_LOAD, payload: {}, expect: S_2_C_TOURNAMENT_LOAD, timeout: 5s, retries: 1 }

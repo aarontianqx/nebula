@@ -202,6 +202,21 @@ impl FieldCondition {
             }
             return false;
         }
+        // Membership ops: `contains` on a JSON array is element equality
+        // (any-hit), on strings substring; `not_contains` is its negation
+        // (e.g. reward draw_index deny-lists).
+        if op == "contains" {
+            if let Value::Array(items) = actual {
+                return items.iter().any(|x| x == expected);
+            }
+        }
+        if op == "not_contains" {
+            return match (actual, expected) {
+                (Value::Array(items), _) => !items.iter().any(|x| x == expected),
+                (Value::String(a), Value::String(b)) => !a.contains(b),
+                _ => true,
+            };
+        }
         let numeric = actual.as_f64().zip(expected.as_f64());
         match (op, numeric) {
             ("eq", Some((a, b))) => a == b,
@@ -250,6 +265,25 @@ mod tests {
         assert!(cond("nested.flag", "eq", json!(true)).evaluate(&doc));
         assert!(!cond("missing", "eq", json!(0)).evaluate(&doc));
         assert!(!cond("mailNums", "bogus", json!(0)).evaluate(&doc));
+    }
+
+    /// Membership ops: array `contains` is element equality (any-hit),
+    /// `not_contains` its negation; string semantics preserved.
+    #[test]
+    fn membership_ops() {
+        let cond = |field: &str, op: &str, value: Value| FieldCondition {
+            field: field.to_string(),
+            op: op.to_string(),
+            value,
+            default: None,
+        };
+        let doc = json!({"draw_index": [1, 3], "s": "hello"});
+        assert!(cond("draw_index", "contains", json!(1)).evaluate(&doc));
+        assert!(!cond("draw_index", "contains", json!(2)).evaluate(&doc));
+        assert!(!cond("draw_index", "not_contains", json!(1)).evaluate(&doc));
+        assert!(cond("draw_index", "not_contains", json!(2)).evaluate(&doc));
+        assert!(cond("s", "contains", json!("ell")).evaluate(&doc));
+        assert!(!cond("s", "not_contains", json!("ell")).evaluate(&doc));
     }
 
     /// `default` substitutes when the path does not resolve (e.g. a buy-count
