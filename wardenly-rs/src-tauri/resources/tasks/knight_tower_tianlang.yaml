@@ -78,7 +78,7 @@ steps:
           timeout: 4s,
           retries: 1 }
 
-  # 战斗中且攻击次数未满 → 移入 channel 并攻击（首击可能不落地，request 自带重试）
+  # 战斗中且攻击次数未满 → 移入 channel 并攻击
   - name: fight
     match:
       conditions:
@@ -87,15 +87,30 @@ steps:
     actions:
       # 观测：战斗标志位（isBattle 未复位是"打尸体"的直接证据）
       - { type: log_state, paths: ["role._knightTower._isBattle", "role._knightTower._fightNum", "role._militaryOrder"] }
+      # 阵亡复活弹窗兜底（客户端在 fighter 阵亡时自动弹，确定=扣金币！）：
+      # 攻击前直接销毁弹窗视图——hide 零回调零消耗，比点"取消"更稳；无弹窗时 no-op
+      - { type: eval_js, script: "try{var U=window.__require('UIManager').UIManager.instance;var V=window.__require('ViewEnum').ViewModule;U.hide(V.MESSAGE_BOX_VIEW)}catch(e){};'OK'" }
       - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_TEAM_PLAYER_MOVE, payload: { channel: 1 } }
-      # 等待"攻击命中或战斗结算"——结算也是本轮攻击的答案。
-      # abort_if 是双保险：RESULT 在 step 匹配与发送之间到达时（实测每场必现的竞态），
-      # 客户端 0.3s 内复位 isBattle，本请求立即中止而不是向死 boss 幽灵攻击并白烧
-      # 2×8s 超时与军令
+      # 只认"自己名字"的命中广播作为确认（$role.accName 在动作开始时解析一次）——
+      # 出手节奏跟随自己的真实命中，不被队友的广播提前释放（防超发触及金币路径）；
+      # 战斗结束由 abort_if 兜底（RESULT 后客户端 ~0.3s 内复位 isBattle）
       - type: request
         protocol: C_2_S_KNIGHT_TOWER_TEAM_ATTACK
-        expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK, S_2_C_KNIGHT_TOWER_RESULT]
+        expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_ATTACK]
+        conditions:
+          - { field: name, op: eq, value: "$role.accName" }
         timeout: 8s
         retries: 1
         abort_if:
           - { field: role._knightTower._isBattle, op: eq, value: false }
+
+  # 打满 3 次后留在战中待命（fight 不再匹配）：持续销毁可能弹出的复活确认框，
+  # 安静等战斗结束
+  - name: battle_idle_dismiss
+    match:
+      conditions:
+        - { field: role._knightTower._isBattle, op: eq, value: true }
+        - { field: role._knightTower._fightNum, op: gte, value: 3 }
+    actions:
+      - { type: eval_js, script: "try{var U=window.__require('UIManager').UIManager.instance;var V=window.__require('ViewEnum').ViewModule;U.hide(V.MESSAGE_BOX_VIEW)}catch(e){};'OK'" }
+      - { type: wait, duration: 2s }

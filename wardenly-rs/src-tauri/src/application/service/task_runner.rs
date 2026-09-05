@@ -393,6 +393,15 @@ impl TaskRunner {
                     }
                     let timeout = timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
                     let expect_refs: Vec<&str> = expects.iter().map(String::as_str).collect();
+                    // Resolve `$`-refs in response conditions once (e.g. own
+                    // role name for self-attack confirmation) — per-message
+                    // resolution would eval the bridge per broadcast.
+                    let resolved_conditions = condition_eval::resolve_condition_refs(
+                        conditions,
+                        &self.game_state,
+                        &self.browser,
+                    )
+                    .await;
                     // Resolve $-refs once per action execution. If the
                     // selection basis is gone (e.g. the team list just went
                     // empty), skip the whole action: waiting for a response
@@ -443,7 +452,13 @@ impl TaskRunner {
                         self.send_protocol(protocol, &resolved_payload, step_name)
                             .await?;
                         match self
-                            .wait_protocol(&expect_refs, conditions, timeout, abort_if, events)
+                            .wait_protocol(
+                                &expect_refs,
+                                &resolved_conditions,
+                                timeout,
+                                abort_if,
+                                events,
+                            )
                             .await
                         {
                             WaitOutcome::Matched => break,
@@ -503,8 +518,20 @@ impl TaskRunner {
                     conditions,
                 } => {
                     let timeout = timeout.unwrap_or(DEFAULT_WAIT_TIMEOUT);
+                    let resolved_conditions = condition_eval::resolve_condition_refs(
+                        conditions,
+                        &self.game_state,
+                        &self.browser,
+                    )
+                    .await;
                     match self
-                        .wait_protocol(&[protocol.as_str()], conditions, timeout, &[], events)
+                        .wait_protocol(
+                            &[protocol.as_str()],
+                            &resolved_conditions,
+                            timeout,
+                            &[],
+                            events,
+                        )
                         .await
                     {
                         WaitOutcome::Matched | WaitOutcome::Aborted => {}
@@ -1299,6 +1326,81 @@ mod tests {
         assert!(
             elapsed < Duration::from_secs(2),
             "abort_if did not short-circuit the wait, elapsed={elapsed:?}"
+        );
+    }
+
+    /// Request conditions support `$`-refs resolved once per action (e.g.
+    /// comparing a broadcast's `name` against our own role name). A teammate's
+    /// PLAYER_ATTACK must NOT confirm our attack wait; our own must.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn request_condition_matches_only_own_broadcast() {
+        let event_bus = create_event_bus();
+        let task = Task {
+            name: "t".to_string(),
+            description: None,
+            on_no_match: NoMatchRule::default(),
+            steps: vec![once_step(
+                "attack",
+                vec![TaskAction::Request {
+                    protocol: "C_2_S_TEST".to_string(),
+                    payload: json!({}),
+                    expect: Some("S_2_C_PLAYER_ATTACK".to_string()),
+                    expect_any: vec![],
+                    timeout: Some(Duration::from_secs(5)),
+                    conditions: vec![FieldCondition {
+                        field: "name".to_string(),
+                        op: "eq".to_string(),
+                        value: json!("$role.accName"),
+                    }],
+                    retries: 0,
+                    on_timeout: Default::default(),
+                    abort_if: vec![],
+                }],
+            )],
+        };
+        let (_cmd_tx, cmd_rx) = mpsc::channel(8);
+        let mut runner = TaskRunner::new(
+            "s".to_string(),
+            task,
+            vec![],
+            Arc::new(MockDriver), // queryRole returns 7 → our "name" is 7
+            global_ocr_client(),
+            event_bus.clone(),
+            new_shared_game_state(),
+            None,
+            cmd_rx,
+        );
+
+        let bus = event_bus.clone();
+        tokio::spawn(async move {
+            let publish = |name: serde_json::Value| {
+                bus.publish(DomainEvent::ProtocolMessage {
+                    session_id: "s".to_string(),
+                    protocol_id: 1,
+                    name: Some("S_2_C_PLAYER_ATTACK".to_string()),
+                    data: json!({ "name": name }),
+                });
+            };
+            // A teammate's attack lands while we wait — must not match.
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            publish(json!("teammate"));
+            // Ours lands later — matches (name == resolved 7).
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            publish(json!(7));
+        });
+
+        let start = std::time::Instant::now();
+        let reason = runner.run().await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(reason, StopReason::Completed);
+        assert!(
+            elapsed >= Duration::from_millis(1400),
+            "teammate's broadcast confirmed our wait (elapsed={elapsed:?})"
+        );
+        assert!(
+            elapsed < Duration::from_secs(4),
+            "own broadcast did not confirm the wait (elapsed={elapsed:?})"
         );
     }
 }

@@ -148,6 +148,38 @@ async fn query_role(path: &str, browser: &Arc<dyn BrowserDriver>) -> Option<Valu
     }
 }
 
+/// Resolve `$`-prefixed condition values once, up front (e.g. comparing a
+/// response field against our own role name: `value: "$role.accName"`).
+/// Done once per action rather than per message — the references are
+/// quasi-static for the duration of a wait, and per-message resolution
+/// would hammer the bridge with an eval per broadcast. Unresolvable refs
+/// are left as the literal string (compare then simply never matches).
+pub async fn resolve_condition_refs(
+    conditions: &[FieldCondition],
+    game_state: &SharedGameState,
+    browser: &Arc<dyn BrowserDriver>,
+) -> Vec<FieldCondition> {
+    let mut out = Vec::with_capacity(conditions.len());
+    for condition in conditions {
+        let mut resolved = condition.clone();
+        if let Value::String(s) = &resolved.value {
+            if let Some(path) = s.strip_prefix('$') {
+                match resolve_path(path, game_state, browser).await {
+                    Some(value) => resolved.value = value,
+                    None => {
+                        tracing::warn!(
+                            "Condition value reference ${} unresolved; will never match",
+                            path
+                        );
+                    }
+                }
+            }
+        }
+        out.push(resolved);
+    }
+    out
+}
+
 /// Resolve `$`-prefixed references inside a payload (used by send/request
 /// actions). Any string value starting with `$` is replaced by the resolved
 /// state./role. value; resolution failure aborts the whole payload (None) —

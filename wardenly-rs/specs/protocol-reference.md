@@ -163,6 +163,15 @@
 - **军令会计**：未命中 channel 的"幽灵攻击"也扣军令——先 MOVE 后 ATTACK 是硬性顺序；
 - 战斗中重连用 `C_2_S_TEAM_PLAYER_INFO {}` 拉 `S_2_C_TEAM_RECONNECT {cur_boss_soldier_num, over_time, num}` 恢复现场。
 
+### 4.5 金币复活路径与攻击确认（2026-09-04，bundle 源码）
+
+- **第 4 次攻击起花金币**：客户端在 `fightNum>=3` 时再攻击 → 弹"是否花费金币×N 进行复活战斗"（`N = 5*(fightNum+1-3)`，封顶 20）。确认按钮 → 发 `C_2_S_KNIGHT_TOWER_TEAM_PLAYER_MOVE`（复活+进 channel 同一协议），**金币由服务器侧扣除**。裸发第 4 次攻击协议时服务器是否直接扣金未验证（也不应去试）——自动化必须保证第 4 击发不出去；
+- **弹窗的另一个触发点**：fighter 阵亡且队伍存活人数>1 时客户端自动弹（`_deadCallback`）。我们的纯协议路径不点击、不会主动触发；
+- **安全关闭**：弹窗是通用 MessageBox（确定=回调发协议，取消=纯关闭零消耗）；自动化更稳的做法是 `__require('UIManager').UIManager.instance.hide(__require('ViewEnum').ViewModule.MESSAGE_BOX_VIEW)`——直接销毁视图、零回调，不依赖坐标点击；
+- **攻击确认的归属**：`S_2_C_KNIGHT_TOWER_PLAYER_ATTACK` 带 `name`/`server_id`，客户端 `isSelf` 用 `role.accName` 比对——模板据此用 `conditions: [{field: name, op: eq, value: "$role.accName"}]` 只认自己的命中；
+- **`fightNum` 跨场残留**（实测）：快速连场时新场开局读数可能带上上一场的计数（观测到 0→1→2 逐场递增），来源（服务器 RECONNECT.num 回报 vs 客户端竞态）待确认。影响是保守方向（少打，不会多打）；3 次上限的判定因此叠加"自己命中确认"双保险；
+- **攻击确认延迟**：服务器约 7s 一个回合处理攻击，命中广播并非即时；队员侧节奏天然同步到这个回合周期。
+
 ## 5. 自助查询任意协议的方法
 
 1. **找名字**：`grep -i tower wardenly-rs/src-tauri/resources/protocols/registry.json`（或在游戏页 `Object.keys(__require('ProtocolBase').Protocol)`）；

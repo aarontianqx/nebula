@@ -323,6 +323,7 @@ steps:
   - `state.<协议名>.<字段>` — 引用结构化游戏状态（GameState 按协议名保存最新下行负载）；
   - `role.<字段>` — 直读游戏客户端 role 模型（如 `role._militaryOrder`、`role._knightTower._teamNumInfo.num`），随时可读、无需等待推送；注意部分字段（如 `_teamNumInfo`）要先进入对应界面才由服务端下发。
 - `value` 可以是字面量，也可以是 `"$<路径>"` 引用另一个字段做字段间比较（如 `"$role._militaryOrder"`）。
+- `request` / `wait_protocol` 的响应 `conditions` 同样支持 `"$<路径>"`（如 `{ field: name, op: eq, value: "$role.accName" }` 只认自己名字的命中广播）；`$` 引用在动作开始时解析一次，不会每条广播都查一次。
 - `op`：`eq / neq / gt / gte / lt / lte / exists / missing`（`missing` 只要求路径解析不出**非 null 值**，忽略 value）。
 - **null 语义**：游戏客户端复位模型时把字段置 null（如战后 `role._knightTower._teamNumInfo = null`）——null 一律视为"无值"：`missing` 命中、`exists` 不命中。刷新类谓词（`missing → 重新拉取`）依赖这一语义才能在每次战后重燃。
 
