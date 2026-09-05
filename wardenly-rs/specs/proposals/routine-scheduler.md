@@ -1,89 +1,107 @@
-# Proposal: 任务调度器（Routine）——把任务当积木的执行层
+# Proposal: 任务调度器（Scheduler）——任务之上的状态循环
 
-> 2026-09-05 ｜ 状态：**提案，待评审** ｜ 前置：schema v2 任务（TaskRunner）、jslib 均已落地
+> 2026-09-05 v2 ｜ 状态：**提案，待评审**（v2：由"串行 routine"改为"调度循环"，覆盖周期/条件触发/每日一次/时间窗四类形态）｜ 前置：schema v2 任务（TaskRunner）、jslib 均已落地
 
-## 1. 背景与动机
+## 1. 动机与三类真实形态
 
-现状：任务（`resources/tasks/*.yaml`）是最小执行单元，一次运行一个，跑完即止。随着任务数量增加（高塔×2、集市、逐鹿、邮件、未来的更多日常），出现三类模板层解决不了的需求：
+任务数量增长后，"什么时候跑任务"本身需要一层机制。真实需求不是串行流水线，而是四种调度形态：
 
-1. **每日一条龙**：用户希望"点一次，把一批日常按顺序跑完"（邮件 → 逐鹿 → 高塔 → 集市），而不是逐个 Start；
-2. **周期性重跑**："每 N 分钟跑一次某任务"（如定时看集市是否开启）——这是调度语义，不属于任务模板；
-3. **24 小时挂机**：多个任务 + 活动窗口等待 + 失败续跑 + 跨天重置。
+| 形态 | 例子 | 需要的能力 |
+|---|---|---|
+| **周期观察** | 领邮件：每隔一段时间看一次 | `every`（距上次运行至少 N） |
+| **每日一次（带完成记录）** | 群雄逐鹿：打满 30 场+领完奖，第二天才再做 | `daily` + `done_when`（完成判定读游戏真值，不依赖本地记录） |
+| **条件触发 + 每日上限** | 武魁高塔：没队伍不空转，有队伍就进，满 7/10 次当天不再尝试 | `eligible_when` + `done_when` + `max_run` + `defer` |
+| **时间窗** | 集市：12:30 开启，过了就没意义 | `window`（窗口内才参与调度） |
 
-设计原则与 TaskRunner 相同：**机制在执行器，知识在模板**。Routine 不新增任何"任务内"能力，只编排任务之间的顺序与重跑策略。
+关键设计结论（与 TaskRunner 同构）：**调度器自己也是一个状态匹配循环**——条目带"什么时候该跑/什么时候算完/没轮上时多久再看"，判定语言与模板谓词完全相同（state./role. 条件、选择器、default）。模板层零改动。
 
-## 2. 定位：Routine 与 Task 的关系
+## 2. 执行模型
 
 ```
-RoutineRunner（新增，轻量）
-  └─ 按 routine 定义的顺序调度
-       └─ TaskRunner.run()（现有，原样复用）
-            └─ 模板 YAML（现有，无需改动）
+loop {
+  按条目顺序（=优先级）遍历：
+    done_when 成立？        → 今日已完成，跳过
+    window 不在窗口内？      → 跳过
+    eligible_when 不成立？   → 本轮跳过
+    距上次启动 < every？     → 跳过
+    否则 → 启动该任务；任务自然结束、或 max_run 到点强收
+  sleep(poll_interval)      # 默认 30~60s
+}
 ```
 
-Routine 是一个 YAML（`resources/routines/*.yaml`），UI 的脚本下拉框中与任务并列展示（路由：routines 先于 tasks 匹配或加前缀区分）。
+- 一次只跑一个任务（执行权独占）；任务结束/被强收后进入下一轮；
+- `defer`：本轮不可用的条目，按各自间隔退避，不空转；
+- 手动停止随时生效（任务内、睡眠中立即停）。
 
-## 3. Schema 草案
+## 3. Schema 草案（`resources/schedules/*.yaml`）
 
 ```yaml
-name: 日常例程
-description: 每日日常：邮件 → 逐鹿 → 高塔 → 集市（开着就买）
-loop: { policy: once }              # once | interval: 1h | daily_reset
-on_task_fail: continue              # continue（默认）| stop
-steps:
-  - { task: 一键领邮件 }
+name: 24h挂机例程
+description: 邮件周期领取 + 逐鹿/高塔每日完成 + 集市窗口抢购
+poll_interval: 45s                 # 调度循环间隔（默认 60s）
+entries:
+  - name: 领邮件
+    task: 一键领邮件
+    every: 30m
 
-  - { task: 群雄逐鹿 }
+  - name: 群雄逐鹿
+    task: 群雄逐鹿
+    daily: true
+    done_when:
+      - { field: state.S_2_C_TOURNAMENT_LOAD.battle_num, op: gte, value: 30 }
 
-  - { task: 武魁高塔·天狼, retry: { count: 2, interval: 5m } }
+  - name: 武魁高塔·天狼
+    task: 武魁高塔·天狼
+    daily: true
+    done_when:
+      - { field: role._knightTower._teamNumInfo.num, op: gte, value: 7 }
+    eligible_when:
+      - { field: "state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@where(server_id, ends_with, [\"-888\"])", op: exists }
+    max_run: 10m
+    defer: 5m
 
-  # 等待条件（比如活动开启）：复用现有条件语法，带超时与超时策略
-  - wait_until:
-      conditions:
-        - { field: "state.S_2_C_ACTIVITY_INFO", op: exists }   # 示意：以活动数据到达为准
-      timeout: 3h
-      on_timeout: skip            # skip（跳过下一步）| fail（例程失败）
-
-  - { task: 集市·打折商城 }
+  - name: 集市·打折商城
+    task: 集市·打折商城
+    daily: true
+    window: { after: "12:25", before: "23:59" }   # 服务器时间
+    # 完成判定可读（个人限购计数）则 done_when；读不到则靠完成记录
 ```
 
-语义：
+字段语义：
 
-- **顺序执行**：上一个 TaskRunner 结束（Completed/ResourceExhausted）才启动下一个；
-- **`on_task_fail: continue`**：某任务因 infra/配置失败时跳过它继续后续；`stop` 则整个例程失败；
-- **`retry`**：任务失败时按间隔重试 N 次；
-- **`wait_until`**：阻塞直到条件成立（复用 state./role. 条件）或超时；`on_timeout: skip` 跳过**紧随的下一个任务步骤**，`fail` 终止例程；
-- **loop**：
-  - `once`：跑完一遍结束；
-  - `interval`：跑完一遍睡 N 后再跑（周期任务）；
-  - `daily_reset`：跑完一遍睡到游戏日重置（服务器 0 点）再跑——24 小时挂机形态；
-- **手动停止**：与现有 Stop 一致（随时可停，运行中的 TaskRunner 收到 Manual）。
+- `task`：引用现有任务名（构建期校验存在）；
+- `daily: true`：每天最多"完成"一次——`done_when` 成立后记为当日完成，服务器日重置后重新评估；
+- `done_when`（可选）：完成判定，**优先读游戏真值**（次数/领取列表都在协议数据里，重启、换机都不错乱）；读不到的任务用调度器的按天完成记录兜底（任务自然结束即记为完成）；
+- `eligible_when`（可选）：不满足则本轮不启动（不空转、不阻塞其它条目）；
+- `every`（可选）：距上次启动的最小间隔（周期形态）；
+- `window`（可选）：服务器时间的每日窗口（时刻取自 `S_2_C_KEEP_ALIVE.cur_time`）；
+- `max_run`（可选）：单次运行上限，到点强收并 defer（防止"任务内长等"饿死其它条目）；
+- `defer`（可选）：本轮不可用后的退避时长（默认 = poll_interval）。
 
-## 4. 三个用例对照
+## 4. 三个案例的落法复核
 
-| 用例 | routine 写法 |
-|---|---|
-| 每日一条龙 | 上面的例子，`loop: once` |
-| 周期任务 | `steps: [{task: 集市·打折商城}], loop: { policy: interval, interval: 20m }` |
-| 24h 挂机 | 日常例程 + `loop: daily_reset` + 集市前的 `wait_until`（活动窗口） |
+- **领邮件**：`every: 30m`，无 done_when——纯周期，永远不会"完成"；
+- **群雄逐鹿**：`daily + done_when(battle_num>=30)`。完成判定全部来自服务器数据（场次、draw_index），重启应用也不会重复做；跨天时服务器计数复位，done_when 自然失效，第二天重新触发；
+- **武魁高塔**：`eligible_when`（无白名单队伍不启动）+ `max_run`（启动了不开战到点强收）+ `done_when(num>=7)`（满次数当天永久跳过）。模板里的 `on_no_match: wait 24h` 与调度兼容：调度器决定"什么时候值得启动"，任务内等待随时可被 max_run 打断；
+- **集市**：`window` 卡活动时段；完成判定用个人限购计数（可读），买满即当日完成。
 
-## 5. 实现要点（小）
+## 5. 实现要点
 
-- 新增 `RoutineRunner`：不碰 TaskRunner；每个 routine step 复用 `session_actor.start_script` 的现有启动/停止/监听链路（ScriptStopped 事件驱动流转）；
-- `wait_until` 复用 `condition_eval::conditions_met` 轮询（200ms）；
-- `daily_reset` 的重置时刻：读服务器时间（`S_2_C_KEEP_ALIVE.cur_time` + time_diff 已有），睡到次日 00:00（时区按游戏服）；
-- 校验：routine 引用的任务名构建期检查存在（同 jslib 校验）；
-- UI：routine 与 task 同一入口（脚本列表合并展示，名字区分即可）。
+- 新增 `SchedulerRunner`（application 层）：与 TaskRunner 并列，复用 session 的脚本启动/停止/事件链路；条目的 done/eligible 判定复用 `condition_eval::conditions_met`；
+- 时间基准：服务器时间（`S_2_C_KEEP_ALIVE.cur_time + time_diff`，GameState 已有）；
+- 完成记录兜底：`logs/schedules/<date>.json`（只记"读不到真值"的条目完成态）；
+- UI：schedule 与 task 在同一脚本列表展示、同一路由启动（schedule 优先匹配）；
+- 构建期校验：引用的任务名存在、done/eligible 条件可解析。
 
-## 6. 明确不做
+## 6. 明确不做（第一版）
 
-- 不做任务内并发（一次只跑一个任务；并发的复杂度远高于收益）；
-- 不做跨账号编排（分组批量由现有 Run Group / Start All 承担）；
-- 不替代 `on_no_match: wait`（任务内等待依旧归模板）。
+- 不做并发任务（一次一个，执行权独占）；
+- 不做事件驱动唤醒（轮询足够；后续可作为同一循环上的优化）；
+- 不改成有任务模板（`on_no_match` 等任务内语义原样保留）。
 
 ## 7. 验收标准
 
-1. "每日一条龙"routine 在真实账号顺序跑通 3+ 任务，中间任务的失败被正确跳过/重试；
-2. `interval` 周期任务按间隔重跑；
-3. `daily_reset` 在服务器 0 点后自动开始新一轮；
-4. 手动 Stop 在任意环节（任务内 / wait_until / 睡眠中）立即停止。
+1. 四类形态的条目在同一 schedule 里共存并按预期轮转（真实账号观察至少一个完整调度日）；
+2. 高塔条目：无队不启动、开战即进入、满 7 后当天不再启动；
+3. 应用重启后，已完成条目不会被重做（真值判定）；
+4. 手动 Stop 在任务内/睡眠中立即生效。
