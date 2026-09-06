@@ -191,6 +191,15 @@
 - 胜负与积分：胜 +50、负 +21~38（按档），积分影响排名；`S_2_C_TOURNAMENT_BATTLE_RESULT` 无显式胜负字段（胜负以 `win_num` 增量为准，战报是二进制 DT_REPORT）。
 - 排名奖（`qxRankReward`）赛季结算发放，不可日常领取。
 
+### 4.8 队长模式（创建/开战/满员复核，2026-09-06）
+
+- **链路**（`_onCreateBtn` + 战斗视图 `start()`，bundle 源码）：`C_2_S_KNIGHT_TOWER_SET_CUR_BOSS_ID {boss_level}` → `C_2_S_KNIGHT_TOWER_TEAM_CREATE {ident, limit_level, server_limit, chaos_level}` → 等人（`S_2_C_KNIGHT_TOWER_PLAYER_INFO {create_id, count, player_data_ary[]}` 推送）→ `C_2_S_KNIGHT_TOWER_TEAM_START {}`；
+- **CREATE 的限制值**：`limit_level`（国家限制）/`server_limit`（同服限制）取值从 1 起（1=不限 2=同国 3=同军团），**发 0 会被静默拒绝**；
+- **chaos_level 是最大坑**：`S_2_C_KNIGHT_TOWER_TEAM_NUM.chaos_level` 语义是"当前共享 boss 等级"，**为 0 = boss 未激活，此时 CREATE 一律被静默拒绝**；非 0 时必须与服务器当前值一致才受理（值会随 boss 被击杀/刷新变动），所以建队前必须**当场重新拉 TEAM_NUM 取现值**（用 role 模型 `role._knightTower._teamNumInfo.chaos_level`，桥/模型偶发错位值只在 boss 未激活时段出现，CREATE 失败也只是静默重试，无副作用）；
+- **满员复核**（防提前开）：开战谓词命中后，先 `C_2_S_KNIGHT_TOWER_TEAM_PLAYER_INFO {}` 拉最新名单，给响应加 `conditions: [count>=8, create_id==selfteamId]`——人数掉了响应不满足、超时交回状态机，**绝不会在不满员时发出 TEAM_START**；
+- **Boss 静态表**（`StaticData.knightTower._data.Boss`，2026-09-06 实测）：天狼难度一~九（Troop level 100/120/140/160/165/170/175/200/220，HP 1.5M~250M）；混沌难度一~七（240~300，400M~1B）；穷奇难度一~五（310~350，1.1B~1.5B）；饕餮难度一~五（360~400，1.6B~2B）。每 boss `maxCount=8`（队伍上限 8 人）；
+- 模板：`knight_tower_captain_{tianlang,hundun,qiongqi}.yaml`（probe_boss 等激活 → create_team → start_when_full → fight → 重建）。
+
 ## 5. 自助查询任意协议的方法
 
 1. **找名字**：`grep -i tower wardenly-rs/src-tauri/resources/protocols/registry.json`（或在游戏页 `Object.keys(__require('ProtocolBase').Protocol)`）；
