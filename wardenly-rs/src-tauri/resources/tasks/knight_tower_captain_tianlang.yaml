@@ -1,8 +1,9 @@
 # 武魁高塔·天狼（队长模式，ident=1，每日上限 7 次）
 # 循环：加载塔信息 → 无队则建队（开放加入）→ 成员满 8 复核后开战（少一个都不开）→
 #       战斗（与队员相同的 3 次攻击规则）→ 结算后重建，直到满 7 次停止。
-# 严格性：开战前先拉最新成员名单，count<8 则响应不满足条件、交回状态机继续等，
-#        绝不会在人数不足时发出 TEAM_START。
+# 建队等级（chaos_level）真相（2026-09-06 日志实证）：TEAM_NUM 的 chaos_level 解析错位不可靠，
+# 优先级 = 现存队伍的 TEAM_INFO.limit_level（队长建队等级的服务器回显）> 静态表顶级难度等级（220）。
+# 失败均为服务器静默拒绝、零副作用，下轮换新值重试。
 name: 武魁高塔·天狼（队长）
 description: 队长模式：自动建队 → 满 8 人复核开战 → 战斗 → 循环重建，满 7 次停止
 on_no_match: { policy: wait, timeout: 24h }    # 等人加入是慢过程，一直等
@@ -31,54 +32,70 @@ steps:
           retries: 2 }
       - { type: log_state, paths: ["role._knightTower._teamNumInfo"] }
 
-  # boss 存活探测：chaos_level ≤0（或还没拉到）= boss 未激活，每 ~2s 拉一次直到出现
-  - name: probe_boss
-    match:
-      conditions:
-        - { field: role._knightTower._selfteamId, op: eq, value: -1 }
-        - { field: role._knightTower._teamNumInfo.ident, op: eq, value: 1 }
-        - { field: role._knightTower._teamNumInfo.num, op: lt, value: 7 }
-        - { field: role._knightTower._teamNumInfo.chaos_level, op: lte, value: 0, default: 0 }
-    actions:
-      - { type: request,
-          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM,
-          payload: { ident: 1 },
-          expect: S_2_C_KNIGHT_TOWER_TEAM_NUM,
-          timeout: 5s,
-          retries: 1 }
-      - { type: wait, duration: 2s }
-
-  # boss 已激活（chaos_level>0）→ 用服务器刚回报的当前 boss 等级建队；
-  # 值会在 boss 被击杀/升级时变化，所以每次建队前都重新拉取，level 变动导致失败就下轮再试
+  # 建队（有现存队伍时）：以队伍列表里回显的 boss 等级为准（最可靠）
   - name: create_team
     match:
       conditions:
         - { field: role._knightTower._selfteamId, op: eq, value: -1 }
         - { field: role._knightTower._teamNumInfo.ident, op: eq, value: 1 }
         - { field: role._knightTower._teamNumInfo.num, op: lt, value: 7 }
-        - { field: role._knightTower._teamNumInfo.chaos_level, op: gt, value: 0 }
+        - { field: state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@first.limit_level, op: exists }
     actions:
+      # 先刷新队伍列表（等级随时变），再用最新回显值建队
       - { type: request,
-          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
           payload: { ident: 1 },
-          expect: S_2_C_KNIGHT_TOWER_TEAM_NUM,
+          expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
           timeout: 5s,
           retries: 1 }
       - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_SET_CUR_BOSS_ID,
-          payload: { boss_level: "$role._knightTower._teamNumInfo.chaos_level" } }
+          payload: { boss_level: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@first.limit_level" } }
       - type: request
         protocol: C_2_S_KNIGHT_TOWER_TEAM_CREATE
         payload:
           ident: 1
           limit_level: 1
-          server_limit: 1
-          chaos_level: "$role._knightTower._teamNumInfo.chaos_level"
+          server_limit: false
+          chaos_level: "$state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@first.limit_level"
         expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_INFO, S_2_C_KNIGHT_TOWER_TEAM_INFO]
         timeout: 6s
         retries: 1
       - { type: log_state, paths: ["role._knightTower._selfteamId"] }
+      - { type: wait, duration: 2s }
 
-  # 队长待命：满 8 人才开战——先复核最新名单（响应条件不满足 = 不开），再发 START
+  # 建队（冷启动：全场无队）：用静态表顶级难度等级（天狼=220 混沌=300 穷奇=350 饕餮=400）
+  - name: create_team_static
+    match:
+      conditions:
+        - { field: role._knightTower._selfteamId, op: eq, value: -1 }
+        - { field: role._knightTower._teamNumInfo.ident, op: eq, value: 1 }
+        - { field: role._knightTower._teamNumInfo.num, op: lt, value: 7 }
+        - { field: state.S_2_C_KNIGHT_TOWER_TEAM_INFO.battle_team_info_ary.@first.limit_level, op: missing }
+    actions:
+      - { type: request,
+          protocol: C_2_S_KNIGHT_TOWER_TEAM_NUM_INFO,
+          payload: { ident: 1 },
+          expect: S_2_C_KNIGHT_TOWER_TEAM_INFO,
+          timeout: 5s,
+          retries: 1 }
+      - { type: send_protocol, protocol: C_2_S_KNIGHT_TOWER_SET_CUR_BOSS_ID,
+          payload: { boss_level: 220 } }
+      - type: request
+        protocol: C_2_S_KNIGHT_TOWER_TEAM_CREATE
+        payload:
+          ident: 1
+          limit_level: 1
+          server_limit: false
+          chaos_level: 220
+        expect_any: [S_2_C_KNIGHT_TOWER_PLAYER_INFO, S_2_C_KNIGHT_TOWER_TEAM_INFO]
+        timeout: 6s
+        retries: 1
+      - { type: log_state, paths: ["role._knightTower._selfteamId"] }
+      - { type: wait, duration: 5s }
+
+  # 队长待命：满 8 人才开战。成员名单是推送驱动的（入队/退队都即时刷新
+  # PLAYER_INFO），abort_if 是发送前的最后一道闸：复核发现掉人就不发 START。
+  # 注意：C_2_S_TEAM_PLAYER_INFO 主动拉取无响应（仅开战/入队时下发），不要用它复核
   - name: start_when_full
     match:
       conditions:
@@ -87,24 +104,16 @@ steps:
         - { field: state.S_2_C_KNIGHT_TOWER_PLAYER_INFO.count, op: gte, value: 8 }
         - { field: state.S_2_C_KNIGHT_TOWER_PLAYER_INFO.create_id, op: eq, value: "$role._knightTower._selfteamId" }
     actions:
-      # 复核：拉最新成员名单；人数掉了 → 响应不满足 conditions → 超时交回状态机，不发 START
       - type: request
-        protocol: C_2_S_KNIGHT_TOWER_TEAM_PLAYER_INFO
+        protocol: C_2_S_KNIGHT_TOWER_TEAM_START
         payload: {}
-        expect: S_2_C_KNIGHT_TOWER_PLAYER_INFO
-        conditions:
-          - { field: count, op: gte, value: 8 }
-          - { field: create_id, op: eq, value: "$role._knightTower._selfteamId" }
-        timeout: 4s
-        retries: 0
-      - { type: request,
-          protocol: C_2_S_KNIGHT_TOWER_TEAM_START,
-          payload: {},
-          expect: S_2_C_KNIGHT_TOWER_TEAM_START,
-          timeout: 10s,
-          retries: 1 }
+        expect: S_2_C_KNIGHT_TOWER_TEAM_START
+        timeout: 10s
+        retries: 1
+        abort_if:
+          - { field: state.S_2_C_KNIGHT_TOWER_PLAYER_INFO.count, op: lt, value: 8 }
 
-  # 战斗中且攻击次数未满 → 移入 channel 并攻击（与队员模板同一套规则）
+  # 战斗中且攻击次数未满 → 移入 channel 并攻击（与队员相同的 3 次攻击规则）
   - name: fight
     match:
       conditions:
