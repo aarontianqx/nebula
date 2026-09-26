@@ -14,7 +14,7 @@
 
 ## 2. 分层架构 (DDD + Onion)
 
-依赖方向：外 → 内，内层永不依赖外层（与 `wardenly-rs` 一致）。
+依赖方向：外 → 内，内层永不依赖外层。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -208,7 +208,7 @@ pub struct DetectionResult { pub tool_id: String, pub tool_name: String, pub con
 
 ## 10. 前端架构（React + Zustand + Tailwind）
 
-沿用 `tap` / `wardenly-rs` 的 store-driven 模式，组件保持薄。
+沿用 `tap` 的 store-driven 模式，组件保持薄。
 
 | Store | 职责 |
 |-------|------|
@@ -223,7 +223,7 @@ pub struct DetectionResult { pub tool_id: String, pub tool_name: String, pub con
 
 ## 11. 持久化
 
-- 历史记录、收藏、保存的工作流：SQLite（与 `wardenly-rs` 一致，`rusqlite` bundled）。
+- 历史记录、收藏、保存的工作流：SQLite（`rusqlite` bundled）。
 - 配置：YAML（嵌入默认 + 用户覆盖），路径走平台默认目录。
 - ID：ULID（时间有序），与仓库统一。
 

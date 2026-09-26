@@ -7,7 +7,7 @@
 
 **Pulsar** 是面向开发者的**本地工具工作台 (local developer workbench)** —— 把开发者每天要用的几十个小工具（JSON 格式化、Base64、时间戳转换、JWT 解析、正则测试……）收进一个**轻量、离线、跨平台**的桌面 App。
 
-- 技术栈：Tauri v2 + React + Rust（与 `nebula/tap`、`nebula/wardenly-rs` 一致）。
+- 技术栈：Tauri v2 + React + Rust（与 `nebula/tap` 一致）。
 - 命名：取自"脉冲星"——宇宙中最精密的天然时钟，规律地发出信号。隐喻"精确、快速、可靠的工具脉冲"。
 
 ## 2. 为什么要做（动机）
