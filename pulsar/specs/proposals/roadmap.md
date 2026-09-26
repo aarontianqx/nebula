@@ -126,5 +126,5 @@
 | 赛道饱和，缺乏差异化 | 产品价值 | 优先做 Smart Detection / Pipeline / CLI，而非堆工具 |
 | formatter 缺成熟 Rust 实现 | P1 格式化工具 | 首版只选有成熟 Rust crate 的；其余延后或嵌 wasm |
 | 图片处理依赖体积大 | 包体积卖点 | 评估 `image` crate 产物体积，必要时按需特性裁剪 |
-| Tauri v2 变更 | 全局 | 锁版本，适配层隔离（与 wardenly-rs 一致） |
+| Tauri v2 变更 | 全局 | 锁版本，适配层隔离 |
 | 工具数量膨胀后架构腐化 | 可维护性 | 严守"工具=纯函数+descriptor"约束，注册集中一处 |

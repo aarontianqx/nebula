@@ -21,8 +21,6 @@ Nebula is a project incubator -- each project is independent and self-contained.
 ```
 nebula/
   tap/              # Desktop automation tool (Tauri + React + Rust)
-  wardenly-rs/      # Browser automation for WLY game (Tauri + React + Rust)
-  wardenly-go/      # Browser automation for WLY game -- Go edition (Go + Fyne)
   pulsar/           # Local developer toolbox / workbench (Tauri + React + Rust)
   comet/            # Lightweight desktop pet (Tauri + React + Rust)
 ```
@@ -45,12 +43,6 @@ nebula/
 - **Styling**: Tailwind CSS. Use semantic CSS variables for theming -- never hard-code color values.
 - **Components**: Functional components with hooks. Keep components small and single-purpose.
 - **State management**: Zustand for global state. Avoid prop drilling beyond 2 levels.
-
-### Go
-
-- **Formatting**: `gofmt` + `golangci-lint`
-- **Architecture**: Layered (Domain → Application → Infrastructure → Presentation). Same dependency direction as Rust projects.
-- **Naming**: snake_case for file names, PascalCase for exported identifiers, camelCase for unexported.
 
 ### General
 
