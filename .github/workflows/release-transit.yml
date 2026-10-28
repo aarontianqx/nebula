@@ -1,0 +1,56 @@
+name: Release transit
+on:
+  push:
+    tags: ["transit-v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux-x64
+          - os: ubuntu-24.04-arm
+            label: linux-arm64
+          - os: macos-latest
+            label: macos-arm64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: transit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: transit -> target
+      - run: cargo build --locked --release
+      - name: Package
+        env:
+          TRANSIT_LABEL: ${{ matrix.label }}
+        run: |
+          mkdir -p dist/transit
+          cp target/release/transit transit.example.toml README.md ../LICENSE dist/transit/
+          cp -R deploy specs dist/transit/
+          tar -czf "dist/transit-${TRANSIT_LABEL}.tar.gz" -C dist transit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transit-${{ matrix.label }}
+          path: transit/dist/*.tar.gz
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        working-directory: artifacts
+        run: sha256sum *.tar.gz > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

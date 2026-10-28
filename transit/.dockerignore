@@ -1,0 +1,12 @@
+target
+dist
+specs
+transit.toml
+config.toml
+logs
+state
+*.local.toml
+.env
+.env.*
+*.log
+*.jsonl

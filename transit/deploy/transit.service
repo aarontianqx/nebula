@@ -1,0 +1,30 @@
+[Unit]
+Description=Transit model API proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=transit
+Group=transit
+StateDirectory=transit
+StateDirectoryMode=0700
+UMask=0077
+ExecStartPre=/usr/local/bin/transit check --config /etc/transit/transit.toml
+ExecStart=/usr/local/bin/transit serve --config /etc/transit/transit.toml
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=40
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/transit
+Environment=XDG_STATE_HOME=/var/lib
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

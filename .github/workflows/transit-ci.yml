@@ -1,0 +1,32 @@
+name: CI transit
+on:
+  push:
+    branches: [main]
+    paths: ["transit/**", ".github/workflows/transit-ci.yml"]
+  pull_request:
+    paths: ["transit/**", ".github/workflows/transit-ci.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: transit-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: transit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: transit -> target
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - run: target/release/transit check --config transit.example.toml

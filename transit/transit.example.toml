@@ -1,0 +1,59 @@
+version = 1
+default_provider = "primary"
+
+[server]
+listen = "127.0.0.1:8787"
+# Remote access: bind a specific server IP or 0.0.0.0:8787, then restart.
+shutdown_grace_seconds = 30
+connect_timeout_seconds = 15
+response_headers_timeout_seconds = 300
+stream_idle_timeout_seconds = 180
+max_in_flight = 256
+max_connections = 1024
+max_upload_bytes = 67108864
+max_rewrite_bytes = 2097152
+
+[logging]
+# Linux: $XDG_STATE_HOME/transit/logs, otherwise ~/.local/state/transit/logs
+# macOS: ~/Library/Logs/transit. Optional absolute override:
+# directory = "/var/lib/transit/logs"
+level = "debug"
+stderr_level = "warn"
+rotation = "daily"
+retention_days = 14
+cleanup_interval_seconds = 3600
+error_preview_bytes = 4096
+
+# Replace this placeholder origin and model IDs before using a real endpoint.
+# Credentials belong in your client; Transit has no API key configuration.
+[providers.primary]
+origin = "https://api.example.com"
+base_path = ""
+
+[providers.primary.model_aliases]
+chat-latest = "replace-with-latest-model"
+edit-fast = "replace-with-fast-model"
+
+[providers.secondary]
+origin = "https://secondary.example.com"
+base_path = "/gateway"
+
+[[routes]]
+id = "secondary-direct"
+path_prefix = "/secondary"
+strip_prefix = true
+provider = "secondary"
+
+[[routes]]
+id = "zed-edit"
+method = "POST"
+path = "/zed-edit/v1/completions"
+provider = "primary"
+# Complete override: provider.base_path is not added to upstream_path.
+upstream_path = "/v1/chat/completions"
+adapter = "completions_to_chat"
+prompt_mode = "fim_qwen"
+unknown_fields = "reject"
+max_request_bytes = 2097152
+max_json_response_bytes = 8388608
+max_sse_event_bytes = 1048576

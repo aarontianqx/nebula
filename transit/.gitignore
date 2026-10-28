@@ -1,5 +1,11 @@
-.DS_Store
-Transit.xcodeproj/
-build/
-.swiftpm/
-DerivedData/
+/target/
+/dist/
+/transit.toml
+/config.toml
+/logs/
+/state/
+.env
+.env.*
+*.local.toml
+*.log
+*.jsonl
