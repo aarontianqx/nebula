@@ -4,7 +4,7 @@
 
 ## 定位与技术栈
 
-Transit 是一个长期运行的模型 HTTP 反向代理。请求先按路径选择 provider，再执行可选的模型别名或协议转换，最后由共享 transport 发往固定配置的上游。客户端提供自己的上游认证，Transit 不保存、分配或注入 key。
+Transit 是一个长期运行的模型 HTTP 反向代理。请求先按路径选择 provider，再执行可选的模型别名、协议转换和 provider 请求 profile，最后由共享 transport 发往固定配置的上游。客户端提供自己的上游认证，Transit 不保存、分配或注入 key。
 
 采用单个 Rust Cargo package、单进程部署：
 
@@ -45,8 +45,8 @@ flowchart LR
 ```
 
 1. 原始流：仅修改目标 URL 和传输所需 headers，不解析业务字段或 SSE。没有别名的 provider、非模型改写 endpoint，以及单纯路径改写使用此路径。
-2. model 改写：明确支持的 JSON endpoint 上有界读取请求，只修改顶层 model；未命中别名时发送原 body 字节。响应仍流式透传。
-3. 协议转换：特定 POST 路径有界读取请求，转换 prompt/messages 和成功响应；非 2xx 保持原始内容。SSE 只缓冲当前事件。
+2. JSON 改写：模型映射理解顶层 model；显式选择 provider profile 的精确 POST 路由还可设置/删除上游参数。最终未改变字段时发送原 body 字节，响应仍流式透传。
+3. 协议转换：特定 POST 路径有界读取请求，转换 prompt/messages 后再应用可选 profile，成功响应执行反向转换；非 2xx 保持原始内容。SSE 只缓冲当前事件。
 
 后两者有意理解部分字段，不能宣称所有请求均逐字节透明。三者复用认证转发、连接池、超时、取消和错误传播。详见 [路由](features/routing.md) 与 [Zed 转换](features/zed_edit.md)。
 

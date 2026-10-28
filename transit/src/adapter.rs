@@ -1,8 +1,15 @@
 use crate::{
-    config::{PromptMode, model_name},
+    config::{PromptMode, RequestProfile, model_name},
     error::ProxyError,
 };
 use serde_json::{Map, Value, json};
+
+pub fn apply_profile(value: &mut Value, profile: &RequestProfile) -> Result<bool, ProxyError> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| ProxyError::bad("invalid_json_object", "Expected a JSON object"))?;
+    Ok(profile.apply(object))
+}
 
 pub fn rewrite_model(
     value: &mut Value,

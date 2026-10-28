@@ -35,7 +35,7 @@ Unix 新建私有目录权限 0700，文件 0600，不改写已有目录/文件�
 | WARN | 上游 4xx、本地参数拒绝、无效 reload、容量拒绝、无法分类的连接失败、清理失败 |
 | ERROR | 上游 5xx、连接/超时、转换/截断、内部任务或日志基础设施错误 |
 
-request_id 是 Transit 生成的 UUID，经 X-Transit-Request-Id 返回。日志按需包含 provider、rule_id、config_generation、method、adapter、请求/实际模型、状态、outcome、error_code、stage、耗时、首个上游 body 字节时间和上下行字节数。
+request_id 是 Transit 生成的 UUID，经 X-Transit-Request-Id 返回。日志按需包含 provider、rule_id、config_generation、method、adapter、请求/实际模型、状态、outcome、error_code、stage、耗时、首个上游 body 字节时间和上下行字节数。request_started 还记录选中的 request_profile 名称，不输出 profile 参数值。
 
 model 只在原本已解析 JSON 的请求中提取，不为了日志解析透传 body。response_bytes 是已读取的上游 body 字节数，adapter 转换后客户端收到的大小可能不同。completed 表示数据已交给 HTTP transport，不保证客户端应用读取或接受。
 
@@ -62,7 +62,7 @@ GET `/_transit/health/live` 返回 alive 和 logging_degraded、log_write_failur
 
 健康不访问上游，也不验证 endpoint/key/model。日志故障只改变诊断字段，不使 ready 自动变为 false；draining 时 ready 返回 503。接入层应按需要读取日志健康字段。
 
-SIGHUP 重新读取完整配置，成功后原子切换，失败保留旧快照；已有请求使用旧 generation。支持修改默认 provider、provider/别名、路由、logging.level/stderr_level/error_preview_bytes。
+SIGHUP 重新读取完整配置，成功后原子切换，失败保留旧快照；已有请求使用旧 generation。支持修改默认 provider、provider/别名/request_profiles、路由、logging.level/stderr_level/error_preview_bytes。切换 provider 时如缺少路由引用的 profile，校验失败并保留原配置。
 
 所有 server 参数，以及 logging.directory/rotation/retention_days/cleanup_interval_seconds 变化需要重启。如果 reload 文件包含此类修改，整份 reload 拒绝，不部分应用。没有自动文件监视。建议原子替换配置文件后再 SIGHUP；systemd 使用 `systemctl reload transit`。
 

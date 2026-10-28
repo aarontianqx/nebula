@@ -278,7 +278,7 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
         app: app.clone(),
         _permit: permit,
     };
-    tracing::debug!(event="request_started",request_id=%id,provider=%record.provider,rule_id=%record.rule,config_generation=snapshot.generation);
+    tracing::debug!(event="request_started",request_id=%id,provider=%record.provider,rule_id=%record.rule,config_generation=snapshot.generation,request_profile=plan.route.and_then(|route|route.request_profile.as_deref()));
     let result = execute(app, &snapshot, request, lifetime).await;
     match result {
         Ok(response) => identify(response, &id),
@@ -328,7 +328,12 @@ async fn execute(
     }
     let plan = snapshot.config.plan(&parts.method, parts.uri.path());
     let adapter_route = plan.route.filter(|r| r.adapter.is_some());
+    let profile = plan
+        .route
+        .and_then(|route| route.request_profile.as_ref())
+        .and_then(|name| plan.provider.request_profiles.get(name));
     let rewrite = adapter_route.is_some()
+        || profile.is_some()
         || (!plan.provider.model_aliases.is_empty()
             && parts.method == Method::POST
             && matches!(
@@ -374,7 +379,7 @@ async fn execute(
             Ok(m) => m,
             Err(e) => return fail(lifetime, e),
         };
-        let changed = models
+        let mut changed = models
             .as_ref()
             .is_some_and(|(requested, resolved)| requested != resolved);
         *record
@@ -388,10 +393,15 @@ async fn execute(
                     ProxyError::bad("invalid_adapter_config", "Missing prompt_mode"),
                 );
             };
-            let (converted, is_streaming) = match adapter::request(value, prompt_mode) {
+            let (mut converted, is_streaming) = match adapter::request(value, prompt_mode) {
                 Ok(v) => v,
                 Err(e) => return fail(lifetime, e),
             };
+            if let Some(profile) = profile
+                && let Err(error) = adapter::apply_profile(&mut converted, profile)
+            {
+                return fail(lifetime, error);
+            }
             streaming = is_streaming;
             let bytes = match serde_json::to_vec(&converted) {
                 Ok(bytes) => bytes,
@@ -420,20 +430,28 @@ async fn execute(
                 HeaderValue::from_static("identity"),
             );
             Body::from(bytes)
-        } else if changed {
-            representation_changed(&mut parts.headers);
-            let bytes = match serde_json::to_vec(&value) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    return fail(
-                        lifetime,
-                        ProxyError::bad("invalid_json", "Cannot serialize request"),
-                    );
-                }
-            };
-            Body::from(bytes)
         } else {
-            Body::from(raw)
+            if let Some(profile) = profile {
+                match adapter::apply_profile(&mut value, profile) {
+                    Ok(applied) => changed |= applied,
+                    Err(error) => return fail(lifetime, error),
+                }
+            }
+            if changed {
+                representation_changed(&mut parts.headers);
+                let bytes = match serde_json::to_vec(&value) {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        return fail(
+                            lifetime,
+                            ProxyError::bad("invalid_json", "Cannot serialize request"),
+                        );
+                    }
+                };
+                Body::from(bytes)
+            } else {
+                Body::from(raw)
+            }
         }
     } else {
         let request_record = record.clone();

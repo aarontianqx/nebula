@@ -98,6 +98,31 @@ pub struct Provider {
     pub base_path: String,
     #[serde(default)]
     pub model_aliases: BTreeMap<String, String>,
+    #[serde(default)]
+    pub request_profiles: BTreeMap<String, RequestProfile>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RequestProfile {
+    pub set: BTreeMap<String, serde_json::Value>,
+    pub remove: Vec<String>,
+}
+
+impl RequestProfile {
+    pub fn apply(&self, object: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+        let mut changed = false;
+        for field in &self.remove {
+            changed |= object.remove(field).is_some();
+        }
+        for (field, value) in &self.set {
+            if object.get(field) != Some(value) {
+                object.insert(field.clone(), value.clone());
+                changed = true;
+            }
+        }
+        changed
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -113,6 +138,7 @@ pub struct Route {
     pub upstream_path: Option<String>,
     pub adapter: Option<Adapter>,
     pub prompt_mode: Option<PromptMode>,
+    pub request_profile: Option<String>,
     #[serde(default = "reject")]
     pub unknown_fields: String,
     #[serde(default = "request_limit")]
@@ -251,6 +277,22 @@ impl Config {
                     ));
                 }
             }
+            for (profile_name, profile) in &provider.request_profiles {
+                let removed: HashSet<_> = profile.remove.iter().collect();
+                if !identifier(profile_name)
+                    || removed.len() != profile.remove.len()
+                    || profile.set.keys().any(|field| removed.contains(field))
+                    || profile
+                        .set
+                        .keys()
+                        .chain(profile.remove.iter())
+                        .any(|field| !profile_field(field))
+                {
+                    return Err(format!(
+                        "provider {name}: invalid request profile name, field, or conflicting operations"
+                    ));
+                }
+            }
         }
         let mut ids = HashSet::new();
         for route in &self.routes {
@@ -304,6 +346,22 @@ impl Config {
             }
             if route.adapter.is_none() && route.prompt_mode.is_some() {
                 return Err(format!("route {}: prompt_mode requires adapter", route.id));
+            }
+            if let Some(profile) = &route.request_profile {
+                let provider =
+                    &self.providers[route.provider.as_deref().unwrap_or(&self.default_provider)];
+                if route.method.as_deref() != Some("POST") || route.path.is_none() {
+                    return Err(format!(
+                        "route {}: request_profile requires an exact POST path",
+                        route.id
+                    ));
+                }
+                if !provider.request_profiles.contains_key(profile) {
+                    return Err(format!(
+                        "route {}: request_profile must exist in the selected provider",
+                        route.id
+                    ));
+                }
             }
             if route.unknown_fields != "reject"
                 || route.max_request_bytes == 0
@@ -399,6 +457,28 @@ fn identifier(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }
+fn profile_field(field: &str) -> bool {
+    identifier(field)
+        && ![
+            "model",
+            "messages",
+            "prompt",
+            "input",
+            "system",
+            "stream",
+            "n",
+            "echo",
+            "headers",
+            "authorization",
+            "api_key",
+            "api-key",
+            "x-api-key",
+            "key",
+            "password",
+            "secret",
+        ]
+        .contains(&field.to_ascii_lowercase().as_str())
+}
 pub fn model_name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
@@ -440,5 +520,144 @@ fn xdg(name: &str, fallback: &str) -> Result<PathBuf, String> {
             }
         }
         None => Ok(home()?.join(fallback)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_config() -> Config {
+        toml::from_str(
+            r#"
+version = 1
+default_provider = "primary"
+[providers.primary]
+origin = "https://primary.example.com"
+[providers.primary.request_profiles.edit]
+set = { thinking = { type = "disabled" }, top_p = 0.9 }
+remove = ["temperature", "reasoning_effort"]
+[providers.secondary]
+origin = "https://secondary.example.com"
+[providers.secondary.request_profiles.edit]
+set = { reasoning_effort = "low" }
+[[routes]]
+id = "edit"
+method = "POST"
+path = "/edit"
+request_profile = "edit"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn profiles_are_resolved_within_the_selected_provider() {
+        let mut config = test_config();
+        config.validate().unwrap();
+        assert_eq!(
+            config.providers["primary"].request_profiles["edit"].set["top_p"],
+            json!(0.9)
+        );
+        config.routes[0].provider = Some("secondary".into());
+        config.validate().unwrap();
+        config
+            .providers
+            .get_mut("secondary")
+            .unwrap()
+            .request_profiles
+            .clear();
+        assert!(config.validate().is_err());
+        config.routes[0].provider = None;
+        config.validate().unwrap();
+        config.default_provider = "secondary".into();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn profiles_reject_conflicts_structural_fields_and_credentials() {
+        for field in [
+            "model",
+            "messages",
+            "prompt",
+            "stream",
+            "n",
+            "input",
+            "system",
+            "headers",
+            "api_key",
+            "Authorization",
+            "thinking.type",
+        ] {
+            let mut config = test_config();
+            config
+                .providers
+                .get_mut("primary")
+                .unwrap()
+                .request_profiles
+                .get_mut("edit")
+                .unwrap()
+                .set
+                .insert(field.into(), json!("invalid"));
+            assert!(config.validate().is_err(), "set {field}");
+            let mut config = test_config();
+            config
+                .providers
+                .get_mut("primary")
+                .unwrap()
+                .request_profiles
+                .get_mut("edit")
+                .unwrap()
+                .remove
+                .push(field.into());
+            assert!(config.validate().is_err(), "remove {field}");
+        }
+        let mut overlap = test_config();
+        overlap
+            .providers
+            .get_mut("primary")
+            .unwrap()
+            .request_profiles
+            .get_mut("edit")
+            .unwrap()
+            .set
+            .insert("temperature".into(), json!(0.6));
+        assert!(overlap.validate().is_err());
+        let mut duplicate = test_config();
+        duplicate
+            .providers
+            .get_mut("primary")
+            .unwrap()
+            .request_profiles
+            .get_mut("edit")
+            .unwrap()
+            .remove
+            .push("temperature".into());
+        assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
+    fn profiles_require_explicit_post_paths() {
+        let mut config = test_config();
+        config.routes[0].method = None;
+        assert!(config.validate().is_err());
+        config.routes[0].method = Some("POST".into());
+        config.routes[0].path = None;
+        config.routes[0].path_prefix = Some("/edit".into());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn profile_objects_replace_instead_of_recursively_merging() {
+        let config = test_config();
+        let profile = &config.providers["primary"].request_profiles["edit"];
+        let mut value = json!({"thinking":{"type":"enabled","budget_tokens":100},"temperature":0.2,"reasoning_effort":"high","custom":{"keep":true}});
+        assert!(profile.apply(value.as_object_mut().unwrap()));
+        assert_eq!(
+            value,
+            json!({"thinking":{"type":"disabled"},"top_p":0.9,"custom":{"keep":true}})
+        );
+        assert!(!profile.apply(value.as_object_mut().unwrap()));
     }
 }

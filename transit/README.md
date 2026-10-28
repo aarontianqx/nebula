@@ -38,7 +38,9 @@ cp transit.example.toml "${XDG_CONFIG_HOME:-$HOME/.config}/transit/transit.toml"
 
 规则的 `upstream_path` 覆盖完整上游 path，不再叠加 base_path。未命中规则时统一选择 default_provider。模型别名只在选定 provider 内替换，没有匹配的模型名保持原样。
 
-更新 provider、规则、模型别名或日志级别后，对服务进程执行 `kill -HUP <pid>`。校验失败保留旧配置，已有请求继续使用原配置。所有 server 参数和日志基础设施参数需要重启；不自动监听文件变化。
+provider 下还可定义具名 request_profiles，由路由通过 request_profile 显式选择，对最终上游 JSON 设置或删除参数。例如仅对 Edit 路由关闭 thinking、删除 temperature，不影响普通 Agent。参数需与目标模型匹配，详见 [请求配置](specs/features/routing.md#上游请求配置)。
+
+更新 provider、规则、模型别名、请求 profile 或日志级别后，对服务进程执行 `kill -HUP <pid>`。校验失败保留旧配置，已有请求继续使用原配置。所有 server 参数和日志基础设施参数需要重启；不自动监听文件变化。
 
 ## Zed 接入
 

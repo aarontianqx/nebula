@@ -4,7 +4,7 @@
 
 ## Provider 与路径选择
 
-Provider 是用户定义的上游，不是厂商枚举，包含 origin、base_path 和可选 model_aliases，不包含凭据。同一厂商的不同产品或部署可以定义为不同 provider。
+Provider 是用户定义的上游，不是厂商枚举，包含 origin、base_path、可选 model_aliases 和 request_profiles，不包含凭据。同一厂商的不同产品或部署可以定义为不同 provider。
 
 - default_provider 必填且必须存在，任何未命中规则的路径都走它。
 - 每条规则必须在 path（精确匹配）和 path_prefix 中选择一个，可选大写 method。
@@ -37,6 +37,39 @@ adapter 路径始终应用所选 provider 的映射。其它 endpoint、multipar
 配置了别名的 provider 在这些 endpoint 上要求未压缩的 JSON 对象，读取受 server.max_rewrite_bytes 和上传上限约束；不满足时返回 400/413/415，不静默跳过。顶层 model 如存在，必须是 1～256 字节字符串，字符限于 ASCII 字母、数字及 `-_.:/@+`。普通映射不补缺失 model，adapter 另行要求 model。
 
 未命中别名时保留原 JSON 字节；命中时重序列化，只替换顶层 model，保留其它字段、顺序和数字精度。依赖原始 body 签名的请求不能透明改写，应为其配置不做映射的 provider。
+
+## 上游请求配置
+
+在 provider 下定义具名 request_profiles，路由通过 request_profile 选择。同名 profile 按最终选定的 provider 解析，省略 route.provider 时使用 default_provider 的定义。不选择 profile 的请求不应用任何额外参数策略，provider 也没有隐式全局 profile。
+
+```toml
+[providers.primary]
+origin = "https://api.example.com"
+
+[providers.primary.request_profiles.edit_prediction]
+set = { thinking = { type = "disabled" } }
+remove = ["temperature", "reasoning_effort"]
+
+[[routes]]
+id = "edit"
+method = "POST"
+path = "/edit/v1/chat/completions"
+provider = "primary"
+upstream_path = "/v1/chat/completions"
+request_profile = "edit_prediction"
+```
+
+此示例参数需先确认上游/模型支持，Transit 不按厂商名猜测。更换 provider 或模型映射后应重新核对参数契约，配置检查只验证结构，不探测上游能力。
+
+- 支持精确 POST 路由，既可配合 adapter，也可只改写 JSON 请求；不支持前缀或未指定 method 的广泛套用。
+- 执行顺序为模型别名、可选协议转换、profile、发送上游。adapter 仍先验证客户端输入，不通过 profile 放宽未知字段规则。
+- remove 删除顶层字段，缺失时无操作；set 覆盖顶层字段，对象整体替换，不递归合并。不支持 JSONPath、脚本或从环境读取值。
+- 同一字段不能同时 set/remove；remove 不允许重复；profile 和字段名使用有界标识符。
+- 禁止修改 model/messages/prompt/input/system/stream/n/echo 等结构字段，以及 headers/authorization/api_key 等认证字段。model 由映射管理，认证仍只透传。
+- profile 必须存在于选定 provider；未引用的 profile 也会校验。未知字段、非法操作或引用错误使启动/reload 整体失败，不静默忽略。
+- profile 路径需要未压缩 JSON 对象，即使没有模型别名也会有界解析。普通路径采用全局 rewrite/upload 上限，adapter 路径采用路由请求上限和全局上传上限。最终没有字段变化时，非 adapter 请求保留原 body 字节。
+- profile 值支持 JSON 数据类型；TOML 无原生 null，需要恢复上游默认值时使用 remove，不能通过字符串 "null" 代替。
+- profile 跟随配置快照热加载，只影响新请求；响应转换由 adapter 决定，profile 不改写响应。
 
 ## 认证与 HTTP 保真边界
 

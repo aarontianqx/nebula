@@ -19,7 +19,9 @@ Zed Agent 使用普通模型入口；Edit Prediction 使用完整的 Legacy Comp
 | n、echo | 仅支持省略、n=1、echo=false，转换时删除 |
 | 其它参数 | 返回 400，当前 unknown_fields 仅支持 reject，无字段白名单或脚本策略 |
 
-上游不接受 max_tokens、stop 或需要特定 reasoning 参数时直接传播错误，当前不自动改成 max_completion_tokens，也不猜测或删除参数。
+默认不猜测或删除上游参数，也不自动改成 max_completion_tokens。上游有特定要求时，可在 provider 的 request_profiles 中显式设置 thinking 等参数，或删除 temperature 等不兼容字段，由 Edit 路由选择 request_profile。该策略在请求校验、模型映射和 Chat 转换后应用，普通 Agent 路径不受影响。完整语义见 [上游请求配置](routing.md#上游请求配置)。
+
+对延迟敏感的预测，可选用支持非 thinking 的模型并按其接口关闭 thinking；reasoning_effort=low 不等于关闭。部分模型在不同模式下固定 temperature，可通过 profile 删除该字段让上游使用默认值。system 指令中的“不输出 reasoning”也不等于 API 参数关闭 thinking。
 
 转换后清除失效的长度、摘要、签名等表示 headers，设置 application/json，按 stream 选择 Accept，并要求上游 Accept-Encoding: identity。认证仍由客户端透传。
 

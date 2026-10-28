@@ -34,6 +34,12 @@ base_path = ""
 chat-latest = "replace-with-latest-model"
 edit-fast = "replace-with-fast-model"
 
+# Example parameters only: confirm support with the selected upstream/model.
+# A route must explicitly select this profile; ordinary traffic is unaffected.
+[providers.primary.request_profiles.edit_prediction]
+set = { thinking = { type = "disabled" } }
+remove = ["temperature", "reasoning_effort"]
+
 [providers.secondary]
 origin = "https://secondary.example.com"
 base_path = "/gateway"
@@ -53,6 +59,7 @@ provider = "primary"
 upstream_path = "/v1/chat/completions"
 adapter = "completions_to_chat"
 prompt_mode = "fim_qwen"
+request_profile = "edit_prediction"
 unknown_fields = "reject"
 max_request_bytes = 2097152
 max_json_response_bytes = 8388608
