@@ -16,6 +16,12 @@ pub struct Config {
     pub server: Server,
     #[serde(default)]
     pub logging: Logging,
+    #[serde(default)]
+    pub audit: Audit,
+    #[serde(default)]
+    pub admission: Admission,
+    #[serde(default)]
+    pub capture: Capture,
     pub providers: BTreeMap<String, Provider>,
     #[serde(default)]
     pub routes: Vec<Route>,
@@ -38,7 +44,7 @@ impl Default for Server {
     fn default() -> Self {
         Self {
             listen: SocketAddr::from(([127, 0, 0, 1], 8787)),
-            shutdown_grace_seconds: 30,
+            shutdown_grace_seconds: 180,
             connect_timeout_seconds: 15,
             response_headers_timeout_seconds: 300,
             stream_idle_timeout_seconds: 180,
@@ -87,6 +93,106 @@ impl Logging {
             self.retention_days,
             self.cleanup_interval_seconds,
         )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Audit {
+    pub enabled: bool,
+    pub database: Option<PathBuf>,
+    pub retention_days: u64,
+    pub max_response_json_bytes: usize,
+    pub max_request_json_bytes: usize,
+    pub max_sse_event_bytes: usize,
+    pub max_decoded_response_bytes: usize,
+    pub max_pending_observations: usize,
+    pub observer_queue_bytes: usize,
+}
+impl Default for Audit {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            database: None,
+            retention_days: 90,
+            max_response_json_bytes: 8 * 1024 * 1024,
+            max_request_json_bytes: 8 * 1024 * 1024,
+            max_sse_event_bytes: 1024 * 1024,
+            max_decoded_response_bytes: 64 * 1024 * 1024,
+            max_pending_observations: 256,
+            observer_queue_bytes: 32 * 1024 * 1024,
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Admission {
+    pub strict: bool,
+    pub require_auth: bool,
+    pub expose_health: bool,
+    pub requests_per_second: u32,
+}
+impl Default for Admission {
+    fn default() -> Self {
+        Self {
+            strict: false,
+            require_auth: true,
+            expose_health: false,
+            requests_per_second: 60,
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Capture {
+    pub enabled: bool,
+    pub directory: Option<PathBuf>,
+    pub providers: Vec<String>,
+    pub request_body: bool,
+    pub response_body: bool,
+    pub max_body_bytes: usize,
+    pub max_total_bytes: u64,
+    pub retention_days: u32,
+}
+impl Default for Capture {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            directory: None,
+            providers: Vec::new(),
+            request_body: false,
+            response_body: true,
+            max_body_bytes: 8 * 1024 * 1024,
+            max_total_bytes: 1024 * 1024 * 1024,
+            retention_days: 3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    #[default]
+    Raw,
+    OpenaiChat,
+    OpenaiResponses,
+    OpenaiCompletions,
+    AnthropicMessages,
+    Models,
+}
+impl Protocol {
+    pub fn infer(method: &Method, path: &str) -> Self {
+        match (method.as_str(), path) {
+            ("POST", "/v1/chat/completions") => Self::OpenaiChat,
+            ("POST", "/v1/responses") => Self::OpenaiResponses,
+            ("POST", "/v1/completions") => Self::OpenaiCompletions,
+            ("POST", "/v1/messages") => Self::AnthropicMessages,
+            ("GET", "/v1/models") => Self::Models,
+            _ => Self::Raw,
+        }
+    }
+    pub fn generates(self) -> bool {
+        !matches!(self, Self::Raw | Self::Models)
     }
 }
 
@@ -139,6 +245,8 @@ pub struct Route {
     pub adapter: Option<Adapter>,
     pub prompt_mode: Option<PromptMode>,
     pub request_profile: Option<String>,
+    pub protocol: Option<Protocol>,
+    pub upstream_protocol: Option<Protocol>,
     #[serde(default = "reject")]
     pub unknown_fields: String,
     #[serde(default = "request_limit")]
@@ -181,8 +289,9 @@ pub struct Plan<'a> {
     pub provider_name: &'a str,
     pub provider: &'a Provider,
     pub route: Option<&'a Route>,
-    pub logical_path: String,
     pub upstream_path: String,
+    pub protocol: Protocol,
+    pub upstream_protocol: Protocol,
 }
 
 impl Config {
@@ -245,6 +354,53 @@ impl Config {
             if !["error", "warn", "info", "debug", "trace"].contains(&level.as_str()) {
                 return Err("logging levels must be error/warn/info/debug/trace".into());
             }
+        }
+        if self
+            .audit
+            .database
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+            || self.audit.retention_days == 0
+            || self.audit.retention_days > 36500
+            || self.audit.max_request_json_bytes == 0
+            || self.audit.max_request_json_bytes > 64 * 1024 * 1024
+            || self.audit.max_response_json_bytes == 0
+            || self.audit.max_response_json_bytes > 64 * 1024 * 1024
+            || self.audit.max_sse_event_bytes == 0
+            || self.audit.max_sse_event_bytes > 16 * 1024 * 1024
+            || self.audit.max_decoded_response_bytes == 0
+            || self.audit.max_decoded_response_bytes > 1024 * 1024 * 1024
+            || self.audit.max_pending_observations == 0
+            || self.audit.max_pending_observations > 1024
+            || self.audit.observer_queue_bytes < 16384
+            || self.audit.observer_queue_bytes > 256 * 1024 * 1024
+        {
+            return Err("invalid audit path, retention or observer limits".into());
+        }
+        if self.admission.requests_per_second == 0 || self.admission.requests_per_second > 100000 {
+            return Err("admission.requests_per_second must be 1-100000".into());
+        }
+        if self
+            .capture
+            .directory
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+            || self.capture.max_body_bytes == 0
+            || self.capture.max_body_bytes > 64 * 1024 * 1024
+            || self.capture.max_total_bytes < 64 * 1024
+            || self.capture.retention_days == 0
+            || self.capture.retention_days > 36500
+            || self
+                .capture
+                .providers
+                .iter()
+                .any(|p| !self.providers.contains_key(p))
+            || self.capture.providers.iter().collect::<HashSet<_>>().len()
+                != self.capture.providers.len()
+        {
+            return Err(
+                "invalid capture directory, limits, retention or provider selection".into(),
+            );
         }
         for (name, provider) in &self.providers {
             if !identifier(name) {
@@ -363,6 +519,37 @@ impl Config {
                     ));
                 }
             }
+            if (route.protocol.is_some() || route.upstream_protocol.is_some())
+                && (route.path.is_none() || route.method.is_none())
+            {
+                return Err(format!(
+                    "route {}: protocol overrides require an exact method and path",
+                    route.id
+                ));
+            }
+            if route.protocol.is_some_and(|p| p.generates())
+                && route.method.as_deref() != Some("POST")
+                || route.protocol == Some(Protocol::Models)
+                    && route.method.as_deref() != Some("GET")
+            {
+                return Err(format!(
+                    "route {}: protocol does not match method",
+                    route.id
+                ));
+            }
+            if route.adapter.is_some()
+                && (route
+                    .protocol
+                    .is_some_and(|p| p != Protocol::OpenaiCompletions)
+                    || route
+                        .upstream_protocol
+                        .is_some_and(|p| p != Protocol::OpenaiChat))
+            {
+                return Err(format!(
+                    "route {}: adapter requires completions input and chat output",
+                    route.id
+                ));
+            }
             if route.unknown_fields != "reject"
                 || route.max_request_bytes == 0
                 || route.max_json_response_bytes == 0
@@ -428,11 +615,26 @@ impl Config {
         let upstream_path = route
             .and_then(|r| r.upstream_path.clone())
             .unwrap_or_else(|| format!("{}{}", provider.base_path, logical_path));
+        let protocol = route.and_then(|r| r.protocol).unwrap_or_else(|| {
+            if route.is_some_and(|r| r.adapter.is_some()) {
+                Protocol::OpenaiCompletions
+            } else {
+                Protocol::infer(method, &logical_path)
+            }
+        });
+        let upstream_protocol = route.and_then(|r| r.upstream_protocol).unwrap_or_else(|| {
+            if route.is_some_and(|r| r.adapter.is_some()) {
+                Protocol::OpenaiChat
+            } else {
+                protocol
+            }
+        });
         Plan {
+            protocol,
+            upstream_protocol,
             provider_name,
             provider,
             route,
-            logical_path,
             upstream_path,
         }
     }
@@ -493,6 +695,13 @@ pub fn default_config_path() -> Result<PathBuf, String> {
     let root = home()?.join(".config");
     Ok(root.join("transit/transit.toml"))
 }
+pub fn default_state_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    let root = xdg("XDG_STATE_HOME", ".local/state")?;
+    #[cfg(not(target_os = "linux"))]
+    let root = home()?.join(".local/state");
+    Ok(root.join("transit"))
+}
 pub fn default_log_dir() -> Result<PathBuf, String> {
     #[cfg(target_os = "linux")]
     let root = xdg("XDG_STATE_HOME", ".local/state")?.join("transit/logs");
@@ -550,6 +759,37 @@ request_profile = "edit"
 "#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn admission_protocols_and_audit_settings_are_explicit_and_validated() {
+        let mut config = test_config();
+        assert!(!config.audit.enabled);
+        assert!(!config.admission.strict);
+        assert!(!config.capture.enabled);
+        assert_eq!(config.server.shutdown_grace_seconds, 180);
+        config.capture.providers = vec!["missing".into()];
+        assert!(config.validate().is_err());
+        config.capture.providers.clear();
+        config.routes[0].protocol = Some(Protocol::OpenaiChat);
+        config.validate().unwrap();
+        assert_eq!(
+            config.plan(&Method::POST, "/edit").protocol,
+            Protocol::OpenaiChat
+        );
+        assert_eq!(
+            config.plan(&Method::POST, "/v1/messages").protocol,
+            Protocol::AnthropicMessages
+        );
+        assert_eq!(config.plan(&Method::GET, "/.env").protocol, Protocol::Raw);
+        config.routes[0].protocol = Some(Protocol::Models);
+        assert!(config.validate().is_err());
+        config.routes[0].protocol = None;
+        config.audit.database = Some(PathBuf::from("relative.sqlite3"));
+        assert!(config.validate().is_err());
+        config.audit.database = None;
+        config.admission.requests_per_second = 0;
+        assert!(config.validate().is_err());
     }
 
     #[test]

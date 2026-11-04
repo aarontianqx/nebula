@@ -4,8 +4,13 @@
 /config.toml
 /logs/
 /state/
+/captures/
 .env
 .env.*
 *.local.toml
 *.log
 *.jsonl
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3.lock

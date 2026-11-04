@@ -1,8 +1,13 @@
 use crate::{
     adapter::{self, Sse, StreamOutput},
-    config::{Server, Snapshot},
+    admission::{self, Gate},
+    audit::{self, AuditLog, Ticket},
+    capture::{CaptureLog, Direction, Session},
+    config::{Protocol, Server, Snapshot},
     error::ProxyError,
     logging::LogState,
+    observation::{Pool as ObservationPool, Session as ObservationSession},
+    privacy::scrub,
 };
 use axum::{
     Json, Router,
@@ -39,10 +44,20 @@ pub struct App {
     pub force_stop: CancellationToken,
     pub semaphore: Arc<Semaphore>,
     pub active: AtomicU64,
+    pub audit: Option<Arc<AuditLog>>,
+    pub observations: Option<Arc<ObservationPool>>,
+    pub capture: Arc<CaptureLog>,
+    pub gate: Gate,
     client: HttpClient,
 }
 impl App {
-    pub fn new(snapshot: Snapshot, logs: Arc<LogState>) -> Arc<Self> {
+    pub fn new(
+        snapshot: Snapshot,
+        logs: Arc<LogState>,
+        audit: Option<Arc<AuditLog>>,
+        observations: Option<Arc<ObservationPool>>,
+        capture: Arc<CaptureLog>,
+    ) -> Arc<Self> {
         let mut connector = HttpConnector::new();
         connector.enforce_http(false);
         connector.set_connect_timeout(Some(Duration::from_secs(
@@ -64,6 +79,10 @@ impl App {
         Arc::new(Self {
             snapshot: RwLock::new(Arc::new(snapshot)),
             logs,
+            audit,
+            observations,
+            capture,
+            gate: Gate::new(),
             stopping: CancellationToken::new(),
             force_stop: CancellationToken::new(),
             semaphore: Arc::new(Semaphore::new(max)),
@@ -73,18 +92,35 @@ impl App {
     }
     pub fn router(self: &Arc<Self>) -> Router {
         Router::new()
-            .route("/_transit/health/live", axum::routing::get(live))
-            .route("/_transit/health/ready", axum::routing::get(ready))
+            .route("/_transit/health/live", axum::routing::any(live))
+            .route("/_transit/health/ready", axum::routing::any(ready))
             .fallback(proxy)
             .with_state(self.clone())
     }
 }
-async fn live(State(app): State<Arc<App>>) -> impl IntoResponse {
-    Json(
-        json!({"status":"alive","logging_degraded":app.logs.health.degraded.load(Ordering::Relaxed),"log_write_failures":app.logs.health.failures.load(Ordering::Relaxed),"log_events_dropped":app.logs.dropped.dropped_lines()}),
-    )
+fn health_allowed(app: &App, method: &Method) -> bool {
+    let snapshot = app.snapshot.read().unwrap_or_else(|e| e.into_inner());
+    *method == Method::GET
+        && (!snapshot.config.admission.strict || snapshot.config.admission.expose_health)
 }
-async fn ready(State(app): State<Arc<App>>) -> impl IntoResponse {
+fn not_found() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::empty())
+        .expect("static HTTP response")
+}
+async fn live(State(app): State<Arc<App>>, method: Method) -> Response<Body> {
+    if !health_allowed(&app, &method) {
+        return not_found();
+    }
+    Json(
+        json!({"status":"alive","logging_degraded":app.logs.health.degraded.load(Ordering::Relaxed),"log_write_failures":app.logs.health.failures.load(Ordering::Relaxed),"log_events_dropped":app.logs.dropped.dropped_lines(),"capture_enabled":app.capture.settings.read().unwrap_or_else(|e|e.into_inner()).enabled,"capture_degraded":app.capture.is_degraded(),"capture_failures":app.capture.health.failures.load(Ordering::Relaxed),"audit_enabled":app.audit.is_some(),"audit_degraded":app.audit.as_ref().is_some_and(|a|a.is_degraded()),"audit_write_failures":app.audit.as_ref().map_or(0,|a|a.health.failures.load(Ordering::Relaxed)),"audit_dropped_records":app.audit.as_ref().map_or(0,|a|a.health.dropped_records.load(Ordering::Relaxed)),"observation_active":app.observations.as_ref().map_or(0,|o|o.health.active.load(Ordering::Relaxed)),"observation_skipped":app.observations.as_ref().map_or(0,|o|o.health.skipped.load(Ordering::Relaxed)),"observation_failures":app.observations.as_ref().map_or(0,|o|o.health.failures.load(Ordering::Relaxed)),"admission_rejected":app.gate.rejected.load(Ordering::Relaxed)}),
+    ).into_response()
+}
+async fn ready(State(app): State<Arc<App>>, method: Method) -> Response<Body> {
+    if !health_allowed(&app, &method) {
+        return not_found();
+    }
     let snapshot = app
         .snapshot
         .read()
@@ -98,9 +134,9 @@ async fn ready(State(app): State<Arc<App>>) -> impl IntoResponse {
     (
         status,
         Json(
-            json!({"ready":status==StatusCode::OK,"config_generation":snapshot.generation,"active_requests":app.active.load(Ordering::Relaxed),"logging_degraded":app.logs.health.degraded.load(Ordering::Relaxed)}),
+            json!({"ready":status==StatusCode::OK,"config_generation":snapshot.generation,"active_requests":app.active.load(Ordering::Relaxed),"logging_degraded":app.logs.health.degraded.load(Ordering::Relaxed),"capture_enabled":app.capture.settings.read().unwrap_or_else(|e|e.into_inner()).enabled,"capture_degraded":app.capture.is_degraded(),"capture_failures":app.capture.health.failures.load(Ordering::Relaxed),"audit_enabled":app.audit.is_some(),"audit_degraded":app.audit.as_ref().is_some_and(|a|a.is_degraded()),"audit_write_failures":app.audit.as_ref().map_or(0,|a|a.health.failures.load(Ordering::Relaxed)),"audit_dropped_records":app.audit.as_ref().map_or(0,|a|a.health.dropped_records.load(Ordering::Relaxed)),"observation_active":app.observations.as_ref().map_or(0,|o|o.health.active.load(Ordering::Relaxed)),"observation_skipped":app.observations.as_ref().map_or(0,|o|o.health.skipped.load(Ordering::Relaxed)),"observation_failures":app.observations.as_ref().map_or(0,|o|o.health.failures.load(Ordering::Relaxed))}),
         ),
-    )
+    ).into_response()
 }
 
 struct Progress {
@@ -120,6 +156,13 @@ struct Record {
     request_path: String,
     upstream_path: String,
     adapter: bool,
+    protocol: Protocol,
+    upstream_protocol: Protocol,
+    started_at_ms: i64,
+    streaming: Mutex<Option<bool>>,
+    observer: Mutex<Option<ObservationSession>>,
+    audit: Mutex<Option<Ticket>>,
+    capture: Mutex<Option<Session>>,
     requested_model: Mutex<Option<(String, String)>>,
     started: Instant,
     progress: Mutex<Progress>,
@@ -140,6 +183,57 @@ impl Record {
             .unwrap_or_else(|e| e.into_inner());
         let requested = models.as_ref().map(|m| m.0.as_str());
         let resolved = models.as_ref().map(|m| m.1.as_str());
+        let mut row = self.start_row();
+        let object = row.as_object_mut().expect("audit object");
+        object.extend(json!({"finished_at_ms":audit::now_ms(),"outcome":outcome,"requested_model":requested,"resolved_model":resolved,"streaming":*self.streaming.lock().unwrap_or_else(|e|e.into_inner()),"http_status":progress.status,"upstream_status":progress.upstream_status,"duration_ms":self.started.elapsed().as_millis() as u64,"response_headers_ms":progress.headers_ms,"first_body_byte_ms":progress.first_byte_ms,"request_bytes":self.request_bytes.load(Ordering::Relaxed),"response_bytes":self.response_bytes.load(Ordering::Relaxed),"error_stage":error.map(|e|e.stage).unwrap_or(progress.stage)}).as_object().expect("audit object").clone());
+        if let Some(error) = error {
+            object.insert(
+                "error_source".into(),
+                json!(if error.code == "client_cancelled" {
+                    "client"
+                } else if error.code == "upstream_stream_error" {
+                    "upstream_body"
+                } else if error.stage.starts_with("connect")
+                    || error.stage == "response_headers"
+                    || error.stage == "response_stream"
+                {
+                    "transport"
+                } else {
+                    "local"
+                }),
+            );
+            object.insert("error_code".into(), json!(error.code));
+            object.insert("error_message".into(), json!(error.message));
+        } else if progress.upstream_status.is_some_and(|s| s >= 400) {
+            object.insert("error_source".into(), json!("upstream_http"));
+        }
+        if let Some(observer) = self
+            .observer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            observer.finish(row.clone(), error.is_none());
+        }
+        if let Some(ticket) = self.audit.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            row["observer_status"] = json!(if self.upstream_protocol.generates() {
+                "dropped"
+            } else {
+                "unsupported"
+            });
+            if self.upstream_protocol.generates() {
+                row["observer_error"] = json!("observer_capacity");
+            }
+            ticket.finish(row.clone());
+        }
+        if let Some(capture) = self
+            .capture
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            capture.finish(row, error.is_none());
+        }
         let code = error.map(|e| e.code).unwrap_or("");
         let stage = error.map(|e| e.stage).unwrap_or(progress.stage);
         let message = error.map(|e| e.message.as_str()).unwrap_or("");
@@ -150,20 +244,45 @@ impl Record {
             event!(error);
         } else if outcome == "cancelled" && !progress.upstream_status.is_some_and(|s| s >= 400) {
             event!(debug);
-        } else if error.is_some() || progress.upstream_status.is_some_and(|s| s >= 400) {
+        } else if error.is_some()
+            || progress.upstream_status.is_some_and(|s| s >= 400)
+            || matches!(outcome, "failed" | "incomplete")
+        {
             event!(warn);
         } else {
             event!(info);
         }
+    }
+    fn start_row(&self) -> Value {
+        json!({"request_id":self.id,"started_at_ms":self.started_at_ms,"config_generation":self.generation,"provider":self.provider,"rule_id":self.rule,"method":self.method,"request_path":self.request_path,"upstream_path":self.upstream_path,"client_protocol":self.protocol,"upstream_protocol":self.upstream_protocol,"outcome":"in_progress","usage_status":"missing","observer_status":"pending"})
     }
     fn stage(&self, stage: &'static str) {
         let mut p = self.progress.lock().unwrap_or_else(|e| e.into_inner());
         p.stage = stage;
         p.last_activity = Instant::now();
     }
-    fn bytes(&self, count: usize) {
+    fn capture_bytes(&self, direction: Direction, chunk: &[u8]) {
+        if let Some(capture) = self
+            .capture
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
+            capture.bytes(direction, chunk);
+        }
+    }
+    fn bytes(&self, chunk: &[u8]) {
+        self.capture_bytes(Direction::Response, chunk);
+        if let Some(observer) = self
+            .observer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
+            observer.bytes(chunk);
+        }
         self.response_bytes
-            .fetch_add(count as u64, Ordering::Relaxed);
+            .fetch_add(chunk.len() as u64, Ordering::Relaxed);
         let mut p = self.progress.lock().unwrap_or_else(|e| e.into_inner());
         p.last_activity = Instant::now();
         if p.first_byte_ms.is_none() {
@@ -208,7 +327,26 @@ impl Drop for Lifetime {
         self.app.active.fetch_sub(1, Ordering::Relaxed);
     }
 }
-async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<Body> {
+async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Response<Body> {
+    let snapshot = app
+        .snapshot
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let preplan = snapshot.config.plan(request.method(), request.uri().path());
+    if !app.gate.rate_allowed(&snapshot.config.admission)
+        || !admission::headers_allowed(
+            &snapshot.config.admission,
+            preplan.protocol,
+            request.method(),
+            request.headers(),
+        )
+    {
+        app.gate.reject();
+        return not_found();
+    }
+    let request_started = Instant::now();
+    let started_at_ms = audit::now_ms();
     let id = uuid::Uuid::new_v4().to_string();
     let permit = match app.semaphore.clone().try_acquire_owned() {
         Ok(p) if !app.stopping.is_cancelled() => p,
@@ -226,17 +364,16 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
             );
         }
     };
-    let snapshot = app
-        .snapshot
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
     let uri = request.uri();
     if uri.scheme().is_some()
         || uri.authority().is_some()
         || !uri.path().starts_with('/')
         || uri.path().contains('\\')
     {
+        if snapshot.config.admission.strict {
+            app.gate.reject();
+            return not_found();
+        }
         tracing::warn!(event="request_rejected",request_id=%id,error_code="invalid_request_target");
         return identify(
             ProxyError::bad(
@@ -246,6 +383,61 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
             .into_response(),
             &id,
         );
+    }
+    let plan = snapshot.config.plan(request.method(), request.uri().path());
+    let mut decoded = None;
+    if snapshot.config.admission.strict && plan.protocol == Protocol::Models {
+        let body = std::mem::replace(request.body_mut(), Body::empty());
+        match collect_body(
+            body,
+            0,
+            snapshot.config.server.idle_timeout(),
+            "admission",
+            &CancellationToken::new(),
+            &app.force_stop,
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(_) => {
+                app.gate.reject();
+                return not_found();
+            }
+        }
+    }
+    if snapshot.config.admission.strict && plan.protocol.generates() {
+        let limit = plan
+            .route
+            .filter(|r| r.adapter.is_some())
+            .map_or(snapshot.config.server.max_rewrite_bytes, |r| {
+                r.max_request_bytes
+            })
+            .min(snapshot.config.server.max_upload_bytes);
+        let body = std::mem::replace(request.body_mut(), Body::empty());
+        let raw = match collect_body(
+            body,
+            limit,
+            snapshot.config.server.idle_timeout(),
+            "admission",
+            &CancellationToken::new(),
+            &app.force_stop,
+        )
+        .await
+        {
+            Ok(raw) => raw,
+            Err(_) => {
+                app.gate.reject();
+                return not_found();
+            }
+        };
+        let value = match serde_json::from_slice::<Value>(&raw) {
+            Ok(value) if admission::body_allowed(plan.protocol, &value) => value,
+            _ => {
+                app.gate.reject();
+                return not_found();
+            }
+        };
+        decoded = Some((raw, value));
     }
     let plan = snapshot.config.plan(request.method(), request.uri().path());
     let record = Arc::new(Record {
@@ -260,8 +452,15 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
         request_path: path_for_log(request.uri().path()),
         upstream_path: path_for_log(&plan.upstream_path),
         adapter: plan.route.is_some_and(|r| r.adapter.is_some()),
+        protocol: plan.protocol,
+        upstream_protocol: plan.upstream_protocol,
+        started_at_ms,
+        streaming: Mutex::new(None),
+        observer: Mutex::new(None),
+        audit: Mutex::new(None),
+        capture: Mutex::new(None),
         requested_model: Mutex::new(None),
-        started: Instant::now(),
+        started: request_started,
         progress: Mutex::new(Progress {
             status: None,
             upstream_status: None,
@@ -275,6 +474,59 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
         response_bytes: AtomicU64::new(0),
         finished: AtomicBool::new(false),
     });
+    if let Some(audit) = &app.audit {
+        match audit.begin(record.start_row()) {
+            Ok(ticket) => {
+                let ticket = if plan.upstream_protocol.generates() {
+                    if let Some(pool) = &app.observations {
+                        match pool.begin(
+                            &id,
+                            plan.upstream_protocol,
+                            &snapshot.config.audit,
+                            credentials(request.headers()),
+                            ticket,
+                        ) {
+                            Ok(session) => {
+                                *record.observer.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some(session);
+                                None
+                            }
+                            Err(ticket) => Some(ticket),
+                        }
+                    } else {
+                        Some(ticket)
+                    }
+                } else {
+                    Some(ticket)
+                };
+                *record.audit.lock().unwrap_or_else(|e| e.into_inner()) = ticket;
+            }
+            Err(code) => tracing::warn!(event="request_audit_skipped",request_id=%id,code),
+        }
+    }
+    let capture = app.capture.begin(
+        &snapshot.config.capture,
+        plan.provider_name,
+        record.start_row(),
+        request.headers(),
+    );
+    let capturing = capture.is_some();
+    *record.capture.lock().unwrap_or_else(|e| e.into_inner()) = capture;
+    if capturing && snapshot.config.capture.request_body {
+        if let Some((raw, _)) = &decoded {
+            record.capture_bytes(Direction::Request, raw);
+        } else {
+            use futures_util::StreamExt;
+            let body = std::mem::replace(request.body_mut(), Body::empty());
+            let capture_record = record.clone();
+            *request.body_mut() = Body::from_stream(body.into_data_stream().map(move |chunk| {
+                if let Ok(bytes) = &chunk {
+                    capture_record.capture_bytes(Direction::Request, bytes);
+                }
+                chunk
+            }));
+        }
+    }
     app.active.fetch_add(1, Ordering::Relaxed);
     let lifetime = Lifetime {
         record: record.clone(),
@@ -283,7 +535,7 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
         _permit: permit,
     };
     tracing::debug!(event="request_started",request_id=%id,provider=%record.provider,rule_id=%record.rule,request_path=%record.request_path,upstream_path=%record.upstream_path,config_generation=snapshot.generation,request_profile=plan.route.and_then(|route|route.request_profile.as_deref()));
-    let result = execute(app, &snapshot, request, lifetime).await;
+    let result = execute(app, &snapshot, request, lifetime, decoded).await;
     match result {
         Ok(response) => identify(response, &id),
         Err(error) => {
@@ -309,6 +561,7 @@ async fn execute(
     snapshot: &Snapshot,
     request: Request<Body>,
     lifetime: Lifetime,
+    decoded: Option<(Bytes, Value)>,
 ) -> Result<Response<Body>, ProxyError> {
     let record = lifetime.record.clone();
     let server = &snapshot.config.server;
@@ -338,40 +591,54 @@ async fn execute(
         .and_then(|name| plan.provider.request_profiles.get(name));
     let rewrite = adapter_route.is_some()
         || profile.is_some()
-        || (!plan.provider.model_aliases.is_empty()
-            && parts.method == Method::POST
-            && matches!(
-                plan.logical_path.as_str(),
-                "/v1/chat/completions" | "/v1/completions" | "/v1/responses" | "/v1/messages"
-            ));
+        || (!plan.provider.model_aliases.is_empty() && plan.protocol.generates());
     let credentials = credentials(&parts.headers);
     let cancel = lifetime.cancel.clone();
     let mut streaming = false;
-    let outbound_body = if rewrite {
+    let outbound_body = if rewrite || decoded.is_some() {
         if let Err(error) = require_json(&parts.headers) {
             return fail(lifetime, error);
         }
-        let limit = adapter_route
-            .map_or(server.max_rewrite_bytes, |r| r.max_request_bytes)
-            .min(server.max_upload_bytes);
-        let raw = match collect_body(
-            body,
-            limit,
-            server.idle_timeout(),
-            "request_decode",
-            &cancel,
-            &app.force_stop,
-        )
-        .await
-        {
-            Ok(b) => b,
-            Err(e) => return fail(lifetime, e),
+        let limit = if rewrite {
+            adapter_route
+                .map_or(server.max_rewrite_bytes, |r| r.max_request_bytes)
+                .min(server.max_upload_bytes)
+        } else {
+            server.max_upload_bytes
         };
+        let (raw, parsed) = if let Some((raw, value)) = decoded {
+            (raw, Ok(value))
+        } else {
+            let raw = match collect_body(
+                body,
+                limit,
+                server.idle_timeout(),
+                "request_decode",
+                &cancel,
+                &app.force_stop,
+            )
+            .await
+            {
+                Ok(raw) => raw,
+                Err(error) => return fail(lifetime, error),
+            };
+            let parsed = serde_json::from_slice::<Value>(&raw);
+            (raw, parsed)
+        };
+        if let Some(observer) = record
+            .observer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
+            observer.request_complete();
+        }
         record
             .request_bytes
             .store(raw.len() as u64, Ordering::Relaxed);
-        let mut value: Value = match serde_json::from_slice(&raw) {
-            Ok(v) => v,
+        let mut value = match parsed {
+            Ok(value) => value,
+            Err(_) if !rewrite => Value::Null,
             Err(_) => {
                 return fail(
                     lifetime,
@@ -379,8 +646,15 @@ async fn execute(
                 );
             }
         };
+        *record.streaming.lock().unwrap_or_else(|e| e.into_inner()) = value.as_object().map(|_| {
+            value
+                .get("stream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
         let models = match adapter::rewrite_model(&mut value, &plan.provider.model_aliases) {
             Ok(m) => m,
+            Err(_) if !rewrite => None,
             Err(e) => return fail(lifetime, e),
         };
         let mut changed = models
@@ -490,7 +764,10 @@ async fn execute(
                     Ok(next)=>next,
                     Err(_)=>{*request_record.upload_error.lock().unwrap_or_else(|e|e.into_inner())=Some(ProxyError::timeout("request_upload",idle.as_secs())); Err(ProxyError::timeout("request_upload",idle.as_secs()))?; unreachable!()}
                 };
-                let Some(chunk)=next else{break};
+                let Some(chunk)=next else{
+                    if let Some(observer)=request_record.observer.lock().unwrap_or_else(|e|e.into_inner()).as_mut() {observer.request_complete();}
+                    break;
+                };
                 let chunk=match chunk {
                     Ok(chunk)=>chunk,
                     Err(_)=>{*request_record.upload_error.lock().unwrap_or_else(|e|e.into_inner())=Some(ProxyError::bad("request_body_failed","Client request body failed"));Err(ProxyError::bad("request_body_failed","Client request body failed"))?;unreachable!()}
@@ -501,6 +778,7 @@ async fn execute(
                     Err(ProxyError::new(StatusCode::PAYLOAD_TOO_LARGE,"upload_too_large","request_upload","Request exceeds upload limit"))?;
                 }
                 request_record.request_bytes.fetch_add(chunk.len() as u64,Ordering::Relaxed);
+                if let Some(observer)=request_record.observer.lock().unwrap_or_else(|e|e.into_inner()).as_mut() {observer.request_bytes(&chunk);}
                 yield chunk;
             }
         })
@@ -567,7 +845,15 @@ async fn execute(
         p.stage = "response_stream";
         p.last_activity = Instant::now();
     }
-    tracing::debug!(event="upstream_headers",request_id=%record.id,status=response_parts.status.as_u16(),upstream_request_id=safe_header(&response_parts.headers,"x-request-id"));
+    tracing::debug!(event="upstream_headers",request_id=%record.id,status=response_parts.status.as_u16(),content_type=safe_header(&response_parts.headers,"content-type"),content_encoding=safe_header(&response_parts.headers,"content-encoding"),upstream_request_id=safe_header(&response_parts.headers,"x-request-id"));
+    if let Some(capture) = record
+        .capture
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+    {
+        capture.response_headers(response_parts.status.as_u16(), &response_parts.headers);
+    }
     let mut preview = ErrorPreview::new(
         &record.id,
         response_parts.status,
@@ -575,6 +861,21 @@ async fn execute(
         app.logs.preview_limit(),
         credentials,
     );
+    if let Some(observer) = record
+        .observer
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+    {
+        let encoding = response_parts
+            .headers
+            .get_all(header::CONTENT_ENCODING)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<_>>()
+            .join(",");
+        observer.headers(content_type(&response_parts.headers), &encoding);
+    }
     filter_headers(&mut response_parts.headers, false);
     if let Some(route) = adapter_route.filter(|_| response_parts.status.is_success()) {
         if !identity_encoded(&response_parts.headers) {
@@ -720,7 +1021,7 @@ fn stream_response(
                 break
             };
             let Ok(chunk)=frame.into_data() else{continue};
-            record.bytes(chunk.len());preview.capture(&chunk);
+            record.bytes(&chunk);preview.capture(&chunk);
             if let Some(ref mut sse)=parser {
                 for byte in chunk {
                     let output=match sse.byte(byte){Ok(output)=>output,Err(error)=>{tracing::error!(event="sse_conversion_failed",request_id=%record.id,event_sequence=sse.sequence);record.finish("failed",Some(&error));Err(error)?;unreachable!()}};
@@ -896,72 +1197,6 @@ fn safe_header(headers: &HeaderMap, name: &str) -> String {
         .take(128)
         .collect()
 }
-fn scrub(value: &str, secrets: &[String], limit: usize) -> String {
-    let mut text = value.chars().take(4096).collect::<String>();
-    for secret in secrets {
-        text = text.replace(secret, "[redacted]");
-    }
-    let lower = text.to_ascii_lowercase();
-    if text.contains(['\n', '\r', '`', '{', '}'])
-        || [
-            "<|fim_",
-            "bearer ",
-            "prompt:",
-            "prompt=",
-            "completion:",
-            "content:",
-            "source code",
-        ]
-        .iter()
-        .any(|marker| lower.contains(marker))
-    {
-        return "[sensitive error detail omitted]".into();
-    }
-    // Remove quoted fragments, since providers sometimes echo user input in errors.
-    let mut quoted = None;
-    let mut safe = String::new();
-    for character in text.chars() {
-        if let Some(delimiter) = quoted {
-            if character == delimiter {
-                quoted = None;
-            }
-            continue;
-        }
-        if character == '\'' || character == '"' {
-            quoted = Some(character);
-            safe.push_str("[quoted detail omitted]");
-        } else {
-            safe.push(character);
-        }
-    }
-    safe.split_whitespace()
-        .map(|word| {
-            let lower = word.to_ascii_lowercase();
-            if word.contains("://")
-                || word.contains(['?', '=', '\\'])
-                || word.len() > 96
-                || [
-                    "sk-",
-                    "key-",
-                    "api_key",
-                    "api-key",
-                    "token:",
-                    "authorization:",
-                ]
-                .iter()
-                .any(|marker| lower.contains(marker))
-            {
-                "[redacted]"
-            } else {
-                word
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(limit)
-        .collect()
-}
 
 fn transport_detail(error: &(dyn StdError + 'static), secrets: &[String]) -> String {
     let mut parts = Vec::new();
@@ -1104,7 +1339,7 @@ async fn collect_incoming(
             )
         })?;
         if let Ok(chunk) = frame.into_data() {
-            record.bytes(chunk.len());
+            record.bytes(&chunk);
             if bytes.len().saturating_add(chunk.len()) > limit {
                 return Err(ProxyError::upstream(
                     "response_too_large",

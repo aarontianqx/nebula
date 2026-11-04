@@ -32,7 +32,7 @@ origin 只接受 HTTP/HTTPS scheme 和 authority，不允许用户名、密码�
 /v1/messages
 ```
 
-adapter 路径始终应用所选 provider 的映射。其它 endpoint、multipart、query/path 内的模型名不改写。
+adapter 路径及通过 route.protocol 声明的自定义生成接口也应用所选 provider 的映射。其它 endpoint、multipart、query/path 内的模型名不改写。
 
 配置了别名的 provider 在这些 endpoint 上要求未压缩的 JSON 对象，读取受 server.max_rewrite_bytes 和上传上限约束；不满足时返回 400/413/415，不静默跳过。顶层 model 如存在，必须是 1～256 字节字符串，字符限于 ASCII 字母、数字及 `-_.:/@+`。普通映射不补缺失 model，adapter 另行要求 model。
 
@@ -88,7 +88,7 @@ request_profile = "edit_prediction"
 | 取消 | 停止上传、释放上游响应；实际停止生成/计费取决于上游对断开的处理 |
 | 传输范围 | 常见 HTTP 模型请求，不支持 CONNECT、Upgrade/WebSocket、特殊 1xx 语义 |
 
-除显式配置的改写外，不主动理解普通响应的业务字段。HTTP 200 的透传 SSE 内如包含业务错误，客户端可收到原事件，但 Transit 不解析它来分类最终结果；仅 adapter 理解其支持的流式 schema。
+关闭 audit 时，除显式 adapter 外，不解析普通成功响应的业务字段。启用 audit 后，有界观察 JSON/SSE 的用量、模型、结束状态和业务错误，包括 HTTP 200 内的错误；仍向客户端转发原事件，观察失败不阻断透传。adapter 的协议转换校验仍独立执行。
 
 ## 限额与错误
 
@@ -103,3 +103,44 @@ request_profile = "edit_prediction"
 - 每个代理响应附 X-Transit-Request-Id；保留上游自己的 x-request-id，不将 Transit ID 强制注入上游。
 
 健康、重载和日志配置见 [运维](operations.md)。
+
+## 协议声明与严格准入
+
+协议按 method 和剥离 provider 入口前缀后的逻辑 path 识别，不按 provider 名称或认证头猜测。同一个 provider 可支持多个协议：
+
+| method / 逻辑 path | protocol |
+| --- | --- |
+| POST /v1/chat/completions | openai_chat |
+| POST /v1/completions | openai_completions |
+| POST /v1/responses | openai_responses |
+| POST /v1/messages | anthropic_messages |
+| GET /v1/models | models |
+| 其它 | raw |
+
+base_path 只是上游路径前缀，不影响识别。adapter 自动声明客户端 completions、上游 chat。自定义 endpoint 可在精确 method/path 路由声明 protocol；upstream_protocol 默认相同，二者只决定准入/观察语义，不自动转换请求或响应。需要跨协议转换时仍须 adapter。
+
+```toml
+[[routes]]
+id = "custom-chat"
+method = "POST"
+path = "/custom/chat"
+provider = "primary"
+upstream_path = "/vendor/chat/completions"
+protocol = "openai_chat"
+# upstream_protocol = "openai_chat"
+```
+
+protocol/upstream_protocol 不支持前缀或省略 method 的路由，避免一个声明放行整个路径空间。生成协议要求 POST，models 要求 GET；adapter 不能声明相冲突的协议。仅配置 provider 的前缀路由会继续识别剩余逻辑路径，例如 /secondary/v1/messages 合法，/secondary/.env 仍是 raw。
+
+admission.strict=true 时，在上游连接前检查：
+
+- 只允许上表中的接口或显式声明协议的精确路由；raw、CONNECT、Upgrade 和无效请求目标返回空 404。
+- 默认要求非空 Bearer 认证；Anthropic Messages 也接受 x-api-key。不保存或校验上游 key，不添加独立服务 key。
+- 生成接口要求未压缩 application/json 或 +json 对象，stream 如存在必须为布尔值。Chat 要求 model 和非空 messages（role、content 或工具调用结构）；Anthropic 另要求正整数 max_tokens；Completions 要求 model 和 prompt；Responses 接受 input 或 previous_response_id 的续接结构。保留未知扩展字段，不验证模型能力、工具 schema 或所有嵌套语义。
+- GET /v1/models 要求空 body。JSON 读取受 max_rewrite_bytes/max_upload_bytes 约束，adapter 使用路由请求上限；超限、无效 JSON 或基本结构不符也返回空 404。
+- 全局每秒最多接纳 requests_per_second 次准入尝试，采用固定一秒窗口，超限同样返回 404。连接/请求并发与空闲超时仍独立生效。
+- 健康接口默认隐藏；expose_health=true 时允许 GET，响应无需认证，因此只应在受控网络暴露。
+
+准入拒绝不附 Transit ID、不写逐请求审计记录；每 10 秒汇总拒绝数。HTTP parser 在应用之前拒绝的畸形请求可能表现为 HTTP 库错误或连接关闭。strict=false 时维持默认 provider 的宽松透传，认证头检查、协议 allowlist 和准入速率限制均关闭。
+
+这些规则能过滤普通扫描，但不能阻止仿造合法 LLM JSON 的请求。公网私有服务的访问权限、TLS、IP 限流应在入口控制，不能把空 404 当作身份认证。

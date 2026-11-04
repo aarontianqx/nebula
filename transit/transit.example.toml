@@ -4,7 +4,7 @@ default_provider = "primary"
 [server]
 listen = "127.0.0.1:8787"
 # Remote access: bind a specific server IP or 0.0.0.0:8787, then restart.
-shutdown_grace_seconds = 30
+shutdown_grace_seconds = 180
 connect_timeout_seconds = 15
 response_headers_timeout_seconds = 300
 stream_idle_timeout_seconds = 180
@@ -24,6 +24,47 @@ rotation = "daily"
 retention_days = 14
 cleanup_interval_seconds = 3600
 error_preview_bytes = 4096
+
+[audit]
+# Opt-in metadata only. No request bodies or normal response content in SQLite.
+enabled = false
+# Default: ${XDG_STATE_HOME:-~/.local/state}/transit/transit.sqlite3
+# database = "/var/lib/transit/transit.sqlite3"
+retention_days = 90
+# Observer limits only; exceeding them does not truncate passthrough responses.
+max_request_json_bytes = 8388608
+max_response_json_bytes = 8388608
+max_sse_event_bytes = 1048576
+# Per-response decoded bytes, including long SSE streams; exceeding stops observation only.
+max_decoded_response_bytes = 67108864
+# Independent two-thread observation runtime. Full queues skip statistics, never wait.
+max_pending_observations = 256
+# Shared payload budget for queued chunks and retained parser input (excludes codec/JSON overhead).
+observer_queue_bytes = 33554432
+
+[capture]
+# Optional private debug files, one JSONL per admitted request; independent of audit.
+enabled = false
+# Default: ${XDG_STATE_HOME:-~/.local/state}/transit/captures
+# directory = "/var/lib/transit/captures"
+# Empty means all providers; otherwise use names defined below.
+providers = []
+request_body = false
+response_body = true
+# Per direction, original body bytes. Exceeding this only truncates the capture.
+max_body_bytes = 8388608
+# Encoded JSONL storage budget; oldest finished files are removed first.
+max_total_bytes = 1073741824
+retention_days = 3
+
+[admission]
+# Optional public-edge filtering. Rejections return empty 404 without contacting upstream.
+strict = false
+# Validates presence/format only; does not authenticate the caller or store keys.
+require_auth = true
+expose_health = false
+# Global fixed one-second window; use an ingress for per-IP controls.
+requests_per_second = 60
 
 # Replace this placeholder origin and model IDs before using a real endpoint.
 # Credentials belong in your client; Transit has no API key configuration.

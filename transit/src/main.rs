@@ -1,7 +1,13 @@
 mod adapter;
+mod admission;
+mod audit;
+mod capture;
 mod config;
 mod error;
 mod logging;
+mod observation;
+mod observer;
+mod privacy;
 mod proxy;
 mod server;
 
@@ -81,6 +87,22 @@ async fn run() -> Result<(), String> {
             eprintln!("transit panic (payload omitted)");
         }
     }));
+    let audit_settings = initial.audit.clone();
+    let audit_capacity = initial.server.max_in_flight;
+    let storage = tokio::task::spawn_blocking(move || audit::open(&audit_settings, audit_capacity))
+        .await
+        .map_err(|_| "audit initialization task panicked")??;
+    let (audit, audit_guard) = match storage {
+        Some((audit, guard)) => (Some(audit), Some(guard)),
+        None => (None, None),
+    };
+    let (observations, observation_guard) = if initial.audit.enabled {
+        let (pool, guard) = observation::initialize(&initial.audit)?;
+        (Some(pool), Some(guard))
+    } else {
+        (None, None)
+    };
+    let (capture, capture_guard) = capture::initialize(&initial.capture)?;
     let listener = tokio::net::TcpListener::bind(initial.server.listen)
         .await
         .map_err(|e| {
@@ -97,6 +119,9 @@ async fn run() -> Result<(), String> {
             config: initial,
         },
         logs.clone(),
+        audit,
+        observations,
+        capture,
     );
     tracing::info!(event="startup",config_path=%path.display(),log_directory=%directory.display(),listen=%address,config_generation=1,default_provider=%app.snapshot.read().unwrap_or_else(|e|e.into_inner()).config.default_provider);
     eprintln!(
@@ -145,6 +170,14 @@ async fn run() -> Result<(), String> {
         }
     }
     app.force_stop.cancel();
+    // Connection task cancellation may finish on the next runtime turn. Flush terminal
+    // audit updates only after those request guards have had a chance to run.
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        while app.active.load(Ordering::Relaxed) != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
     if !maintenance.is_finished() {
         let _ = (&mut maintenance).await;
     }
@@ -152,6 +185,14 @@ async fn run() -> Result<(), String> {
         signals.abort();
         let _ = signals.await;
     }
+    capture_guard.shutdown().await;
+    if let Some(guard) = observation_guard {
+        guard.shutdown().await;
+    }
+    if let Some(guard) = audit_guard {
+        guard.shutdown().await;
+    }
+    app.gate.report();
     logs.check_drops();
     tracing::info!(
         event = "shutdown_complete",
@@ -185,7 +226,7 @@ async fn maintenance(app: Arc<proxy::App>) {
     loop {
         tokio::select! {
             _=app.stopping.cancelled()=>break,
-            _=health.tick()=>{app.logs.check_drops();tracing::debug!(event="logging_heartbeat",active_requests=app.active.load(Ordering::Relaxed));},
+            _=health.tick()=>{app.logs.check_drops();app.gate.report();app.capture.maintain();if let Some(audit)=&app.audit{audit.maintain();}tracing::debug!(event="logging_heartbeat",active_requests=app.active.load(Ordering::Relaxed));},
             _=cleanup.tick()=>{let logs=app.logs.clone();if tokio::task::spawn_blocking(move||logs.sweep()).await.is_err(){tracing::error!(event="janitor_panicked");return}},
         }
     }
@@ -208,8 +249,9 @@ async fn signals(app: Arc<proxy::App>, path: PathBuf) -> Result<(), String> {
                 match tokio::task::spawn_blocking(move||Config::load(&path)).await {
                     Ok(Ok(config))=>{
                         let mut current=app.snapshot.write().unwrap_or_else(|e|e.into_inner());
-                        if config.server!=current.config.server || config.logging.restart_settings()!=current.config.logging.restart_settings(){tracing::warn!(event="reload_rejected",config_generation=current.generation,reason="server and logging infrastructure settings require restart");continue}
+                        if config.server!=current.config.server || config.audit!=current.config.audit || config.capture.directory!=current.config.capture.directory || config.logging.restart_settings()!=current.config.logging.restart_settings(){tracing::warn!(event="reload_rejected",config_generation=current.generation,reason="server, audit, capture directory and logging infrastructure settings require restart");continue}
                         let generation=current.generation+1;
+                        *app.capture.settings.write().unwrap_or_else(|e|e.into_inner())=config.capture.clone();
                         *app.logs.settings.write().unwrap_or_else(|e|e.into_inner())=config.logging.clone();
                         *current=Arc::new(Snapshot{generation,config});
                         tracing::info!(event="reload_completed",config_generation=generation,default_provider=%current.config.default_provider);
