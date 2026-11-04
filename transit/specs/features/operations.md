@@ -32,14 +32,16 @@ Unix 新建私有目录权限 0700，文件 0600，不改写已有目录/文件�
 | --- | --- |
 | INFO | startup/shutdown、reload_completed、成功请求最终结果、清理汇总 |
 | DEBUG | 请求开始、provider/规则与映射、上游响应头、普通客户端取消、空闲连接关闭、日志心跳 |
-| WARN | 上游 4xx、本地参数拒绝、无效 reload、容量拒绝、无法分类的连接失败、清理失败 |
+| WARN | 上游 4xx、本地参数拒绝、无效 reload、容量拒绝、无法分类的连接失败、清理失败、reasoning-only 空补全 |
 | ERROR | 上游 5xx、连接/超时、转换/截断、内部任务或日志基础设施错误 |
 
-request_id 是 Transit 生成的 UUID，经 X-Transit-Request-Id 返回。日志按需包含 provider、rule_id、config_generation、method、adapter、请求/实际模型、状态、outcome、error_code、stage、耗时、首个上游 body 字节时间和上下行字节数。request_started 还记录选中的 request_profile 名称，不输出 profile 参数值。
+request_id 是 Transit 生成的 UUID，经 X-Transit-Request-Id 返回。日志按需包含 provider、rule_id、config_generation、method、adapter、请求/实际模型、状态、outcome、error_code、stage、耗时、首个上游 body 字节时间和上下行字节数。request_started 还记录选中的 request_profile 名称，不输出 profile 参数值。request_started/request_finished 均记录 request_path（客户端入口）和 upstream_path（应用前缀剥离、base_path 或路径覆盖后的上游路径），不含 query、scheme、host；不解码路径，每个字段最多保留 1024 个字符，超出追加 ...[truncated]。历史日志没有这些字段，不能补全过去的路径统计。
+
+adapter 成功响应仅有 reasoning、没有补全文本时记录 WARN empty_completion，携带 request_id、reason=reasoning_only 和 streaming，不记录 reasoning 正文；该请求仍按 completed 记录，不计为转换失败。普通透传响应不解析此条件。
 
 model 只在原本已解析 JSON 的请求中提取，不为了日志解析透传 body。response_bytes 是已读取的上游 body 字节数，adapter 转换后客户端收到的大小可能不同。completed 表示数据已交给 HTTP transport，不保证客户端应用读取或接受。
 
-运行日志会包含实际 provider 名、请求/解析后模型名，以及启动时的配置路径、日志目录和监听地址，可能暴露部署信息或模型偏好。默认存放在仓库外的私有目录，不能作为公开示例直接提交或发布；分享排障日志前应进一步清理这些字段。示例配置、文档和测试仅使用通用 provider/model 值，不记录个人部署与联调配置。
+运行日志会包含实际 provider 名、请求/解析后模型名、请求与上游路径（路径段也可能包含业务信息），以及启动时的配置路径、日志目录和监听地址，可能暴露部署信息或模型偏好。默认存放在仓库外的私有目录，不能作为公开示例直接提交或发布；分享排障日志前应进一步清理这些字段。示例配置、文档和测试仅使用通用 provider/model 值，不记录个人部署与联调配置。
 
 HTTP 错误摘要使用最多 error_preview_bytes 的 body 前缀（默认 4096，0 关闭正文捕获），只提取已知 JSON error 的 type/code/param/message：
 

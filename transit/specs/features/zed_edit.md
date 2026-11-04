@@ -60,14 +60,14 @@ Zed 的 prompt_format 在客户端决定 prompt 如何生成，并不作为独�
 - object 改为 text_completion，message.content 映射为 choices[0].text。
 - 要求恰好一个 index=0 的 choice 和最终 finish_reason（stop/length）。
 - 保留可用的 id、created、model、usage、system_fingerprint；model 为真实上游名，不合成 usage。
-- 工具调用、refusal、非文本或无终止原因返回 502。空文本可以合法，但有 reasoning 而无正文时拒绝作为成功结果。
+- 工具调用、refusal、非文本或无终止原因返回 502。空字符串/null content 转为空 text；只有 reasoning 时也返回空补全，保留 finish_reason 和 usage，并记录 WARN empty_completion（reason=reasoning_only）。有 reasoning 而省略 content 时同样处理；reasoning 不会插入补全文本。
 
 流式转换增量读取 SSE，事件上限由 max_sse_event_bytes 控制：
 
 - 支持跨 chunk UTF-8、LF/CRLF、多行 data 和注释 heartbeat，不缓冲整个回答。
 - delta.content 转为 choices[0].text，role-only 和 reasoning 不作为补全文本。
 - 保留 finish_reason 和合法 usage-only 帧，不支持的 choice、delta 字段、tool/refusal 或事件 schema 终止流。
-- 必须先有有效 finish_reason，再收到 DONE 才成功，EOF 不补 DONE。reasoning-only 流拒绝，真正的空补全允许。
+- 必须先有有效 finish_reason，再收到 DONE 才成功，EOF 不补 DONE。reasoning-only 流输出带原 finish_reason 的空补全，正常转发 usage 和 DONE，并记录 WARN empty_completion；reasoning 后有正文的正常流不触发此警告。
 - 流内 error 事件记录脱敏摘要后终止，不伪装成空文本成功；HTTP 200 已发送时错误通过连接/流失败体现。
 
 ## 验证状态与体验
@@ -76,4 +76,4 @@ Zed 的 prompt_format 在客户端决定 prompt 如何生成，并不作为独�
 
 输入变化可能触发新预测并取消旧请求。普通客户端取消记录为 DEBUG，不能当作上游错误；有 HTTP 错误或真正超时仍保留 WARN/ERROR。
 
-本地回归覆盖 Qwen 前后文保留、reasoning-only/空补全边界，以及 HTTP 定长响应结束记账与错误摘要。完整 SSE 切分/异常矩阵、其它模板、持续运行和不同 Zed 版本仍需专项验收。
+本地回归覆盖 Qwen 前后文保留、JSON/SSE reasoning-only 空补全与警告、不泄露 reasoning、缺失结束标记/工具调用拒绝，以及 HTTP 定长响应结束记账与错误摘要。完整 SSE 切分/异常矩阵、其它模板、持续运行和不同 Zed 版本仍需专项验收。

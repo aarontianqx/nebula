@@ -117,6 +117,8 @@ struct Record {
     rule: String,
     generation: u64,
     method: String,
+    request_path: String,
+    upstream_path: String,
     adapter: bool,
     requested_model: Mutex<Option<(String, String)>>,
     started: Instant,
@@ -141,7 +143,7 @@ impl Record {
         let code = error.map(|e| e.code).unwrap_or("");
         let stage = error.map(|e| e.stage).unwrap_or(progress.stage);
         let message = error.map(|e| e.message.as_str()).unwrap_or("");
-        macro_rules! event {($level:ident)=>{tracing::$level!(event="request_finished",request_id=%self.id,config_generation=self.generation,provider=%self.provider,rule_id=%self.rule,method=%self.method,adapter=self.adapter,requested_model=requested,resolved_model=resolved,status=progress.status,upstream_status=progress.upstream_status,outcome,error_code=code,stage,message,duration_ms=self.started.elapsed().as_millis() as u64,response_headers_ms=progress.headers_ms,first_body_byte_ms=progress.first_byte_ms,request_bytes=self.request_bytes.load(Ordering::Relaxed),response_bytes=self.response_bytes.load(Ordering::Relaxed),idle_ms=progress.last_activity.elapsed().as_millis() as u64)}}
+        macro_rules! event {($level:ident)=>{tracing::$level!(event="request_finished",request_id=%self.id,config_generation=self.generation,provider=%self.provider,rule_id=%self.rule,method=%self.method,request_path=%self.request_path,upstream_path=%self.upstream_path,adapter=self.adapter,requested_model=requested,resolved_model=resolved,status=progress.status,upstream_status=progress.upstream_status,outcome,error_code=code,stage,message,duration_ms=self.started.elapsed().as_millis() as u64,response_headers_ms=progress.headers_ms,first_body_byte_ms=progress.first_byte_ms,request_bytes=self.request_bytes.load(Ordering::Relaxed),response_bytes=self.response_bytes.load(Ordering::Relaxed),idle_ms=progress.last_activity.elapsed().as_millis() as u64)}}
         if error.is_some_and(|e| e.status.is_server_error())
             || progress.upstream_status.is_some_and(|s| s >= 500)
         {
@@ -255,6 +257,8 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
             .unwrap_or_else(|| "default".into()),
         generation: snapshot.generation,
         method: request.method().to_string(),
+        request_path: path_for_log(request.uri().path()),
+        upstream_path: path_for_log(&plan.upstream_path),
         adapter: plan.route.is_some_and(|r| r.adapter.is_some()),
         requested_model: Mutex::new(None),
         started: Instant::now(),
@@ -278,7 +282,7 @@ async fn proxy(State(app): State<Arc<App>>, request: Request<Body>) -> Response<
         app: app.clone(),
         _permit: permit,
     };
-    tracing::debug!(event="request_started",request_id=%id,provider=%record.provider,rule_id=%record.rule,config_generation=snapshot.generation,request_profile=plan.route.and_then(|route|route.request_profile.as_deref()));
+    tracing::debug!(event="request_started",request_id=%id,provider=%record.provider,rule_id=%record.rule,request_path=%record.request_path,upstream_path=%record.upstream_path,config_generation=snapshot.generation,request_profile=plan.route.and_then(|route|route.request_profile.as_deref()));
     let result = execute(app, &snapshot, request, lifetime).await;
     match result {
         Ok(response) => identify(response, &id),
@@ -624,10 +628,13 @@ async fn execute(
                     );
                 }
             };
-            let value = match adapter::response(&value) {
+            let (value, reasoning_only) = match adapter::response(&value) {
                 Ok(v) => v,
                 Err(e) => return fail(lifetime, e),
             };
+            if reasoning_only {
+                warn_reasoning_only(&record, false);
+            }
             let bytes = match serde_json::to_vec(&value) {
                 Ok(bytes) => bytes,
                 Err(_) => {
@@ -719,7 +726,7 @@ fn stream_response(
                     let output=match sse.byte(byte){Ok(output)=>output,Err(error)=>{tracing::error!(event="sse_conversion_failed",request_id=%record.id,event_sequence=sse.sequence);record.finish("failed",Some(&error));Err(error)?;unreachable!()}};
                     match output {
                         Some(StreamOutput::Data(data)|StreamOutput::Heartbeat(data))=>yield Bytes::from(data),
-                        Some(StreamOutput::Done)=>{finish_response(&record, &mut preview)?;yield Bytes::from_static(b"data: [DONE]\n\n");return},
+                        Some(StreamOutput::Done)=>{if sse.reasoning_only(){warn_reasoning_only(&record,true);}finish_response(&record, &mut preview)?;yield Bytes::from_static(b"data: [DONE]\n\n");return},
                         Some(StreamOutput::Error(value))=>{preview.report_value(&value,&record.id);let error=ProxyError::upstream("upstream_stream_error","adapter","Upstream reported an error inside the response stream");record.finish("failed",Some(&error));Err(error)?;},
                         _=>{}
                     }
@@ -735,6 +742,16 @@ fn stream_response(
         }
         Result::<(),ProxyError>::Ok(())?;
     })
+}
+
+fn warn_reasoning_only(record: &Record, streaming: bool) {
+    tracing::warn!(
+        event = "empty_completion",
+        request_id = %record.id,
+        reason = "reasoning_only",
+        streaming,
+        message = "Upstream returned reasoning without completion text; forwarding an empty completion"
+    );
 }
 
 fn finish_response(record: &Record, preview: &mut ErrorPreview) -> Result<(), ProxyError> {
@@ -767,6 +784,14 @@ where
     S: futures_util::Stream<Item = Result<Bytes, ProxyError>> + Send + 'static,
 {
     Body::from_stream(stream)
+}
+
+fn path_for_log(path: &str) -> String {
+    let mut logged: String = path.chars().take(1024).collect();
+    if logged.len() < path.len() {
+        logged.push_str("...[truncated]");
+    }
+    logged
 }
 
 fn credentials(headers: &HeaderMap) -> Vec<String> {

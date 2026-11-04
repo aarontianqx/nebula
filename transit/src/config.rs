@@ -45,7 +45,7 @@ impl Default for Server {
             max_in_flight: 256,
             max_connections: 1024,
             max_upload_bytes: 64 * 1024 * 1024,
-            max_rewrite_bytes: 2 * 1024 * 1024,
+            max_rewrite_bytes: 32 * 1024 * 1024,
         }
     }
 }

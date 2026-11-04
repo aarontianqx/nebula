@@ -171,7 +171,7 @@ fn envelope(input: &Value) -> Map<String, Value> {
     output.insert("object".into(), json!("text_completion"));
     output
 }
-pub fn response(input: &Value) -> Result<Value, ProxyError> {
+pub fn response(input: &Value) -> Result<(Value, bool), ProxyError> {
     let choices = input
         .get("choices")
         .and_then(Value::as_array)
@@ -193,22 +193,18 @@ pub fn response(input: &Value) -> Result<Value, ProxyError> {
             "Tool calls or refusals cannot be represented as completion text",
         ));
     }
-    let text = message
-        .get("content")
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid_response("Expected textual Chat content"))?;
-    if text.is_empty()
-        && ["reasoning_content", "reasoning"].iter().any(|key| {
-            message
-                .get(*key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.is_empty())
-        })
-    {
-        return Err(invalid_response(
-            "Chat response contains reasoning without completion text",
-        ));
-    }
+    let has_reasoning = ["reasoning_content", "reasoning"].iter().any(|key| {
+        message
+            .get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+    });
+    let text = match message.get("content") {
+        Some(Value::String(text)) => text.as_str(),
+        Some(Value::Null) => "",
+        None if has_reasoning => "",
+        _ => return Err(invalid_response("Expected textual Chat content")),
+    };
     let reason = choice
         .get("finish_reason")
         .filter(|v| !v.is_null())
@@ -219,7 +215,7 @@ pub fn response(input: &Value) -> Result<Value, ProxyError> {
         "choices".into(),
         json!([{"index":0,"text":text,"logprobs":null,"finish_reason":reason}]),
     );
-    Ok(Value::Object(output))
+    Ok((Value::Object(output), text.is_empty() && has_reasoning))
 }
 
 pub enum StreamOutput {
@@ -255,6 +251,9 @@ impl Sse {
             saw_text: false,
             saw_reasoning: false,
         }
+    }
+    pub fn reasoning_only(&self) -> bool {
+        self.saw_reasoning && !self.saw_text
     }
     // One complete event is returned at a time; callers apply downstream backpressure before continuing.
     pub fn byte(&mut self, byte: u8) -> Result<Option<StreamOutput>, ProxyError> {
@@ -305,9 +304,9 @@ impl Sse {
             return Err(invalid_response("SSE data arrived after DONE"));
         }
         if data == b"[DONE]" {
-            if !self.finished || (!self.saw_text && self.saw_reasoning) {
+            if !self.finished {
                 return Err(invalid_response(
-                    "Chat stream ended without a valid text completion",
+                    "Chat stream ended without a final finish reason",
                 ));
             }
             self.done = true;
@@ -408,36 +407,120 @@ fn encode(value: &Value) -> Result<Vec<u8>, ProxyError> {
 mod tests {
     use super::*;
 
-    fn feed(parser: &mut Sse, value: Value) -> Result<(), ProxyError> {
+    fn feed(parser: &mut Sse, value: Value) -> Result<Vec<StreamOutput>, ProxyError> {
+        let mut outputs = Vec::new();
         for byte in encode(&value)? {
-            parser.byte(byte)?;
+            if let Some(output) = parser.byte(byte)? {
+                outputs.push(output);
+            }
+        }
+        Ok(outputs)
+    }
+
+    fn done(parser: &mut Sse) -> Result<(), ProxyError> {
+        for byte in b"data: [DONE]\n\n" {
+            parser.byte(*byte)?;
         }
         Ok(())
     }
 
     #[test]
-    fn empty_content_does_not_make_reasoning_only_stream_a_completion() {
-        let mut parser = Sse::new(4096);
-        feed(&mut parser, json!({"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]})).unwrap();
-        feed(&mut parser, json!({"choices":[{"index":0,"delta":{"reasoning_content":"Thinking"},"finish_reason":null}]})).unwrap();
-        feed(
-            &mut parser,
-            json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}),
-        )
-        .unwrap();
-        let result = b"data: [DONE]\n\n"
-            .iter()
-            .try_for_each(|byte| parser.byte(*byte).map(|_| ()));
-        assert!(result.is_err());
-        assert!(!parser.done);
+    fn reasoning_only_stream_preserves_empty_final_choice_and_usage() {
+        for key in ["reasoning_content", "reasoning"] {
+            let mut parser = Sse::new(4096);
+            feed(&mut parser, json!({"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]})).unwrap();
+            feed(&mut parser, json!({"choices":[{"index":0,"delta":{key:"private thought"},"finish_reason":null}]})).unwrap();
+            let outputs = feed(
+                &mut parser,
+                json!({"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}),
+            )
+            .unwrap();
+            let StreamOutput::Data(data) = &outputs[0] else {
+                panic!("missing final choice")
+            };
+            let value: Value =
+                serde_json::from_slice(data.strip_prefix(b"data: ").unwrap()).unwrap();
+            assert_eq!(value["choices"][0]["text"], "");
+            assert_eq!(value["choices"][0]["finish_reason"], "length");
+            assert!(!String::from_utf8_lossy(data).contains("private thought"));
+            let outputs = feed(
+                &mut parser,
+                json!({"choices":[],"usage":{"completion_tokens":512}}),
+            )
+            .unwrap();
+            assert!(
+                matches!(&outputs[0], StreamOutput::Data(data) if String::from_utf8_lossy(data).contains("completion_tokens"))
+            );
+            done(&mut parser).unwrap();
+            assert!(parser.done);
+            assert!(parser.reasoning_only());
+        }
     }
 
     #[test]
-    fn reasoning_only_json_is_rejected_but_empty_completion_is_allowed() {
-        let mut value = json!({"choices":[{"index":0,"message":{"content":"","reasoning_content":"Thinking"},"finish_reason":"length"}]});
-        assert!(response(&value).is_err());
-        value["choices"][0]["message"]["reasoning_content"] = Value::Null;
-        assert_eq!(response(&value).unwrap()["choices"][0]["text"], "");
+    fn reasoning_then_text_is_not_an_empty_completion_and_requires_finish() {
+        let mut parser = Sse::new(4096);
+        feed(&mut parser, json!({"choices":[{"index":0,"delta":{"reasoning_content":"private thought"},"finish_reason":null}]})).unwrap();
+        let outputs = feed(&mut parser, json!({"choices":[{"index":0,"delta":{"content":"return a + b"},"finish_reason":null}]})).unwrap();
+        assert!(
+            matches!(&outputs[0], StreamOutput::Data(data) if String::from_utf8_lossy(data).contains("return a + b"))
+        );
+        assert!(!parser.reasoning_only());
+        assert!(done(&mut parser).is_err());
+        assert!(!parser.done);
+        feed(
+            &mut parser,
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
+        )
+        .unwrap();
+        done(&mut parser).unwrap();
+        assert!(parser.done);
+    }
+
+    #[test]
+    fn reasoning_only_json_becomes_empty_text_without_exposing_reasoning() {
+        for key in ["reasoning_content", "reasoning"] {
+            for content in [Some(json!("")), Some(Value::Null), None] {
+                let mut value = json!({"id":"fixture","usage":{"completion_tokens":512},"choices":[{"index":0,"message":{key:"private thought"},"finish_reason":"length"}]});
+                if let Some(content) = content {
+                    value["choices"][0]["message"]["content"] = content;
+                }
+                let (converted, reasoning_only) = response(&value).unwrap();
+                assert!(reasoning_only);
+                assert_eq!(converted["choices"][0]["text"], "");
+                assert_eq!(converted["choices"][0]["finish_reason"], "length");
+                assert_eq!(converted["usage"], value["usage"]);
+                assert_eq!(converted["id"], "fixture");
+                assert!(!converted.to_string().contains("private thought"));
+            }
+        }
+        let value =
+            json!({"choices":[{"index":0,"message":{"content":""},"finish_reason":"stop"}]});
+        let (converted, reasoning_only) = response(&value).unwrap();
+        assert!(!reasoning_only);
+        assert_eq!(converted["choices"][0]["text"], "");
+    }
+
+    #[test]
+    fn empty_completion_does_not_hide_tools_refusals_or_invalid_responses() {
+        let base = json!({"choices":[{"index":0,"message":{"content":null,"reasoning_content":"private thought"},"finish_reason":"length"}]});
+        for (key, value) in [
+            ("tool_calls", json!([{"id":"call"}])),
+            ("refusal", json!("refused")),
+            ("content", json!([{"type":"text","text":"code"}])),
+        ] {
+            let mut input = base.clone();
+            input["choices"][0]["message"][key] = value;
+            assert!(response(&input).is_err());
+        }
+        let mut input = base;
+        input["choices"][0]["finish_reason"] = Value::Null;
+        assert!(response(&input).is_err());
+        let mut parser = Sse::new(4096);
+        feed(&mut parser,json!({"choices":[{"index":0,"delta":{"reasoning_content":"private thought"},"finish_reason":null}]})).unwrap();
+        assert!(done(&mut parser).is_err());
+        assert!(!parser.done);
+        assert!(feed(&mut parser,json!({"choices":[{"index":0,"delta":{"tool_calls":[]},"finish_reason":"tool_calls"}]})).is_err());
     }
 
     #[test]

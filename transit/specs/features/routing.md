@@ -94,6 +94,8 @@ request_profile = "edit_prediction"
 
 请求/连接/超时默认值统一见配置模板。连接数、在途请求数和上传大小分别受限；流式输出没有很小的总长度上限。背压依赖 HTTP body 消费，不创建无界响应队列。
 
+普通 JSON 改写默认 server.max_rewrite_bytes=33554432（32 MiB），全局 server.max_upload_bytes=67108864（64 MiB）。这是完整请求 body 的字节数上限，包含 JSON、工具定义和 Base64 图片等，不是 token 限额。adapter 使用路由 max_request_bytes（默认 2 MiB），不随全局改写限额增大；两类均受全局上传上限约束。JSON 改写会缓冲并解析 body，内存占用高于原始字节数，部署时应结合并发量调整限额。
+
 - 本地错误返回 JSON error.type=transit_error，包含稳定分类 code 和受限 message。
 - 非法参数 400，不支持 JSON 媒体/编码 415，上传或改写请求超限 413。
 - 客户端上传空闲超时 408，上游连接失败通常 502，上游超时 504，draining/并发满 503。
