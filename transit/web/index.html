@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Transit · 请求观测</title>
+    <link rel="stylesheet" href="/dashboard.css" />
+    <script src="/dashboard.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Transit 首页"
+        ><span class="brand-mark">t<span>↗</span></span
+        ><span
+          >transit<span class="brand-divider">/</span
+          ><span class="brand-sub">请求观测</span></span
+        ></a
+      >
+      <div class="top-meta" role="status">
+        <span id="connection">正在连接…</span>
+        <span id="updated">—</span>
+      </div>
+    </header>
+    <main>
+      <form id="filters" class="filters" aria-label="统计筛选">
+        <div class="filter-top">
+          <div class="range-tabs" role="group" aria-label="时间范围">
+            <button type="button" data-range="1">近 1 小时</button
+            ><button
+              type="button"
+              data-range="24"
+              class="selected"
+              aria-pressed="true"
+            >
+              近 24 小时</button
+            ><button type="button" data-range="168">近 7 天</button
+            ><button type="button" data-range="720">近 30 天</button
+            ><button type="button" data-range="custom">自定义</button>
+          </div>
+          <div class="refresh-controls">
+            <label class="auto-refresh"
+              ><input id="auto" type="checkbox" />每 15 秒刷新</label
+            ><button type="submit" class="refresh" id="refresh">
+              ↻ <span>刷新数据</span>
+            </button>
+          </div>
+        </div>
+        <div class="custom-range" id="custom-range" hidden>
+          <label
+            >开始时间<input
+              id="from"
+              type="datetime-local"
+              required
+              disabled /></label
+          ><span>至</span
+          ><label
+            >结束时间<input id="to" type="datetime-local" required disabled
+          /></label>
+        </div>
+        <div class="filter-fields">
+          <label
+            >PROVIDER<select id="provider">
+              <option value="">全部 provider</option>
+            </select></label
+          >
+          <label
+            >模型<input
+              id="model"
+              list="models"
+              placeholder="全部模型"
+              autocomplete="off" /><datalist id="models"></datalist
+          ></label>
+          <label
+            >请求路径<input
+              id="path"
+              list="paths"
+              placeholder="全部 path"
+              autocomplete="off" /><datalist id="paths"></datalist
+          ></label>
+          <label
+            >请求结果<select id="outcome">
+              <option value="">全部结果</option>
+              <option value="completed">已完成</option>
+              <option value="failed">失败</option>
+              <option value="incomplete">未完整结束</option>
+              <option value="cancelled">已取消</option>
+              <option value="interrupted">已中断</option>
+              <option value="in_progress">等待结束 / 更新</option>
+            </select></label
+          >
+          <button type="button" id="reset" class="reset">重置筛选</button>
+        </div>
+      </form>
+      <div id="error" class="error-banner" role="alert" hidden></div>
+      <section
+        class="metrics"
+        aria-label="统计概览"
+        aria-busy="true"
+        id="metrics"
+      >
+        <article class="metric request-overview">
+          <p>请求概览 <span class="metric-icon">↗</span></p>
+          <div class="request-counts">
+            <div><strong id="m-requests">—</strong><span>总请求</span></div>
+            <div><strong id="m-completed">—</strong><span>已完成</span></div>
+          </div>
+          <small
+            ><span id="m-success">—</span><span id="m-outcomes"></span
+          ></small>
+        </article>
+        <article class="metric">
+          <p>平均调用耗时 <span class="metric-icon">◷</span></p>
+          <strong id="m-duration">—</strong
+          ><small id="m-ttfb">含流式响应的完整时长</small>
+        </article>
+        <article class="metric">
+          <p>Token 总量 <span class="metric-icon">◇</span></p>
+          <strong id="m-tokens">—</strong
+          ><small id="m-token-split">等待数据</small>
+          <button
+            type="button"
+            id="usage-notice"
+            class="usage-notice"
+            hidden
+          ></button>
+        </article>
+        <article class="metric">
+          <p>输入缓存命中率 <span class="metric-icon">◉</span></p>
+          <strong id="m-cache-rate">—</strong>
+          <small id="m-cache">缓存输入 —</small>
+        </article>
+      </section>
+      <section class="charts">
+        <article class="panel traffic-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">ACTIVITY</p>
+              <h2>调用趋势</h2>
+            </div>
+            <div class="chart-toggle" role="group" aria-label="图表指标">
+              <button
+                type="button"
+                data-chart="requests"
+                class="selected"
+                aria-pressed="true"
+              >
+                请求数</button
+              ><button type="button" data-chart="total_tokens">Token</button>
+            </div>
+          </div>
+          <div id="chart" class="chart" aria-label="调用趋势图"></div>
+        </article>
+        <article class="panel models-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">DISTRIBUTION</p>
+              <h2>模型分布</h2>
+            </div>
+            <span class="small-note">按请求量 · 前 5 项</span>
+          </div>
+          <div id="distribution" class="distribution">
+            <p class="empty">等待数据</p>
+          </div>
+        </article>
+      </section>
+      <section class="panel requests-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">REQUEST LOG</p>
+            <h2>请求明细 <span id="request-count" class="count">—</span></h2>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>PROVIDER / MODEL</th>
+                <th>PATH</th>
+                <th>结果</th>
+                <th>耗时</th>
+                <th class="numeric">TOKEN（输入 / 输出 / 总计）</th>
+              </tr>
+            </thead>
+            <tbody id="requests">
+              <tr>
+                <td colspan="6" class="empty">正在读取请求记录…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <span id="page-description">每页最多 50 条</span>
+          <div>
+            <button type="button" id="previous" disabled>← 上一页</button
+            ><span id="page-number">01</span
+            ><button type="button" id="next" disabled>下一页 →</button>
+          </div>
+        </div>
+      </section>
+      <details id="diagnostics" class="diagnostics">
+        <summary>统计诊断</summary>
+        <div class="diagnostics-content">
+          <p id="m-usage">等待数据</p>
+          <p id="cache-diagnostics">等待缓存字段统计</p>
+          <p>
+            用量缺失可能来自上游未提供
+            usage、请求取消或观察失败，不等于模型调用失败。缓存字段未提供或无效时记为未知，不按未命中计算。
+          </p>
+        </div>
+      </details>
+    </main>
+    <dialog id="detail" aria-labelledby="detail-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">REQUEST DETAIL</p>
+          <h2 id="detail-title">请求记录</h2>
+        </div>
+        <button id="close-detail" type="button" aria-label="关闭请求详情">
+          ✕
+        </button>
+      </div>
+      <div
+        id="detail-content"
+        tabindex="0"
+        role="region"
+        aria-label="请求详情"
+      ></div>
+    </dialog>
+  </body>
+</html>

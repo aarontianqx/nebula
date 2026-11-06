@@ -66,6 +66,12 @@ expose_health = false
 # Global fixed one-second window; use an ingress for per-IP controls.
 requests_per_second = 60
 
+[dashboard]
+# Embedded read-only statistics UI; requires audit.enabled=true. No Node.js needed.
+enabled = false
+# Separate management port. Use a private network or authenticated reverse proxy for remote access.
+listen = "127.0.0.1:8788"
+
 # Replace this placeholder origin and model IDs before using a real endpoint.
 # Credentials belong in your client; Transit has no API key configuration.
 [providers.primary]

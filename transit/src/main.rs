@@ -3,6 +3,7 @@ mod admission;
 mod audit;
 mod capture;
 mod config;
+mod dashboard;
 mod error;
 mod logging;
 mod observation;
@@ -113,6 +114,20 @@ async fn run() -> Result<(), String> {
         .local_addr()
         .map_err(|e| format!("cannot read listener address: {e}"))?;
     let grace = Duration::from_secs(initial.server.shutdown_grace_seconds);
+    let (dashboard_server, dashboard_guard) = if initial.dashboard.enabled {
+        let listener = tokio::net::TcpListener::bind(initial.dashboard.listen)
+            .await
+            .map_err(|e| format!("cannot bind dashboard {}: {e}", initial.dashboard.listen))?;
+        let (reader, guard) = dashboard::initialize(&initial.audit)?;
+        tracing::info!(event="dashboard_started",listen=%initial.dashboard.listen);
+        eprintln!(
+            "transit dashboard listening on {} (read-only)",
+            initial.dashboard.listen
+        );
+        (Some((listener, dashboard::router(reader))), Some(guard))
+    } else {
+        (None, None)
+    };
     let app = proxy::App::new(
         Snapshot {
             generation: 1,
@@ -135,12 +150,27 @@ async fn run() -> Result<(), String> {
     let mut signals = tokio::spawn(async move { signals(signal_app, path).await });
     let server_app = app.clone();
     let mut server = tokio::spawn(async move { server::serve(listener, server_app).await });
+    let stopping = app.stopping.clone();
+    let force_stop = app.force_stop.clone();
+    let mut dashboard = tokio::spawn(async move {
+        match dashboard_server {
+            Some((listener, router)) => {
+                server::serve_router(listener, router, stopping, force_stop, 64).await
+            }
+            None => {
+                stopping.cancelled().await;
+                Ok(())
+            }
+        }
+    });
+    let mut dashboard_finished = false;
     let mut server_finished = false;
     let mut result = Ok(());
     tokio::select! {
         response=&mut server=>{server_finished=true;match response {Ok(Ok(()))=>{},Ok(Err(error))=>result=Err(format!("HTTP server failed: {error}")),Err(_)=>result=Err("HTTP server task panicked".into())}app.stopping.cancel();},
         finished=&mut maintenance=>{if !app.stopping.is_cancelled(){tracing::error!(event="maintenance_task_exited",panicked=finished.is_err());result=Err("log maintenance task exited unexpectedly".into());}app.stopping.cancel();},
         finished=&mut signals=>{if let Ok(Err(error))=finished {result=Err(error);}else if finished.is_err(){result=Err("signal task panicked".into());}app.stopping.cancel();},
+        finished=&mut dashboard=>{dashboard_finished=true;if !app.stopping.is_cancelled(){tracing::error!(event="dashboard_server_exited",panicked=finished.is_err());result=Err("dashboard server exited unexpectedly".into());}app.stopping.cancel();},
     }
     tracing::info!(
         event = "shutdown_started",
@@ -170,6 +200,17 @@ async fn run() -> Result<(), String> {
         }
     }
     app.force_stop.cancel();
+    if !dashboard_finished
+        && tokio::time::timeout(Duration::from_secs(5), &mut dashboard)
+            .await
+            .is_err()
+    {
+        dashboard.abort();
+        let _ = dashboard.await;
+    }
+    if let Some(guard) = dashboard_guard {
+        guard.shutdown().await;
+    }
     // Connection task cancellation may finish on the next runtime turn. Flush terminal
     // audit updates only after those request guards have had a chance to run.
     let _ = tokio::time::timeout(Duration::from_secs(2), async {
@@ -249,7 +290,7 @@ async fn signals(app: Arc<proxy::App>, path: PathBuf) -> Result<(), String> {
                 match tokio::task::spawn_blocking(move||Config::load(&path)).await {
                     Ok(Ok(config))=>{
                         let mut current=app.snapshot.write().unwrap_or_else(|e|e.into_inner());
-                        if config.server!=current.config.server || config.audit!=current.config.audit || config.capture.directory!=current.config.capture.directory || config.logging.restart_settings()!=current.config.logging.restart_settings(){tracing::warn!(event="reload_rejected",config_generation=current.generation,reason="server, audit, capture directory and logging infrastructure settings require restart");continue}
+                        if config.server!=current.config.server || config.dashboard!=current.config.dashboard || config.audit!=current.config.audit || config.capture.directory!=current.config.capture.directory || config.logging.restart_settings()!=current.config.logging.restart_settings(){tracing::warn!(event="reload_rejected",config_generation=current.generation,reason="server, dashboard, audit, capture directory and logging infrastructure settings require restart");continue}
                         let generation=current.generation+1;
                         *app.capture.settings.write().unwrap_or_else(|e|e.into_inner())=config.capture.clone();
                         *app.logs.settings.write().unwrap_or_else(|e|e.into_inner())=config.logging.clone();

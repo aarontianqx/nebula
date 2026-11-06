@@ -10,7 +10,7 @@ license = "AGPL-3.0-only"
 async-stream = "0.3"
 async-compression = { version = "0.4", features = ["tokio", "gzip", "zlib", "brotli", "zstd"] }
 base64 = "0.22"
-axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "query", "tokio"] }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 fs2 = "0.4"
@@ -19,7 +19,7 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "webpki-roots", "tls12"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio", "server-auto", "service"] }
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 thiserror = "2"

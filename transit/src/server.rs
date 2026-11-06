@@ -1,4 +1,5 @@
 use crate::proxy::App;
+use axum::Router;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo, TokioTimer},
     server::conn::auto::Builder,
@@ -6,6 +7,7 @@ use hyper_util::{
 };
 use std::{error::Error, io, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
+use tokio_util::sync::CancellationToken;
 
 pub async fn serve(listener: TcpListener, app: Arc<App>) -> io::Result<()> {
     let maximum = app
@@ -15,34 +17,53 @@ pub async fn serve(listener: TcpListener, app: Arc<App>) -> io::Result<()> {
         .config
         .server
         .max_connections;
+    serve_router(
+        listener,
+        app.router(),
+        app.stopping.clone(),
+        app.force_stop.clone(),
+        maximum,
+    )
+    .await
+}
+
+pub async fn serve_router(
+    listener: TcpListener,
+    router: Router,
+    stopping: CancellationToken,
+    force_stop: CancellationToken,
+    maximum: usize,
+) -> io::Result<()> {
     let permits = Arc::new(Semaphore::new(maximum));
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
-            _=app.stopping.cancelled()=>break,
+            _=stopping.cancelled()=>break,
             outcome=connections.join_next(),if !connections.is_empty()=>{
                 if outcome.is_some_and(|r|r.is_err()){tracing::error!(event="connection_task_panicked");}
             },
             accepted=listener.accept()=>{
                 let (stream,_)=match accepted {Ok(accepted)=>accepted,Err(error)=>{tracing::error!(event="accept_failed",error_kind=?error.kind());return Err(error)}};
                 let permit=match permits.clone().try_acquire_owned(){Ok(permit)=>permit,Err(_)=>{tracing::warn!(event="connection_limit_reached");drop(stream);continue}};
-                let app=app.clone();
+                let router=router.clone();
+                let stopping=stopping.clone();
+                let force_stop=force_stop.clone();
                 connections.spawn(async move {
                     let _permit=permit;
                     let mut builder=Builder::new(TokioExecutor::new());
                     builder.http1().max_buf_size(64*1024).max_headers(128).timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(30));
                     builder.http2().max_header_list_size(64*1024).max_concurrent_streams(100);
-                    let service=TowerToHyperService::new(app.router());
+                    let service=TowerToHyperService::new(router);
                     let connection=builder.serve_connection(TokioIo::new(stream),service);
                     tokio::pin!(connection);
                     tokio::select! {
                         result=&mut connection=>if let Err(error)=result{log_connection_error(error.as_ref());},
-                        _=app.force_stop.cancelled()=>{},
-                        _=app.stopping.cancelled()=>{
+                        _=force_stop.cancelled()=>{},
+                        _=stopping.cancelled()=>{
                             connection.as_mut().graceful_shutdown();
                             tokio::select!{
                                 result=&mut connection=>if let Err(error)=result{log_connection_error(error.as_ref());},
-                                _=app.force_stop.cancelled()=>{},
+                                _=force_stop.cancelled()=>{},
                             }
                         }
                     }

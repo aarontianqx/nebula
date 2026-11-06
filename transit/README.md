@@ -40,7 +40,7 @@ cp transit.example.toml "${XDG_CONFIG_HOME:-$HOME/.config}/transit/transit.toml"
 
 provider 下还可定义具名 request_profiles，由路由通过 request_profile 显式选择，对最终上游 JSON 设置或删除参数。例如仅对 Edit 路由关闭 thinking、删除 temperature，不影响普通 Agent。参数需与目标模型匹配，详见 [请求配置](specs/features/routing.md#上游请求配置)。
 
-更新 provider、规则、模型别名、请求 profile、抓取开关/限额或日志级别后，对服务进程执行 `kill -HUP <pid>`。校验失败保留旧配置，已有请求继续使用原配置。所有 server 参数、audit 参数、capture.directory 和日志基础设施参数需要重启；不自动监听文件变化。SIGTERM/SIGINT 会停止接纳并等待在途请求，默认最多 180 秒，超时后结束。
+更新 provider、规则、模型别名、请求 profile、抓取开关/限额或日志级别后，对服务进程执行 `kill -HUP <pid>`。校验失败保留旧配置，已有请求继续使用原配置。所有 server 参数、dashboard 参数、audit 参数、capture.directory 和日志基础设施参数需要重启；不自动监听文件变化。SIGTERM/SIGINT 会停止接纳并等待在途请求，默认最多 180 秒，超时后结束。
 
 ## Zed 接入
 
@@ -97,6 +97,22 @@ requests_per_second = 60
 
 严格模式按 method/path、认证头格式和基本 JSON 结构筛选；不符合的请求在连接上游前返回空 404。默认 provider 仍负责合法请求的回退路由，不能让任意 path 绕过准入。此检查不能验证调用方身份，公网私有服务仍应配合 VPN、IP 白名单或入口 mTLS。配置、统计 SQL、异常和保留策略见 [运维](specs/features/operations.md#sqlite-请求审计)，路径和协议声明见 [路由](specs/features/routing.md#协议声明与严格准入)。
 
+## Web 统计看板
+
+服务内置只读网页，无需 Node.js、外部 CDN 或单独的前端服务。开启审计后可启用独立管理端口：
+
+```toml
+[dashboard]
+enabled = true
+listen = "127.0.0.1:8788"
+```
+
+重启后访问 `http://127.0.0.1:8788`，可按时间、provider、模型、path 和结果筛选，查看调用趋势、provider/model 分布、输入缓存命中率、分页记录及每条请求的完整审计字段。支持手动或每 15 秒刷新；默认近 24 小时，时间按浏览器时区显示。
+
+Token 总量仅汇总 `usage_status=complete`，部分和缺失记录在折叠的“统计诊断”中单独计数，仅正常完成的生成请求缺少完整用量时显示轻量提示；缓存命中率只采用缓存字段已知且有效的完整记录，总请求与已完成数并排展示，完成率以已结束记录为分母，取消单独计数。页面不修改配置或数据库，不展示原始抓取正文。SQLite 查询使用独立只读线程、有界队列和查询期限，具体边界见 [运维](specs/features/operations.md#web-统计管理端口)。
+
+默认关闭、监听本机，启用要求 `audit.enabled=true`；所有 dashboard 参数均需重启。远程访问请显式绑定内网地址，并使用私有网络或有认证的反向代理。管理页面自身不提供登录，不能直接暴露公网。
+
 ## 原始响应抓取
 
 排查上游协议差异时，可在配置中启用：
@@ -116,7 +132,7 @@ retention_days = 3
 
 ## 部署与开发
 
-- systemd 模板：[deploy/transit.service](deploy/transit.service)。需安装二进制、配置和专用用户；日志通过 StateDirectory 持久化。
+- Linux 单机部署推荐使用[用户级 systemd 模板](deploy/transit.user.service)，将程序安装到 `~/.local/bin/transit`，不依赖源码目录。安装、自启动、原子更新及临时服务迁移见[运维部署流程](specs/features/operations.md#linux-用户级-systemd推荐单机部署)。需要专用服务账户时使用[系统级模板](deploy/transit.service)。
 - 容器：在本目录执行 `docker build -t transit .`；配置须监听容器可访问的地址，挂载整个配置目录及可写状态卷。细节见 [运维](specs/features/operations.md#部署)。
 - 检查：`cargo fmt --all --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`。
 - CI 执行以上检查、release 构建与模板校验；transit-v* tag 触发 Linux x64/arm64、macOS arm64 发布工作流。

@@ -9,8 +9,9 @@
 | 环境 | 配置默认位置 | 日志默认位置 |
 | --- | --- | --- |
 | Linux 用户进程 | `$XDG_CONFIG_HOME/transit/transit.toml`，未设置时 `~/.config/transit/transit.toml` | `$XDG_STATE_HOME/transit/logs`，未设置时 `~/.local/state/transit/logs` |
+| 用户级 systemd 模板 | 显式指定 `~/.config/transit/transit.toml` | XDG_STATE_HOME 为 `~/.local/state`，对应 `~/.local/state/transit/logs` |
 | macOS 服务进程 | `~/.config/transit/transit.toml` | `~/Library/Logs/transit` |
-| 附带 systemd/容器模板 | 显式指定 `/etc/transit/transit.toml` | XDG_STATE_HOME=/var/lib，对应 `/var/lib/transit/logs` |
+| 系统级 systemd/容器模板 | 显式指定 `/etc/transit/transit.toml` | XDG_STATE_HOME=/var/lib，对应 `/var/lib/transit/logs` |
 
 --config 可覆盖配置文件；logging.directory 可覆盖日志目录，必须是绝对路径，不进行 shell 的波浪号展开。Linux 的非空 XDG 变量必须是绝对路径，否则启动失败，不退回 cwd。
 
@@ -66,9 +67,34 @@ GET `/_transit/health/live` 返回 alive 和 logging_degraded、log_write_failur
 
 SIGHUP 重新读取完整配置，成功后原子切换，失败保留旧快照；已有请求使用旧 generation。支持修改默认 provider、provider/别名/request_profiles、路由/协议声明、admission、logging.level/stderr_level/error_preview_bytes，以及除 directory 外的 capture 参数。切换 provider 时如缺少路由引用的 profile，校验失败并保留原配置。
 
-所有 server/audit 参数、capture.directory，以及 logging.directory/rotation/retention_days/cleanup_interval_seconds 变化需要重启。如果 reload 文件包含此类修改，整份 reload 拒绝，不部分应用。没有自动文件监视。建议原子替换配置文件后再 SIGHUP；systemd 使用 `systemctl reload transit`。
+所有 server/dashboard/audit 参数、capture.directory，以及 logging.directory/rotation/retention_days/cleanup_interval_seconds 变化需要重启。如果 reload 文件包含此类修改，整份 reload 拒绝，不部分应用。没有自动文件监视。建议原子替换配置文件后再 SIGHUP；用户级 systemd 使用 `systemctl --user reload transit`，系统级使用 `sudo systemctl reload transit`。reload 只发送信号，命令成功不代表应用已接受配置，需在应用日志中确认 reload_completed 或拒绝原因。
 
 SIGTERM/SIGINT 开始 drain，默认 grace=180 秒，停止接收新连接/请求，尽量完成在途请求，超时后强制结束。重启仍会造成短暂的新连接不可用；SIGHUP 不关闭监听及已有流。部署 stop timeout 应大于 grace 并留出清理余量。
+
+## Web 统计管理端口
+
+`dashboard.enabled=true` 启动内置网页和只读 API，要求同时启用审计。默认关闭，监听 `127.0.0.1:8788`，必须使用与代理不同的非零端口；dashboard 的开关与监听地址需要重启。代理端口不提供看板路由，严格准入和上游凭据透传行为不变。
+
+网页、CSS、JavaScript 编译进可执行文件，不依赖 Node.js 或外部资源。默认近 24 小时，提供近 1 小时/7 天/30 天和自定义范围；时间显示采用浏览器时区。支持 provider、请求/解析后/响应模型、path、outcome 的精确筛选，以及每页 50 条的请求明细。模型分布按响应模型、解析后模型、请求模型依次回退，显示请求最多的 5 个组合，标签为 `provider/model`；点击同时筛选 provider 和模型。
+
+调用趋势使用统一 SVG 坐标系绘制柱子、纵轴数值与网格，横轴显示中间时间刻度并随宽度调整数量。悬浮绘图区（含空白）显示横向数值参考线、纵轴读数及时间段的请求数或 Token；时间精确到分钟，跨日长范围附日期。Token 卡片统一使用浅色并标为“Token 总量”，统计口径在折叠诊断中说明。
+
+连接状态和更新时间合并在顶部 header，浏览器时区说明放在更新时间提示中。请求表格使用时间、provider/model、path、结果、耗时、token 六列，每条记录单行显示。Token 按“输入 / 输出 / 总计”合并展示，缺失值显示“—”，用量完整状态保留在悬停提示及请求详情中。正常完成显示 HTTP 状态码；HTTP 失败显示状态码，HTTP 200 等状态内的业务失败显示“失败 · 200”；取消、中断、未完整结束和待结束各自显示状态。悬停结果可查看 HTTP 状态和错误代码，点击整行查看完整记录，行悬停加深，支持 Enter/空格键打开；弹窗标题固定，正文独立滚动，滚动条仅出现在内容区。
+
+管理 API：
+
+- `GET /api/stats`：汇总、趋势、前 12 个模型/provider 组合、筛选选项和当前页请求。
+- 参数 `from_ms`/`to_ms` 为 UTC 毫秒，范围 `[from_ms,to_ms)`，默认近 24 小时，单次最多 366 天；其它参数为 `provider`/`model`/`path`/`outcome`，均使用绑定参数。
+- `limit` 默认 50、最大 100。后续页使用 `next_cursor` 中的 `before_ms`/`before_id`，按 started_at_ms/request_id 降序查询；分页时沿用相同时间窗口，避免新请求导致偏移分页重复。
+- `GET /api/requests/<request_id>`：单条完整审计记录，不提供原始抓取或配置内容。
+
+Token 汇总、趋势与模型分布只累加完整用量，缺失不作零估计；缓存与 reasoning 是输入/输出的子集。输入缓存命中率独立展示，为缓存字段有效的完整记录中，缓存读取 token 总数 / 输入 token 总数，按 token 加权，不是命中过缓存的请求占比。缓存字段为 NULL、负数或超过该条输入量时不参与分子或分母；显式 0 是有效未命中，输入总数为 0 时显示未知。主卡片显示命中率和缓存 token 数，有效样本条数留在折叠诊断中，避免把缺失字段当作 0。请求概览并排显示总请求和已完成数，字号相同；完成率为 completed / 已结束记录，作为辅助信息，取消、异常及进行中分别计数。失败、未完整结束、取消和中断计入未完成数。in_progress 单列，可能表示请求进行中，也可能是后台尚未完成更新。用量完整情况及缓存字段覆盖情况放在默认折叠的“统计诊断”中，不占主卡片。仅正常完成（completed）的已识别生成请求，用量部分或缺失时在 Token 卡片显示提示；取消、中断、失败、进行中及非生成接口（如 models/raw）没有用量不触发此提示。用量不完整表示缺少统计依据，也可能是上游未提供 usage，不自动判定为代理故障。每次看板查询使用同一 SQLite 读事务快照；记录异步写入，刷新后仍可能发生后续修正。
+
+SQLite 使用单独的只读连接和线程，`query_only=ON`，不访问上游。队列最多等待 8 个任务，单任务从入队开始最多 3 秒，SQLite progress handler 中断超时查询，锁等待最多 100ms；HTTP 等待最多 4 秒，满队列或失败返回 503。查询使用现有时间索引、有限返回量和 2 MiB SQLite page cache；大量历史查询仍会消耗共享磁盘/CPU，管理端口限制 64 个连接，不能作为无限并发分析接口。
+
+管理响应禁止浏览器缓存和跨站 iframe，使用仅同源静态资源的 CSP；不开放 CORS，拒绝 `Sec-Fetch-Site: cross-site`，Host 只接受 IP 地址或 localhost，以减少浏览器跨站读取和 DNS rebinding 风险。反向代理使用域名入口时，应保留同源路径并将转发 Host 改为管理监听 IP。网页用文本节点展示数据库字段，不将模型名或错误摘要当作 HTML。
+
+管理端口不提供身份认证，记录包含私有模型/provider/path 和错误信息。默认绑定本机；远程使用受控内网/VPN、SSH 隧道或有认证的反向代理，不直接发布公网。退出时与代理一起停止接纳新连接，再结束查询线程；管理故障记录 dashboard_query_failed，监听失败或管理 server 异常退出会使服务显式失败。
 
 ## 请求响应抓取
 
@@ -111,7 +137,7 @@ max_total_bytes 默认 1 GiB，最小 64 KiB，按受管理 JSONL 的实际编�
 
 [audit] enabled=true 后，已接纳的代理请求写入 requests 表；严格准入拒绝、健康检查和接纳前的容量拒绝不写入，容量拒绝仍有运行日志。旧配置默认关闭，不从历史日志回填用量。
 
-默认数据库为 `$XDG_STATE_HOME/transit/transit.sqlite3`，未设置时为 `~/.local/state/transit/transit.sqlite3`。macOS 的数据库使用 `~/.local/state/transit`，日志仍在 Library/Logs。audit.database 可覆盖绝对路径。数据库、-wal、-shm、.sqlite3.lock 为私有运行数据；Unix 新建数据库/锁 0600，目录 0700，同一路径只允许一个 Transit writer。systemd 模板为 `/var/lib/transit/transit.sqlite3`。不要提交数据库，也不要把包含实际模型/provider/path 的查询结果直接公开。
+默认数据库为 `$XDG_STATE_HOME/transit/transit.sqlite3`，未设置时为 `~/.local/state/transit/transit.sqlite3`。macOS 的数据库使用 `~/.local/state/transit`，日志仍在 Library/Logs。audit.database 可覆盖绝对路径。数据库、-wal、-shm、.sqlite3.lock 为私有运行数据；Unix 新建数据库/锁 0600，目录 0700，同一路径只允许一个 Transit writer。系统级 systemd 模板为 `/var/lib/transit/transit.sqlite3`，用户级模板沿用用户状态目录。不要提交数据库，也不要把包含实际模型/provider/path 的查询结果直接公开。
 
 每条记录包括：
 
@@ -171,13 +197,96 @@ GROUP BY provider, resolved_model;
 
 ## 部署
 
-systemd 模板为 [transit.service](../../deploy/transit.service)：
+### Linux 用户级 systemd（推荐单机部署）
+
+仓库提供通用模板和操作流程；实际配置、程序及运行数据安装在宿主机，不提交个人用户名、地址、provider 或模型配置。无需修改应用代码。服务由用户级 systemd 管理，不依赖终端或开发会话存活。
+
+| 用途 | 安装位置 |
+| --- | --- |
+| 可执行文件 | `~/.local/bin/transit` |
+| 应用配置 | `~/.config/transit/transit.toml` |
+| systemd unit | `~/.config/systemd/user/transit.service` |
+| 日志、审计数据库和抓取 | `~/.local/state/transit/` 下的原有目录和文件 |
+
+模板 [transit.user.service](../../deploy/transit.user.service) 中 `%h` 表示运行用户的 home，显式设置 XDG_CONFIG_HOME 和 XDG_STATE_HOME 为上表目录。自定义 XDG 目录时同步调整本机 unit 和以下命令；logging.directory、audit.database、capture.directory 的绝对路径覆盖仍有效。unit 不依赖源码目录或 shell PATH，不加载 shell 配置。
+
+首次安装，在 `transit/` 下执行构建和目录准备；已有匹配宿主机平台的发布二进制时，可跳过构建并替换二进制来源：
+
+```bash
+cargo build --release --locked
+install -d -m 755 "$HOME/.local/bin"
+install -d -m 700 "$HOME/.config/transit" "$HOME/.config/systemd/user"
+if [ ! -e "$HOME/.config/transit/transit.toml" ]; then
+  install -m 600 transit.example.toml "$HOME/.config/transit/transit.toml"
+fi
+```
+
+编辑配置，替换示例上游及模型，按访问范围设置监听地址。保留已有配置、数据库和日志；不要在更新时用示例覆盖实际配置。随后校验并安装二进制：
+
+```bash
+install -m 755 target/release/transit "$HOME/.local/bin/transit.new" &&
+  "$HOME/.local/bin/transit.new" check --config "$HOME/.config/transit/transit.toml" &&
+  mv -f "$HOME/.local/bin/transit.new" "$HOME/.local/bin/transit"
+```
+
+如果已有手工进程或临时服务，先按下文迁移，避免两个实例争用端口和存储。安装持久 unit 并启用自启动：
+
+```bash
+install -m 644 deploy/transit.user.service "$HOME/.config/systemd/user/transit.service"
+sudo loginctl enable-linger "$(id -un)"
+systemctl --user daemon-reload &&
+  systemctl --user enable --now transit.service
+systemctl --user status transit.service --no-pager
+loginctl show-user "$(id -un)" -p Linger
+```
+
+`enable` 将服务加入用户管理器启动目标；`linger` 使用户管理器在开机时启动，且退出登录后继续运行。预期 Linger=yes；这一步可能需要管理员授权。模板默认异常退出 5 秒后重启，持续快速失败仍受 systemd 启动频率限制；修复配置后可执行 `systemctl --user reset-failed transit` 再启动。正常停止不会自动重启。
+
+日常操作：
+
+```bash
+systemctl --user status transit --no-pager
+systemctl --user reload transit
+systemctl --user restart transit
+systemctl --user stop transit
+journalctl --user -u transit -n 50 --no-pager
+journalctl --user -u transit -f
+```
+
+journal 保存启动、退出和 stderr，应用 JSONL 日志继续按原有规则滚动清理。检查 unit 为 active/running、配置的监听端口可达及应用日志；健康接口仅在准入允许时可用，不验证上游 key 或模型。
+
+更新程序时重新构建，或准备可信的匹配平台发布产物，在 `transit/` 执行：
+
+```bash
+cargo build --release --locked &&
+  install -m 755 target/release/transit "$HOME/.local/bin/transit.new" &&
+  "$HOME/.local/bin/transit.new" check --config "$HOME/.config/transit/transit.toml" &&
+  mv -f "$HOME/.local/bin/transit.new" "$HOME/.local/bin/transit" &&
+  systemctl --user restart transit
+systemctl --user status transit --no-pager
+```
+
+始终先写同一目录中的新文件并校验，再用 rename 原子替换部署文件；不要直接 cp/install 覆盖正在执行的目标，否则可能报 Text file busy。替换后旧进程继续使用旧 inode，直到 restart 才运行新版。保留可信的旧版本产物可按相同流程回退；若未来有数据库不兼容迁移，需先确认其兼容性，替换二进制不等于回退运行数据。更新 unit 后还需 daemon-reload；程序替换不需要 daemon-reload，reload 不加载新版程序。
+
+restart 使用 SIGTERM 等待应用 drain；模板 TimeoutStopSec=210 秒，覆盖默认 shutdown_grace_seconds=180 秒并留出收尾时间。调整应用 grace 时同步提高停止等待；超出 grace 的请求仍可能被中断，重启期间新连接短暂不可用。
+
+迁移已有进程：
+
+- 手工启动的进程：确认 PID 和配置后发送 SIGTERM，等待退出和端口释放，再启用持久服务。不要同时启动第二个 writer。
+- `systemd-run --user --unit=transit` 创建的同名临时服务：先用 `systemctl --user show transit.service -p Transient -p ActiveState` 确认，再执行 `systemctl --user stop transit.service`。等待该单元卸载（LoadState=not-found）后再安装并加载持久 unit；临时单元未卸载时不要启动同名持久服务。失败状态的临时单元可先 reset-failed 再检查。切换后用 `systemctl --user show transit.service -p FragmentPath -p Transient -p MainPID` 确认路径指向用户配置文件、Transient=no，并检查 `systemctl --user is-enabled transit.service` 返回 enabled。
+- 用户级与系统级部署二选一；二者即使同名也由不同管理器控制，不能重复启动同一配置和状态目录。
+
+### 系统级 systemd
+
+需要独立服务账户或由管理员统一运维时，使用 [transit.service](../../deploy/transit.service)：
 
 1. 创建专用 transit 用户/组，安装二进制到 /usr/local/bin/transit。
 2. 安装可被 transit 用户读取的配置到 /etc/transit/transit.toml，按访问范围设置 listen。
 3. 安装 unit 到 /etc/systemd/system/transit.service，daemon-reload 后启动。
 4. unit 使用 StateDirectory=transit 和 XDG_STATE_HOME=/var/lib，日志及审计数据库都在 /var/lib/transit；修改日志目录需同步调整 ReadWritePaths。
-5. 部署时单独设置 TimeoutStopSec 大于 shutdown grace，并留出清理余量。现有 unit 模板的 40 秒尚未调整，不能覆盖默认 180 秒 drain。配置替换后 reload，监听等基础设置修改后 restart。
+5. 使用 `sudo systemctl enable --now transit` 开机自启。模板 TimeoutStopSec=210 秒，覆盖默认 180 秒 drain；调整应用 grace 时同步提高停止等待。配置替换后 reload，监听等基础设置修改后 restart。更新程序同样使用同目录暂存、校验、原子替换和 restart 的流程。
+
+### 容器
 
 [Dockerfile](../../Dockerfile) 使用非 root transit 用户。构建上下文为 transit 项目目录：
 

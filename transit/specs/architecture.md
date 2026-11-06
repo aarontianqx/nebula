@@ -28,6 +28,7 @@ Transit 是一个长期运行的模型 HTTP 反向代理。请求先按路径选
 | admission.rs | 可选的协议入口、认证格式、JSON 基本结构与全局准入速率检查 |
 | observer.rs | 旁路读取 JSON/SSE 模型、用量、结束状态及业务错误，不修改响应 |
 | observation.rs | 独立两线程运行时、有界旁路队列、增量解压、后台请求元数据与响应观察 |
+| dashboard.rs + web/ | 独立管理端口、只读 SQLite 查询线程、内嵌统计网页，不调用上游 |
 | audit.rs | SQLite schema、私有目录/锁、异步起始记录、结束更新、恢复与保留期 |
 | capture.rs | 可选原始 body 抓取、独立有界写入队列、逐请求 JSONL、完整性与存储预算 |
 | privacy.rs | 运行日志和审计共用的受限错误脱敏 |

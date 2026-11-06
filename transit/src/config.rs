@@ -22,6 +22,8 @@ pub struct Config {
     pub admission: Admission,
     #[serde(default)]
     pub capture: Capture,
+    #[serde(default)]
+    pub dashboard: Dashboard,
     pub providers: BTreeMap<String, Provider>,
     #[serde(default)]
     pub routes: Vec<Route>,
@@ -39,6 +41,21 @@ pub struct Server {
     pub max_connections: usize,
     pub max_upload_bytes: usize,
     pub max_rewrite_bytes: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Dashboard {
+    pub enabled: bool,
+    pub listen: SocketAddr,
+}
+impl Default for Dashboard {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: SocketAddr::from(([127, 0, 0, 1], 8788)),
+        }
+    }
 }
 impl Default for Server {
     fn default() -> Self {
@@ -321,6 +338,18 @@ impl Config {
             return Err("default_provider must reference a configured provider".into());
         }
         let server = &self.server;
+        if self.dashboard.enabled {
+            if !self.audit.enabled {
+                return Err("dashboard requires audit.enabled=true".into());
+            }
+            if self.dashboard.listen.port() == 0
+                || self.dashboard.listen.port() == server.listen.port()
+            {
+                return Err(
+                    "dashboard requires a nonzero port different from the proxy port".into(),
+                );
+            }
+        }
         if server.max_in_flight == 0
             || server.max_in_flight > 65536
             || server.max_connections == 0

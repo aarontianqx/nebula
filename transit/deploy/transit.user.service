@@ -1,0 +1,21 @@
+[Unit]
+Description=Transit model API proxy
+
+[Service]
+Type=simple
+Environment=XDG_CONFIG_HOME=%h/.config
+Environment=XDG_STATE_HOME=%h/.local/state
+UMask=0077
+ExecStartPre=%h/.local/bin/transit check --config %h/.config/transit/transit.toml
+ExecStart=%h/.local/bin/transit serve --config %h/.config/transit/transit.toml
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=210
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
