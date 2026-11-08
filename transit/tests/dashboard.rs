@@ -232,6 +232,13 @@ origin="http://127.0.0.1:1"
         assert_eq!(measured["summary"]["cache_input_tokens"], denominator);
         assert_eq!(measured["summary"]["cache_read_tokens"], hits);
         assert_eq!(measured["summary"]["input_tokens"], 100);
+        let request = measured["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|request| request["request_id"] == ids[0])
+            .unwrap();
+        assert_eq!(request["cache_read_tokens"], serde_json::json!(cached));
     }
     assert_eq!(value["requests"].as_array().unwrap().len(), 2);
     let cursor = &value["next_cursor"];
@@ -338,6 +345,21 @@ origin="http://127.0.0.1:1"
     let (_, _, html) = get(address, "/", "");
     assert!(html.contains("/dashboard.js"));
     assert!(html.contains("请求观测"));
+    assert!(html.contains("type=\"module\""));
+    assert!(html.contains("id=\"language-switch\""));
+    // ESM dependencies must ship with the binary and use a JavaScript MIME type.
+    for (path, marker) in [
+        ("/dashboard.js", "./i18n.js"),
+        ("/i18n.js", "./locales.js"),
+        ("/locales.js", "export const languages"),
+    ] {
+        let (code, headers, script) = get(address, path, "");
+        assert_eq!(code, 200, "{path}");
+        assert!(headers.contains("text/javascript"), "{path}");
+        assert!(headers.to_lowercase().contains("content-security-policy:"));
+        assert!(script.contains(marker), "{path}");
+        assert_eq!(get(proxy_address, path, "").0, 404, "{path}");
+    }
     assert_eq!(get(proxy_address, "/api/stats", "").0, 404);
     assert_eq!(
         c.query_row("SELECT COUNT(*) FROM requests", [], |r| r.get::<_, i64>(0))

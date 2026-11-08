@@ -4,98 +4,174 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>Transit · 请求观测</title>
+    <title data-i18n="page.title">Transit · 请求观测</title>
     <link rel="stylesheet" href="/dashboard.css" />
-    <script src="/dashboard.js" defer></script>
+    <script type="module" src="/dashboard.js"></script>
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Transit 首页"
+      <a
+        class="brand"
+        href="/"
+        aria-label="Transit 首页"
+        data-i18n-aria-label="page.home"
         ><span class="brand-mark">t<span>↗</span></span
         ><span
           >transit<span class="brand-divider">/</span
-          ><span class="brand-sub">请求观测</span></span
+          ><span class="brand-sub"
+            ><span data-i18n="page.subtitle">请求观测</span></span
+          ></span
         ></a
       >
-      <div class="top-meta" role="status">
-        <span id="connection">正在连接…</span>
-        <span id="updated">—</span>
+      <div class="top-actions">
+        <div class="top-meta" role="status">
+          <span id="connection"
+            ><span data-i18n="connection.connecting">正在连接…</span></span
+          >
+          <span id="updated">—</span>
+        </div>
+        <div
+          id="language-switch"
+          class="language-switch"
+          role="group"
+          data-i18n-aria-label="language.choose"
+        ></div>
       </div>
     </header>
     <main>
-      <form id="filters" class="filters" aria-label="统计筛选">
+      <form
+        id="filters"
+        class="filters"
+        aria-label="统计筛选"
+        data-i18n-aria-label="filter.form"
+      >
         <div class="filter-top">
-          <div class="range-tabs" role="group" aria-label="时间范围">
-            <button type="button" data-range="1">近 1 小时</button
-            ><button
-              type="button"
-              data-range="24"
-              class="selected"
-              aria-pressed="true"
+          <div class="range-controls" id="range-controls">
+            <div
+              class="range-tabs"
+              role="group"
+              aria-label="时间范围"
+              data-i18n-aria-label="range.label"
             >
-              近 24 小时</button
-            ><button type="button" data-range="168">近 7 天</button
-            ><button type="button" data-range="720">近 30 天</button
-            ><button type="button" data-range="custom">自定义</button>
+              <button type="button" data-range="1">
+                <span data-i18n="range.hour">近 1 小时</span></button
+              ><button
+                type="button"
+                data-range="24"
+                class="selected"
+                aria-pressed="true"
+              >
+                <span data-i18n="range.day">近 24 小时</span></button
+              ><button type="button" data-range="168">
+                <span data-i18n="range.week">近 7 天</span></button
+              ><button type="button" data-range="720">
+                <span data-i18n="range.month">近 30 天</span></button
+              ><button type="button" data-range="custom">
+                <span data-i18n="range.custom">自定义</span>
+              </button>
+            </div>
+            <div class="custom-range" id="custom-range" hidden>
+              <label
+                ><span data-i18n="filter.from">开始时间</span
+                ><input
+                  id="from"
+                  type="datetime-local"
+                  required
+                  disabled /></label
+              ><label
+                ><span data-i18n="filter.to">结束时间</span
+                ><input id="to" type="datetime-local" required disabled
+              /></label>
+            </div>
           </div>
           <div class="refresh-controls">
             <label class="auto-refresh"
-              ><input id="auto" type="checkbox" />每 15 秒刷新</label
+              ><input id="auto" type="checkbox" /><span data-i18n="filter.auto"
+                >每 15 秒刷新</span
+              ></label
             ><button type="submit" class="refresh" id="refresh">
-              ↻ <span>刷新数据</span>
+              ↻ <span data-i18n="filter.refresh">刷新数据</span>
             </button>
           </div>
         </div>
-        <div class="custom-range" id="custom-range" hidden>
-          <label
-            >开始时间<input
-              id="from"
-              type="datetime-local"
-              required
-              disabled /></label
-          ><span>至</span
-          ><label
-            >结束时间<input id="to" type="datetime-local" required disabled
-          /></label>
-        </div>
         <div class="filter-fields">
-          <label>PROVIDER<input id="provider" type="hidden" /></label>
           <label
-            >模型<input id="model" placeholder="全部模型" autocomplete="off"
+            ><span data-i18n="filter.provider">服务商</span
+            ><input id="provider" type="hidden"
           /></label>
           <label
-            >请求路径<input id="path" placeholder="全部路径" autocomplete="off"
+            ><span data-i18n="filter.model">模型</span
+            ><input
+              id="model"
+              placeholder="全部模型"
+              data-i18n-placeholder="filter.allModel"
+              autocomplete="off"
           /></label>
-          <label>请求结果<input id="outcome" type="hidden" /></label>
-          <button type="button" id="reset" class="reset">重置筛选</button>
+          <label
+            ><span data-i18n="filter.path">请求路径</span
+            ><input
+              id="path"
+              placeholder="全部路径"
+              data-i18n-placeholder="filter.allPath"
+              autocomplete="off"
+          /></label>
+          <label
+            ><span data-i18n="filter.outcome">请求结果</span
+            ><input id="outcome" type="hidden"
+          /></label>
+          <button type="button" id="reset" class="reset">
+            <span data-i18n="filter.reset">重置筛选</span>
+          </button>
         </div>
       </form>
       <div id="error" class="error-banner" role="alert" hidden></div>
       <section
         class="metrics"
         aria-label="统计概览"
+        data-i18n-aria-label="metrics.label"
         aria-busy="true"
         id="metrics"
       >
         <article class="metric request-overview">
-          <p>请求概览 <span class="metric-icon">↗</span></p>
+          <p>
+            <span data-i18n="metrics.requests">请求概览</span
+            ><span class="metric-icon">↗</span>
+          </p>
           <div class="request-counts">
-            <div><strong id="m-requests">—</strong><span>总请求</span></div>
-            <div><strong id="m-completed">—</strong><span>已完成</span></div>
+            <div>
+              <strong id="m-requests">—</strong
+              ><span data-i18n="metrics.total">总请求</span>
+            </div>
+            <div>
+              <strong id="m-completed">—</strong
+              ><span data-i18n="metrics.completed">已完成</span>
+            </div>
           </div>
           <small
             ><span id="m-success">—</span><span id="m-outcomes"></span
           ></small>
         </article>
         <article class="metric">
-          <p>平均调用耗时 <span class="metric-icon">◷</span></p>
+          <p>
+            <span data-i18n="metrics.duration">平均调用耗时</span
+            ><span class="metric-icon">◷</span>
+          </p>
           <strong id="m-duration">—</strong
-          ><small id="m-ttfb">含流式响应的完整时长</small>
+          ><small id="m-ttfb"
+            ><span data-i18n="metrics.durationHint"
+              >含流式响应的完整时长</span
+            ></small
+          >
         </article>
         <article class="metric">
-          <p>Token 总量 <span class="metric-icon">◇</span></p>
+          <p>
+            <span data-i18n="metrics.tokens">Token 总量</span
+            ><span class="metric-icon">◇</span>
+          </p>
           <strong id="m-tokens">—</strong
-          ><small id="m-token-split">等待数据</small>
+          ><small id="m-token-split"
+            ><span data-i18n="common.waiting">等待数据</span></small
+          >
           <button
             type="button"
             id="usage-notice"
@@ -104,89 +180,127 @@
           ></button>
         </article>
         <article class="metric">
-          <p>输入缓存命中率 <span class="metric-icon">◉</span></p>
+          <p>
+            <span data-i18n="metrics.cacheRate">输入缓存命中率</span
+            ><span class="metric-icon">◉</span>
+          </p>
           <strong id="m-cache-rate">—</strong>
-          <small id="m-cache">缓存输入 —</small>
+          <small id="m-cache"
+            ><span data-i18n="metrics.cacheWaiting">缓存输入 —</span></small
+          >
         </article>
       </section>
       <section class="charts">
         <article class="panel traffic-panel">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">ACTIVITY</p>
               <h2>
-                调用趋势 <span id="chart-bucket" class="chart-bucket"></span>
+                <span data-i18n="chart.title">调用趋势</span
+                ><span id="chart-bucket" class="chart-bucket"></span>
               </h2>
             </div>
-            <div class="chart-toggle" role="group" aria-label="图表指标">
+            <div
+              class="chart-toggle"
+              role="group"
+              aria-label="图表指标"
+              data-i18n-aria-label="chart.metric"
+            >
               <button
                 type="button"
                 data-chart="requests"
                 class="selected"
                 aria-pressed="true"
               >
-                请求数</button
-              ><button type="button" data-chart="total_tokens">Token</button>
+                <span data-i18n="chart.requests">请求数</span></button
+              ><button type="button" data-chart="total_tokens">
+                <span data-i18n="chart.tokens">Token</span>
+              </button>
             </div>
           </div>
-          <div id="chart" class="chart" aria-label="调用趋势图"></div>
+          <div
+            id="chart"
+            class="chart"
+            aria-label="调用趋势图"
+            data-i18n-aria-label="chart.accessible"
+          ></div>
         </article>
         <article class="panel models-panel">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">DISTRIBUTION</p>
-              <h2>模型分布</h2>
+              <h2><span data-i18n="model.title">模型分布</span></h2>
             </div>
-            <span class="small-note">按请求量 · 前 5 项</span>
+            <span class="small-note"
+              ><span data-i18n="model.top">按请求量 · 前 5 项</span></span
+            >
           </div>
           <div id="distribution" class="distribution">
-            <p class="empty">等待数据</p>
+            <p class="empty">
+              <span data-i18n="common.waiting">等待数据</span>
+            </p>
           </div>
         </article>
       </section>
       <section class="panel requests-panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">REQUEST LOG</p>
-            <h2>请求明细 <span id="request-count" class="count">—</span></h2>
+            <h2>
+              <span data-i18n="requests.title">请求明细</span
+              ><span id="request-count" class="count">—</span>
+            </h2>
           </div>
         </div>
         <div class="table-scroll">
           <table>
             <thead>
               <tr>
-                <th>时间</th>
-                <th>PROVIDER / MODEL</th>
-                <th>PATH</th>
-                <th>结果</th>
-                <th>耗时</th>
-                <th class="numeric">TOKEN（输入 / 输出 / 总计）</th>
+                <th><span data-i18n="column.time">时间</span></th>
+                <th><span data-i18n="column.model">服务商 / 模型</span></th>
+                <th><span data-i18n="column.path">路径</span></th>
+                <th><span data-i18n="column.outcome">结果</span></th>
+                <th><span data-i18n="column.duration">耗时</span></th>
+                <th class="numeric">
+                  <span data-i18n="column.totalTokens">总 Token</span>
+                </th>
+                <th class="numeric">
+                  <span data-i18n="column.cacheRate">缓存命中率</span>
+                </th>
               </tr>
             </thead>
             <tbody id="requests">
               <tr>
-                <td colspan="6" class="empty">正在读取请求记录…</td>
+                <td colspan="7" class="empty" data-i18n="detail.loading">
+                  正在读取记录…
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="pagination">
-          <span id="page-description">每页最多 50 条</span>
+          <span id="page-description"
+            ><span data-i18n="page.limit">每页最多 50 条</span></span
+          >
           <div>
-            <button type="button" id="previous" disabled>← 上一页</button
+            <button type="button" id="previous" disabled>
+              <span data-i18n="page.previous">← 上一页</span></button
             ><span id="page-number">01</span
-            ><button type="button" id="next" disabled>下一页 →</button>
+            ><button type="button" id="next" disabled>
+              <span data-i18n="page.next">下一页 →</span>
+            </button>
           </div>
         </div>
       </section>
       <details id="diagnostics" class="diagnostics">
-        <summary>统计诊断</summary>
+        <summary><span data-i18n="diagnostics.title">统计诊断</span></summary>
         <div class="diagnostics-content">
-          <p id="m-usage">等待数据</p>
-          <p id="cache-diagnostics">等待缓存字段统计</p>
+          <p id="m-usage"><span data-i18n="common.waiting">等待数据</span></p>
+          <p id="cache-diagnostics">
+            <span data-i18n="diagnostics.cacheWaiting">等待缓存字段统计</span>
+          </p>
           <p>
-            用量缺失可能来自上游未提供
-            usage、请求取消或观察失败，不等于模型调用失败。缓存字段未提供或无效时记为未知，不按未命中计算。
+            <span data-i18n="diagnostics.note"
+              >用量缺失可能来自上游未提供
+              usage、请求取消或观察失败，不等于模型调用失败。缓存字段未提供或无效时记为未知，不按未命中计算。</span
+            >
           </p>
         </div>
       </details>
@@ -194,12 +308,15 @@
     <dialog id="detail" aria-labelledby="detail-title">
       <div class="dialog-header">
         <div class="detail-headline">
-          <h2 id="detail-title">请求详情</h2>
+          <h2 id="detail-title">
+            <span data-i18n="detail.title">请求详情</span>
+          </h2>
           <div id="detail-status"></div>
           <button
             id="close-detail"
             type="button"
             aria-label="关闭请求详情"
+            data-i18n-aria-label="detail.close"
             autofocus
           >
             ✕
@@ -210,7 +327,7 @@
       <div id="detail-content"></div>
       <div class="detail-footer">
         <span id="detail-feedback" role="status" aria-live="polite"></span
-        ><span>Esc 关闭</span>
+        ><span data-i18n="detail.escape">Esc 关闭</span>
       </div>
     </dialog>
   </body>

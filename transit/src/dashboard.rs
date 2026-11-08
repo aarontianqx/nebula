@@ -358,7 +358,7 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
     list_parameters.push(((limit + 1) as i64).into());
     let mut requests = rows(&transaction,&format!("SELECT request_id,started_at_ms,provider,request_path,
         requested_model,resolved_model,response_model,outcome,http_status,duration_ms,first_body_byte_ms,
-        input_tokens,output_tokens,total_tokens,usage_status,upstream_protocol,error_code
+        input_tokens,output_tokens,total_tokens,cache_read_tokens,usage_status,upstream_protocol,error_code
         FROM requests WHERE {FILTER} AND (?7 IS NULL OR started_at_ms < ?7 OR (started_at_ms = ?7 AND request_id < ?8))
         ORDER BY started_at_ms DESC,request_id DESC LIMIT ?9"),&list_parameters)?;
     let more = requests.len() > limit;
@@ -423,6 +423,24 @@ pub fn router(reader: Reader) -> Router {
                 (
                     [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
                     include_str!("../web/dashboard.js"),
+                )
+            }),
+        )
+        .route(
+            "/i18n.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../web/i18n.js"),
+                )
+            }),
+        )
+        .route(
+            "/locales.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("../web/locales.js"),
                 )
             }),
         )
