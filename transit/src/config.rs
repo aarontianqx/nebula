@@ -195,21 +195,95 @@ pub enum Protocol {
     OpenaiResponses,
     OpenaiCompletions,
     AnthropicMessages,
+    GeminiGenerateContent,
+    GeminiCountTokens,
+    GeminiModels,
     Models,
 }
 impl Protocol {
     pub fn infer(method: &Method, path: &str) -> Self {
+        // OpenAI and Gemini share this list URL; preserve its existing protocol label.
+        if method == Method::GET && path == "/v1/models" {
+            return Self::Models;
+        }
+        if let Some(endpoint) = GeminiPath::parse(path) {
+            return match (method.as_str(), endpoint.action) {
+                ("POST", Some("generateContent" | "streamGenerateContent")) => {
+                    Self::GeminiGenerateContent
+                }
+                ("POST", Some("countTokens")) => Self::GeminiCountTokens,
+                ("GET", None) => Self::GeminiModels,
+                _ => Self::Raw,
+            };
+        }
         match (method.as_str(), path) {
             ("POST", "/v1/chat/completions") => Self::OpenaiChat,
             ("POST", "/v1/responses") => Self::OpenaiResponses,
             ("POST", "/v1/completions") => Self::OpenaiCompletions,
             ("POST", "/v1/messages") => Self::AnthropicMessages,
-            ("GET", "/v1/models") => Self::Models,
             _ => Self::Raw,
         }
     }
     pub fn generates(self) -> bool {
-        !matches!(self, Self::Raw | Self::Models)
+        !matches!(
+            self,
+            Self::Raw | Self::Models | Self::GeminiModels | Self::GeminiCountTokens
+        )
+    }
+    pub fn json_request(self) -> bool {
+        self.generates() || self == Self::GeminiCountTokens
+    }
+    pub fn is_gemini(self) -> bool {
+        matches!(
+            self,
+            Self::GeminiGenerateContent | Self::GeminiCountTokens | Self::GeminiModels
+        )
+    }
+}
+
+/// Native Gemini models API only; arbitrary actions/resources remain raw.
+pub struct GeminiPath<'a> {
+    pub model: Option<&'a str>,
+    pub action: Option<&'a str>,
+}
+impl<'a> GeminiPath<'a> {
+    pub fn parse(path: &'a str) -> Option<Self> {
+        let rest = ["/v1/", "/v1beta/", "/v1alpha/"]
+            .iter()
+            .find_map(|prefix| path.strip_prefix(prefix))?;
+        if rest == "models" {
+            return Some(Self {
+                model: None,
+                action: None,
+            });
+        }
+        let resource = rest.strip_prefix("models/")?;
+        let (model, action) = resource
+            .split_once(':')
+            .map_or((resource, None), |(model, action)| (model, Some(action)));
+        if !Self::valid_model(model)
+            || action.is_some_and(|a| {
+                !matches!(
+                    a,
+                    "generateContent" | "streamGenerateContent" | "countTokens"
+                )
+            })
+        {
+            return None;
+        }
+        Some(Self {
+            model: Some(model),
+            action,
+        })
+    }
+    pub fn valid_model(model: &str) -> bool {
+        !model.is_empty()
+            && model.len() <= 256
+            && model != "."
+            && model != ".."
+            && model
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
     }
 }
 
@@ -309,6 +383,8 @@ pub struct Plan<'a> {
     pub upstream_path: String,
     pub protocol: Protocol,
     pub upstream_protocol: Protocol,
+    pub path_models: Option<(String, String)>,
+    pub path_streaming: Option<bool>,
 }
 
 impl Config {
@@ -556,9 +632,11 @@ impl Config {
                     route.id
                 ));
             }
-            if route.protocol.is_some_and(|p| p.generates())
+            if route.protocol.is_some_and(|p| p.json_request())
                 && route.method.as_deref() != Some("POST")
-                || route.protocol == Some(Protocol::Models)
+                || route
+                    .protocol
+                    .is_some_and(|p| matches!(p, Protocol::Models | Protocol::GeminiModels))
                     && route.method.as_deref() != Some("GET")
             {
                 return Err(format!(
@@ -641,7 +719,7 @@ impl Config {
                 }
             })
             .unwrap_or_else(|| path.into());
-        let upstream_path = route
+        let mut upstream_path = route
             .and_then(|r| r.upstream_path.clone())
             .unwrap_or_else(|| format!("{}{}", provider.base_path, logical_path));
         let protocol = route.and_then(|r| r.protocol).unwrap_or_else(|| {
@@ -658,6 +736,42 @@ impl Config {
                 protocol
             }
         });
+        let endpoint = protocol
+            .is_gemini()
+            .then(|| GeminiPath::parse(&logical_path))
+            .flatten();
+        let path_streaming = endpoint
+            .as_ref()
+            .map(|p| p.action == Some("streamGenerateContent"));
+        let path_models = endpoint.and_then(|p| p.model).map(|requested| {
+            // base_path may precede the API version; operate only on the final models resource.
+            let (prefix, tail) = upstream_path.rsplit_once("/models/").unwrap_or(("", ""));
+            let (model, action) = tail
+                .split_once(':')
+                .map_or((tail, None), |(m, a)| (m, Some(a)));
+            let resolved = provider
+                .model_aliases
+                .get(model)
+                .map(String::as_str)
+                .unwrap_or(model)
+                .to_string();
+            if !model.is_empty() && resolved != model {
+                let encoded: String =
+                    form_urlencoded::byte_serialize(resolved.as_bytes()).collect();
+                upstream_path = format!(
+                    "{prefix}/models/{encoded}{}",
+                    action.map(|a| format!(":{a}")).unwrap_or_default()
+                );
+            }
+            (
+                requested.to_string(),
+                if resolved.is_empty() {
+                    requested.to_string()
+                } else {
+                    resolved
+                },
+            )
+        });
         Plan {
             protocol,
             upstream_protocol,
@@ -665,6 +779,8 @@ impl Config {
             provider,
             route,
             upstream_path,
+            path_models,
+            path_streaming,
         }
     }
 }
@@ -704,6 +820,7 @@ fn profile_field(field: &str) -> bool {
             "api_key",
             "api-key",
             "x-api-key",
+            "x-goog-api-key",
             "key",
             "password",
             "secret",
@@ -764,6 +881,78 @@ fn xdg(name: &str, fallback: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gemini_resources_are_bounded_and_aliases_rewrite_only_the_path() {
+        for version in ["v1", "v1beta", "v1alpha"] {
+            for action in ["generateContent", "streamGenerateContent"] {
+                assert_eq!(
+                    Protocol::infer(
+                        &Method::POST,
+                        &format!("/{version}/models/fixture-native:{action}")
+                    ),
+                    Protocol::GeminiGenerateContent
+                );
+            }
+            assert_eq!(
+                Protocol::infer(
+                    &Method::POST,
+                    &format!("/{version}/models/fixture-native:countTokens")
+                ),
+                Protocol::GeminiCountTokens
+            );
+            assert_eq!(
+                Protocol::infer(&Method::GET, &format!("/{version}/models")),
+                if version == "v1" {
+                    Protocol::Models
+                } else {
+                    Protocol::GeminiModels
+                }
+            );
+            assert_eq!(
+                Protocol::infer(&Method::GET, &format!("/{version}/models/fixture-native")),
+                Protocol::GeminiModels
+            );
+        }
+        for path in [
+            "/v2/models/fixture:generateContent",
+            "/v1beta/models/:generateContent",
+            "/v1beta/models/../secret:generateContent",
+            "/v1beta/models/a%2fb:generateContent",
+            "/v1beta/models/fixture:delete",
+            "/v1beta/models/fixture:generateContent/extra",
+        ] {
+            assert_eq!(
+                Protocol::infer(&Method::POST, path),
+                Protocol::Raw,
+                "{path}"
+            );
+        }
+        assert_eq!(
+            Protocol::infer(&Method::GET, "/v1beta/models/fixture:generateContent"),
+            Protocol::Raw
+        );
+        let mut config = test_config();
+        config.providers.get_mut("primary").unwrap().base_path = "/gateway".into();
+        config
+            .providers
+            .get_mut("primary")
+            .unwrap()
+            .model_aliases
+            .insert("native-latest".into(), "fixture-native".into());
+        let plan = config.plan(
+            &Method::POST,
+            "/v1beta/models/native-latest:streamGenerateContent",
+        );
+        assert_eq!(
+            plan.upstream_path,
+            "/gateway/v1beta/models/fixture-native:streamGenerateContent"
+        );
+        assert_eq!(
+            plan.path_models,
+            Some(("native-latest".into(), "fixture-native".into()))
+        );
+        assert_eq!(plan.path_streaming, Some(true));
+    }
     use serde_json::json;
 
     fn test_config() -> Config {

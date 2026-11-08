@@ -63,6 +63,16 @@ strict = true
 origin = "http://{upstream}"
 [providers.fixture.model_aliases]
 chat-latest = "fixture-model"
+[providers.native]
+origin = "http://{upstream}"
+base_path = "/native"
+[providers.native.model_aliases]
+native-latest = "fixture-native"
+[[routes]]
+id = "native"
+path_prefix = "/gemini"
+strip_prefix = true
+provider = "native"
 [[routes]]
 id = "anthropic"
 path_prefix = "/anthropic"
@@ -147,6 +157,213 @@ fn rows(service: &Service) -> Vec<Value> {
     let connection = Connection::open(service.directory.join("audit.sqlite3")).unwrap();
     let mut query=connection.prepare("SELECT request_id,outcome,client_protocol,upstream_protocol,http_status,upstream_status,input_tokens,output_tokens,total_tokens,usage_status,error_source,error_code,error_message,request_path,upstream_path,requested_model,resolved_model,usage_json FROM requests ORDER BY started_at_ms,rowid").unwrap();
     query.query_map([],|row|Ok(json!({"request_id":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?,"client_protocol":row.get::<_,String>(2)?,"upstream_protocol":row.get::<_,String>(3)?,"http_status":row.get::<_,Option<i64>>(4)?,"upstream_status":row.get::<_,Option<i64>>(5)?,"input_tokens":row.get::<_,Option<i64>>(6)?,"output_tokens":row.get::<_,Option<i64>>(7)?,"total_tokens":row.get::<_,Option<i64>>(8)?,"usage_status":row.get::<_,Option<String>>(9)?,"error_source":row.get::<_,Option<String>>(10)?,"error_code":row.get::<_,Option<String>>(11)?,"error_message":row.get::<_,Option<String>>(12)?,"request_path":row.get::<_,String>(13)?,"upstream_path":row.get::<_,String>(14)?,"requested_model":row.get::<_,Option<String>>(15)?,"resolved_model":row.get::<_,Option<String>>(16)?,"usage_json":row.get::<_,Option<String>>(17)?}))).unwrap().map(Result::unwrap).collect()
+}
+
+#[tokio::test]
+async fn gemini_native_routing_auth_streams_errors_and_usage_are_preserved() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = listener.local_addr().unwrap();
+    let directory = std::env::temp_dir().join(format!("transit-native-{}", uuid::Uuid::new_v4()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let response = r#"{"modelVersion":"fixture-native","candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":20,"thoughtsTokenCount":5,"cachedContentTokenCount":60,"totalTokenCount":125}}"#;
+    let stream = format!(
+        "data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"hello\"}}]}}}}]}}\n\ndata: {response}\n\n"
+    );
+    let expected_stream = stream.clone();
+    let app = Router::new().fallback(move |request: Request<Body>| {
+        let count = count.clone();
+        let stream = stream.clone();
+        async move {
+            count.fetch_add(1, Ordering::Relaxed);
+            let uri = request.uri().clone();
+            assert!(uri.path().starts_with("/native/v1beta/models"));
+            let query = uri.query().unwrap_or("");
+            let key = request.headers().get("x-goog-api-key").and_then(|h|h.to_str().ok()).unwrap_or("");
+            assert!(key == "fixture-secret" || query.contains("key=fixture%2Dsecret") || request.headers().contains_key("authorization"));
+            let body = to_bytes(request.into_body(), 4096).await.unwrap();
+            if uri.path().ends_with(":streamGenerateContent") {
+                assert_eq!(query, "alt=sse&key=fixture%2Dsecret&opaque=a%2Fb");
+                assert_eq!(body, Bytes::from_static(b"{ \"contents\" : [{\"parts\":[{\"text\":\"hello\"}]}] }"));
+                return Response::builder().header("content-type","text/event-stream").body(Body::from(stream)).unwrap();
+            }
+            if uri.path().ends_with(":countTokens") {
+                return Response::new(Body::from(r#"{"totalTokens":100}"#));
+            }
+            if uri.path().ends_with(":generateContent") {
+                assert!(uri.path().ends_with("/fixture-native:generateContent"));
+                let value: Value = serde_json::from_slice(&body).unwrap();
+                if value["test_case"] == "error" {
+                    return Response::builder().status(429).header("content-type","application/json")
+                        .body(Body::from(r#"{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"retry fixture-secret"}}"#)).unwrap();
+                }
+                if value["test_case"] == "array" {
+                    return Response::builder().header("content-type","application/json").body(Body::from(format!("[{response}]"))).unwrap();
+                }
+                return Response::builder().header("content-type","application/json").body(Body::from(response)).unwrap();
+            }
+            Response::new(Body::from(r#"{"models":[]}"#))
+        }
+    });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let (service, base) = start(upstream, directory).await;
+    let content = r#"{ "contents" : [{"parts":[{"text":"hello"}]}] }"#;
+    let auth = Some(("x-goog-api-key", "fixture-secret"));
+    let stream_result = call(&base, "POST", "/gemini/v1beta/models/native-latest:streamGenerateContent?alt=sse&key=fixture%2Dsecret&opaque=a%2Fb", content, None).await;
+    assert_eq!(stream_result.0, 200);
+    assert_eq!(stream_result.2, expected_stream);
+    assert_eq!(
+        call(
+            &base,
+            "POST",
+            "/gemini/v1beta/models/native-latest:generateContent",
+            content,
+            auth
+        )
+        .await
+        .2,
+        response
+    );
+    assert_eq!(
+        call(
+            &base,
+            "POST",
+            "/gemini/v1beta/models/native-latest:generateContent",
+            r#"{"contents":[{"parts":[{"text":"hello"}]}],"test_case":"array"}"#,
+            Some(("authorization", "Bearer fixture-secret"))
+        )
+        .await
+        .2,
+        format!("[{response}]")
+    );
+    let error = call(
+        &base,
+        "POST",
+        "/gemini/v1beta/models/native-latest:generateContent?key=fixture%2Dsecret",
+        r#"{"contents":[{"parts":[{"text":"hello"}]}],"test_case":"error"}"#,
+        None,
+    )
+    .await;
+    assert_eq!(error.0, 429);
+    assert!(error.2.contains("retry fixture-secret")); // Only stored diagnostics redact the caller's key.
+    assert_eq!(
+        call(
+            &base,
+            "POST",
+            "/gemini/v1beta/models/native-latest:countTokens",
+            content,
+            auth
+        )
+        .await
+        .2,
+        r#"{"totalTokens":100}"#
+    );
+    assert_eq!(
+        call(&base, "GET", "/gemini/v1beta/models", "", auth)
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        call(
+            &base,
+            "GET",
+            "/gemini/v1beta/models/native-latest",
+            "",
+            auth
+        )
+        .await
+        .0,
+        200
+    );
+    for (method, path, body, key) in [
+        ("POST", "/gemini/.env", content, auth),
+        (
+            "POST",
+            "/gemini/v1beta/models/fixture:delete",
+            content,
+            auth,
+        ),
+        (
+            "GET",
+            "/gemini/v1beta/models/fixture:generateContent",
+            "",
+            auth,
+        ),
+        (
+            "POST",
+            "/gemini/v1beta/models/fixture:generateContent",
+            "{}",
+            auth,
+        ),
+        (
+            "POST",
+            "/gemini/v1beta/models/fixture:generateContent",
+            content,
+            None,
+        ),
+        (
+            "POST",
+            "/gemini/v1/chat/completions",
+            r#"{"model":"fixture","messages":[{"role":"user","content":"hello"}]}"#,
+            auth,
+        ),
+        ("GET", "/gemini/v1beta/models", "{}", auth),
+    ] {
+        assert_eq!(call(&base, method, path, body, key).await.0, 404, "{path}");
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 7);
+    let mut recorded = Vec::new();
+    for _ in 0..100 {
+        recorded = rows(&service);
+        if recorded.len() == 7 && recorded.iter().all(|r| r["outcome"] != "in_progress") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(recorded.len(), 7);
+    let generated: Vec<_> = recorded
+        .iter()
+        .filter(|r| r["client_protocol"] == "gemini_generate_content")
+        .collect();
+    assert_eq!(generated.len(), 4);
+    for row in &generated[..3] {
+        assert_eq!(row["requested_model"], "native-latest");
+        assert_eq!(row["resolved_model"], "fixture-native");
+        assert_eq!(row["input_tokens"], 100);
+        assert_eq!(row["output_tokens"], 25);
+        assert_eq!(row["total_tokens"], 125);
+        assert_eq!(row["usage_status"], "complete");
+    }
+    assert_eq!(generated[3]["outcome"], "failed");
+    assert_eq!(generated[3]["error_code"], "RESOURCE_EXHAUSTED");
+    assert!(
+        !serde_json::to_string(&recorded)
+            .unwrap()
+            .contains("fixture-secret")
+    );
+    for entry in fs::read_dir(service.directory.join("logs")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|s| s == "jsonl") {
+            let logs = fs::read_to_string(path).unwrap();
+            assert!(!logs.contains("fixture-secret"));
+            assert!(!logs.contains("fixture%2Dsecret"));
+        }
+    }
+    let c = Connection::open(service.directory.join("audit.sqlite3")).unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT streaming FROM requests WHERE request_path LIKE '%streamGenerateContent'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(c.query_row("SELECT cache_read_tokens FROM requests WHERE request_path LIKE '%streamGenerateContent'",[],|r|r.get::<_,i64>(0)).unwrap(), 60);
+    server.abort();
 }
 
 #[tokio::test]

@@ -105,6 +105,8 @@ impl Pool {
         };
         let (sender, receiver) = mpsc::channel(REQUEST_QUEUE);
         let (request_sender, request_receiver) = mpsc::channel(REQUEST_QUEUE);
+        // Native Gemini request model/stream metadata is already known from the URL.
+        let request_sender = (!protocol.is_gemini()).then_some(request_sender);
         let (headers_tx, headers_rx) = oneshot::channel();
         let (completion_tx, completion_rx) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(0));
@@ -204,7 +206,7 @@ impl Pool {
         });
         Ok(Session {
             sender: Some(sender),
-            request_sender: Some(request_sender),
+            request_sender,
             headers: Some(headers_tx),
             completion: Some(completion_tx),
             state,

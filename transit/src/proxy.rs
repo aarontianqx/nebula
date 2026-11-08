@@ -340,6 +340,7 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
             preplan.protocol,
             request.method(),
             request.headers(),
+            request.uri().query(),
         )
     {
         app.gate.reject();
@@ -386,7 +387,9 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
     }
     let plan = snapshot.config.plan(request.method(), request.uri().path());
     let mut decoded = None;
-    if snapshot.config.admission.strict && plan.protocol == Protocol::Models {
+    if snapshot.config.admission.strict
+        && matches!(plan.protocol, Protocol::Models | Protocol::GeminiModels)
+    {
         let body = std::mem::replace(request.body_mut(), Body::empty());
         match collect_body(
             body,
@@ -405,7 +408,7 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
             }
         }
     }
-    if snapshot.config.admission.strict && plan.protocol.generates() {
+    if snapshot.config.admission.strict && plan.protocol.json_request() {
         let limit = plan
             .route
             .filter(|r| r.adapter.is_some())
@@ -455,11 +458,11 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
         protocol: plan.protocol,
         upstream_protocol: plan.upstream_protocol,
         started_at_ms,
-        streaming: Mutex::new(None),
+        streaming: Mutex::new(plan.path_streaming),
         observer: Mutex::new(None),
         audit: Mutex::new(None),
         capture: Mutex::new(None),
-        requested_model: Mutex::new(None),
+        requested_model: Mutex::new(plan.path_models.clone()),
         started: request_started,
         progress: Mutex::new(Progress {
             status: None,
@@ -483,7 +486,7 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
                             &id,
                             plan.upstream_protocol,
                             &snapshot.config.audit,
-                            credentials(request.headers()),
+                            credentials(request.headers(), request.uri().query()),
                             ticket,
                         ) {
                             Ok(session) => {
@@ -591,8 +594,10 @@ async fn execute(
         .and_then(|name| plan.provider.request_profiles.get(name));
     let rewrite = adapter_route.is_some()
         || profile.is_some()
-        || (!plan.provider.model_aliases.is_empty() && plan.protocol.generates());
-    let credentials = credentials(&parts.headers);
+        || (!plan.provider.model_aliases.is_empty()
+            && plan.protocol.generates()
+            && !plan.protocol.is_gemini());
+    let credentials = credentials(&parts.headers, parts.uri.query());
     let cancel = lifetime.cancel.clone();
     let mut streaming = false;
     let outbound_body = if rewrite || decoded.is_some() {
@@ -646,24 +651,33 @@ async fn execute(
                 );
             }
         };
-        *record.streaming.lock().unwrap_or_else(|e| e.into_inner()) = value.as_object().map(|_| {
-            value
-                .get("stream")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        });
-        let models = match adapter::rewrite_model(&mut value, &plan.provider.model_aliases) {
-            Ok(m) => m,
-            Err(_) if !rewrite => None,
-            Err(e) => return fail(lifetime, e),
+        if !plan.protocol.is_gemini() {
+            *record.streaming.lock().unwrap_or_else(|e| e.into_inner()) =
+                value.as_object().map(|_| {
+                    value
+                        .get("stream")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                });
+        }
+        let models = if plan.protocol.is_gemini() {
+            None
+        } else {
+            match adapter::rewrite_model(&mut value, &plan.provider.model_aliases) {
+                Ok(m) => m,
+                Err(_) if !rewrite => None,
+                Err(e) => return fail(lifetime, e),
+            }
         };
         let mut changed = models
             .as_ref()
             .is_some_and(|(requested, resolved)| requested != resolved);
-        *record
-            .requested_model
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = models;
+        if !plan.protocol.is_gemini() {
+            *record
+                .requested_model
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = models;
+        }
         if let Some(route) = adapter_route {
             let Some(prompt_mode) = route.prompt_mode else {
                 return fail(
@@ -1095,8 +1109,8 @@ fn path_for_log(path: &str) -> String {
     logged
 }
 
-fn credentials(headers: &HeaderMap) -> Vec<String> {
-    ["authorization", "x-api-key", "api-key"]
+fn credentials(headers: &HeaderMap, query: Option<&str>) -> Vec<String> {
+    ["authorization", "x-api-key", "api-key", "x-goog-api-key"]
         .iter()
         .flat_map(|name| headers.get_all(*name).iter())
         .filter_map(|v| v.to_str().ok())
@@ -1107,6 +1121,11 @@ fn credentials(headers: &HeaderMap) -> Vec<String> {
             ]
         })
         .filter(|v| !v.is_empty())
+        .chain(
+            admission::query_keys(query)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.into_owned()),
+        )
         .collect()
 }
 fn identity_encoded(headers: &HeaderMap) -> bool {
@@ -1276,6 +1295,13 @@ impl ErrorPreview {
             error
                 .get(name)
                 .and_then(Value::as_str)
+                .or_else(|| {
+                    if name == "code" {
+                        error.get("status").and_then(Value::as_str)
+                    } else {
+                        None
+                    }
+                })
                 .map(|s| scrub(s, &self.secrets, 512))
                 .unwrap_or_default()
         };

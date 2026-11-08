@@ -269,21 +269,21 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
         COALESCE(SUM(usage_status='partial'),0) AS partial_usage,
         COALESCE(SUM((usage_status IS NULL OR usage_status='missing') AND outcome!='in_progress'),0) AS missing_usage,
         COALESCE(SUM(outcome='completed' AND upstream_protocol IN
-            ('openai_chat','openai_completions','openai_responses','anthropic_messages')),0) AS completed_generation_requests,
+            ('openai_chat','openai_completions','openai_responses','anthropic_messages','gemini_generate_content')),0) AS completed_generation_requests,
         COALESCE(SUM(outcome='completed' AND upstream_protocol IN
-            ('openai_chat','openai_completions','openai_responses','anthropic_messages')
+            ('openai_chat','openai_completions','openai_responses','anthropic_messages','gemini_generate_content')
             AND (usage_status IS NULL OR usage_status!='complete')),0) AS completed_usage_issues,
         AVG(CASE WHEN outcome!='in_progress' THEN duration_ms END) AS avg_duration_ms,
         AVG(CASE WHEN outcome!='in_progress' THEN first_body_byte_ms END) AS avg_first_byte_ms,
         COALESCE(SUM(CASE WHEN usage_status='complete' THEN input_tokens END),0) AS input_tokens,
         COALESCE(SUM(CASE WHEN usage_status='complete' THEN output_tokens END),0) AS output_tokens,
         COALESCE(SUM(CASE WHEN usage_status='complete' THEN total_tokens END),0) AS total_tokens,
-        COALESCE(SUM(usage_status='complete' AND cached_input_tokens IS NOT NULL
-            AND cached_input_tokens >= 0 AND cached_input_tokens <= input_tokens),0) AS cache_usage,
-        COALESCE(SUM(CASE WHEN usage_status='complete' AND cached_input_tokens >= 0
-            AND cached_input_tokens <= input_tokens THEN input_tokens END),0) AS cache_input_tokens,
-        COALESCE(SUM(CASE WHEN usage_status='complete' AND cached_input_tokens >= 0
-            AND cached_input_tokens <= input_tokens THEN cached_input_tokens END),0) AS cached_input_tokens,
+        COALESCE(SUM(usage_status='complete' AND cache_read_tokens IS NOT NULL
+            AND cache_read_tokens >= 0 AND cache_read_tokens <= input_tokens),0) AS cache_usage,
+        COALESCE(SUM(CASE WHEN usage_status='complete' AND cache_read_tokens >= 0
+            AND cache_read_tokens <= input_tokens THEN input_tokens END),0) AS cache_input_tokens,
+        COALESCE(SUM(CASE WHEN usage_status='complete' AND cache_read_tokens >= 0
+            AND cache_read_tokens <= input_tokens THEN cache_read_tokens END),0) AS cache_read_tokens,
         COALESCE(SUM(CASE WHEN usage_status='complete' THEN reasoning_tokens END),0) AS reasoning_tokens
         FROM requests WHERE {FILTER}"), &parameters)?.pop().unwrap();
     let start = filters.from_ms.unwrap();

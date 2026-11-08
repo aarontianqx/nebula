@@ -216,13 +216,13 @@ origin="http://127.0.0.1:1"
         (Some(-1), 0, 0, 0),
     ] {
         c.execute(
-            "UPDATE requests SET cached_input_tokens=?1 WHERE request_id=?2",
+            "UPDATE requests SET cache_read_tokens=?1 WHERE request_id=?2",
             params![cached, ids[0]],
         )
         .unwrap();
         // A partial response may contain a cache count but is not a complete sample.
         c.execute(
-            "UPDATE requests SET cached_input_tokens=20 WHERE request_id=?1",
+            "UPDATE requests SET cache_read_tokens=20 WHERE request_id=?1",
             [&ids[1]],
         )
         .unwrap();
@@ -230,7 +230,7 @@ origin="http://127.0.0.1:1"
         let measured: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(measured["summary"]["cache_usage"], samples);
         assert_eq!(measured["summary"]["cache_input_tokens"], denominator);
-        assert_eq!(measured["summary"]["cached_input_tokens"], hits);
+        assert_eq!(measured["summary"]["cache_read_tokens"], hits);
         assert_eq!(measured["summary"]["input_tokens"], 100);
     }
     assert_eq!(value["requests"].as_array().unwrap().len(), 2);
@@ -267,11 +267,18 @@ origin="http://127.0.0.1:1"
         serde_json::from_str::<Value>(&body).unwrap()["summary"]["requests"],
         0
     );
+    c.execute(
+        "UPDATE requests SET cache_read_tokens=80,cache_write_tokens=10 WHERE request_id=?1",
+        [&ids[0]],
+    )
+    .unwrap();
     let (_, _, body) = get(address, &format!("/api/requests/{}", ids[0]), "");
-    assert_eq!(
-        serde_json::from_str::<Value>(&body).unwrap()["error_message"],
-        "<img src=x onerror=alert(1)>"
-    );
+    let detail: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(detail["error_message"], "<img src=x onerror=alert(1)>");
+    assert_eq!(detail["cache_read_tokens"], 80);
+    assert_eq!(detail["cache_write_tokens"], 10);
+    assert!(detail.get("cached_input_tokens").is_none());
+    assert!(detail.get("cache_write_input_tokens").is_none());
     for path in [
         "/api/stats?from_ms=10&to_ms=1",
         "/api/stats?limit=101",

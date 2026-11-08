@@ -56,6 +56,7 @@ pub fn headers_allowed(
     protocol: Protocol,
     method: &Method,
     headers: &HeaderMap,
+    query: Option<&str>,
 ) -> bool {
     if !config.strict {
         return true;
@@ -80,10 +81,18 @@ pub fn headers_allowed(
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|s| !s.is_empty() && !s.chars().any(char::is_whitespace));
-    if config.require_auth && !(bearer || protocol == Protocol::AnthropicMessages && api_key) {
+    let google_key = (protocol.is_gemini() || protocol == Protocol::Models)
+        && (headers
+            .get("x-goog-api-key")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(valid_key)
+            || query_keys(query).any(|key| valid_key(&key)));
+    if config.require_auth
+        && !(bearer || protocol == Protocol::AnthropicMessages && api_key || google_key)
+    {
         return false;
     }
-    if protocol == Protocol::Models {
+    if matches!(protocol, Protocol::Models | Protocol::GeminiModels) {
         return *method == Method::GET;
     }
     let json = headers
@@ -103,6 +112,14 @@ pub fn headers_allowed(
             .get(header::CONTENT_ENCODING)
             .is_none_or(|s| s.as_bytes().eq_ignore_ascii_case(b"identity"))
 }
+fn valid_key(value: &str) -> bool {
+    !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+pub fn query_keys(query: Option<&str>) -> impl Iterator<Item = std::borrow::Cow<'_, str>> {
+    form_urlencoded::parse(query.unwrap_or("").as_bytes())
+        .filter(|(name, _)| name == "key")
+        .map(|(_, key)| key)
+}
 pub fn body_allowed(protocol: Protocol, value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
@@ -111,7 +128,7 @@ pub fn body_allowed(protocol: Protocol, value: &Value) -> bool {
         .get("model")
         .and_then(Value::as_str)
         .is_some_and(model_name);
-    if object.get("stream").is_some_and(|v| !v.is_boolean()) {
+    if !protocol.is_gemini() && object.get("stream").is_some_and(|v| !v.is_boolean()) {
         return false;
     }
     let messages = || {
@@ -136,6 +153,28 @@ pub fn body_allowed(protocol: Protocol, value: &Value) -> bool {
             })
     };
     match protocol {
+        Protocol::GeminiGenerateContent | Protocol::GeminiCountTokens => {
+            let request = if protocol == Protocol::GeminiCountTokens {
+                object.get("generateContentRequest").unwrap_or(value)
+            } else {
+                value
+            };
+            request
+                .get("contents")
+                .and_then(Value::as_array)
+                .is_some_and(|contents| {
+                    !contents.is_empty()
+                        && contents.iter().all(|content| {
+                            content.is_object()
+                                && content
+                                    .get("role")
+                                    .is_none_or(|role| role.as_str().is_some_and(|s| !s.is_empty()))
+                                && content.get("parts").and_then(Value::as_array).is_some_and(
+                                    |parts| !parts.is_empty() && parts.iter().all(Value::is_object),
+                                )
+                        })
+                })
+        }
         Protocol::OpenaiChat => valid_model && messages(),
         Protocol::AnthropicMessages => {
             valid_model
@@ -171,7 +210,7 @@ pub fn body_allowed(protocol: Protocol, value: &Value) -> bool {
                     v.is_string() || v.as_array().is_some_and(|a| a.iter().all(Value::is_object))
                 }) || continuation && !object.contains_key("input"))
         }
-        Protocol::Models => true,
+        Protocol::Models | Protocol::GeminiModels => true,
         Protocol::Raw => false,
     }
 }
@@ -180,6 +219,76 @@ pub fn body_allowed(protocol: Protocol, value: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn gemini_accepts_native_keys_and_content_parts_without_opening_other_protocols() {
+        let config = Admission {
+            strict: true,
+            ..Default::default()
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert("x-goog-api-key", "fixture-key".parse().unwrap());
+        assert!(headers_allowed(
+            &config,
+            Protocol::GeminiGenerateContent,
+            &Method::POST,
+            &headers,
+            None
+        ));
+        assert!(!headers_allowed(
+            &config,
+            Protocol::OpenaiChat,
+            &Method::POST,
+            &headers,
+            None
+        ));
+        headers.remove("x-goog-api-key");
+        assert!(headers_allowed(
+            &config,
+            Protocol::GeminiGenerateContent,
+            &Method::POST,
+            &headers,
+            Some("alt=sse&key=fixture%2Dkey")
+        ));
+        assert!(!headers_allowed(
+            &config,
+            Protocol::OpenaiChat,
+            &Method::POST,
+            &headers,
+            Some("key=fixture-key")
+        ));
+        for query in [
+            None,
+            Some("key="),
+            Some("key=%0A"),
+            Some("api_key=fixture-key"),
+        ] {
+            assert!(!headers_allowed(
+                &config,
+                Protocol::GeminiGenerateContent,
+                &Method::POST,
+                &headers,
+                query
+            ));
+        }
+        let contents = json!([{"parts":[{"text":"hello"},{"inlineData":{"mimeType":"image/png","data":"AA=="}},{"functionResponse":{"name":"tool","response":{"ok":true}}}]}]);
+        assert!(body_allowed(
+            Protocol::GeminiGenerateContent,
+            &json!({"contents":contents,"tools":[{"functionDeclarations":[]}],"generationConfig":{"temperature":0.7}})
+        ));
+        assert!(body_allowed(
+            Protocol::GeminiCountTokens,
+            &json!({"generateContentRequest":{"contents":contents}})
+        ));
+        for body in [
+            json!({"contents":[]}),
+            json!({"contents":[{"parts":[]}]}),
+            json!({"contents":[{"parts":["text"]}]}),
+            json!({"model":"fixture","messages":[{"role":"user","content":"hello"}]}),
+        ] {
+            assert!(!body_allowed(Protocol::GeminiGenerateContent, &body));
+        }
+    }
     #[test]
     fn strict_mode_bounds_admission_rate_without_restricting_permissive_mode() {
         let gate = Gate::new();
@@ -229,40 +338,46 @@ mod tests {
             &config,
             Protocol::OpenaiChat,
             &Method::POST,
-            &headers
+            &headers,
+            None
         ));
         headers.insert("x-api-key", "client-key".parse().unwrap());
         assert!(headers_allowed(
             &config,
             Protocol::AnthropicMessages,
             &Method::POST,
-            &headers
+            &headers,
+            None
         ));
         assert!(!headers_allowed(
             &config,
             Protocol::OpenaiChat,
             &Method::POST,
-            &headers
+            &headers,
+            None
         ));
         headers.insert("authorization", "Bearer client-key".parse().unwrap());
         assert!(headers_allowed(
             &config,
             Protocol::OpenaiChat,
             &Method::POST,
-            &headers
+            &headers,
+            None
         ));
         assert!(!headers_allowed(
             &config,
             Protocol::Raw,
             &Method::POST,
-            &headers
+            &headers,
+            None
         ));
         headers.insert("content-encoding", "gzip".parse().unwrap());
         assert!(!headers_allowed(
             &config,
             Protocol::OpenaiChat,
             &Method::POST,
-            &headers
+            &headers,
+            None
         ));
     }
 }

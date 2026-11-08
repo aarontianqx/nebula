@@ -5,6 +5,7 @@ const compact = new Intl.NumberFormat("zh-CN", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
+const compactNumber = (value) => (value == null ? "—" : compact.format(value));
 const date = (value, full = false) =>
   value == null
     ? "—"
@@ -214,23 +215,23 @@ function render() {
   setText("m-outcomes", outcomes.length ? ` · ${outcomes.join(" · ")}` : "");
   setText("m-duration", duration(s.avg_duration_ms));
   setText("m-ttfb", `平均首字节 ${duration(s.avg_first_byte_ms)}`);
-  setText("m-tokens", compact.format(s.total_tokens));
+  setText("m-tokens", compactNumber(s.total_tokens));
   $("m-tokens").title = n(s.total_tokens);
   setText(
     "m-cache",
-    `缓存输入 ${compact.format(s.cached_input_tokens)} / ${compact.format(s.cache_input_tokens)}`,
+    `缓存输入 ${compactNumber(s.cache_read_tokens)} / ${compactNumber(s.cache_input_tokens)}`,
   );
   $("m-cache").title =
-    `缓存读取 ${n(s.cached_input_tokens)} / 输入 ${n(s.cache_input_tokens)} token`;
+    `缓存读取 ${n(s.cache_read_tokens)} / 输入 ${n(s.cache_input_tokens)} token`;
   setText(
     "m-cache-rate",
     s.cache_input_tokens
-      ? `${((s.cached_input_tokens / s.cache_input_tokens) * 100).toFixed(1)}%`
+      ? `${((s.cache_read_tokens / s.cache_input_tokens) * 100).toFixed(1)}%`
       : "—",
   );
   setText(
     "m-token-split",
-    `输入 ${compact.format(s.input_tokens)} / 输出 ${compact.format(s.output_tokens)}`,
+    `输入 ${compactNumber(s.input_tokens)} / 输出 ${compactNumber(s.output_tokens)}`,
   );
   setText(
     "m-usage",
@@ -633,8 +634,8 @@ const sections = [
       "input_tokens",
       "output_tokens",
       "total_tokens",
-      "cached_input_tokens",
-      "cache_write_input_tokens",
+      "cache_read_tokens",
+      "cache_write_tokens",
       "reasoning_tokens",
     ],
   ],

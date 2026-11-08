@@ -88,7 +88,7 @@ SIGTERM/SIGINT 开始 drain，默认 grace=180 秒，停止接收新连接/请�
 - `limit` 默认 50、最大 100。后续页使用 `next_cursor` 中的 `before_ms`/`before_id`，按 started_at_ms/request_id 降序查询；分页时沿用相同时间窗口，避免新请求导致偏移分页重复。
 - `GET /api/requests/<request_id>`：单条完整审计记录，不提供原始抓取或配置内容。
 
-Token 汇总、趋势与模型分布只累加完整用量，缺失不作零估计；缓存与 reasoning 是输入/输出的子集。输入缓存命中率独立展示，为缓存字段有效的完整记录中，缓存读取 token 总数 / 输入 token 总数，按 token 加权，不是命中过缓存的请求占比。缓存字段为 NULL、负数或超过该条输入量时不参与分子或分母；显式 0 是有效未命中，输入总数为 0 时显示未知。主卡片显示命中率和缓存 token 数，有效样本条数留在折叠诊断中，避免把缺失字段当作 0。请求概览并排显示总请求和已完成数，字号相同；完成率为 completed / 已结束记录，作为辅助信息，取消、异常及进行中分别计数。失败、未完整结束、取消和中断计入未完成数。in_progress 单列，可能表示请求进行中，也可能是后台尚未完成更新。用量完整情况及缓存字段覆盖情况放在默认折叠的“统计诊断”中，不占主卡片。仅正常完成（completed）的已识别生成请求，用量部分或缺失时在 Token 卡片显示提示；取消、中断、失败、进行中及非生成接口（如 models/raw）没有用量不触发此提示。用量不完整表示缺少统计依据，也可能是上游未提供 usage，不自动判定为代理故障。每次看板查询使用同一 SQLite 读事务快照；记录异步写入，刷新后仍可能发生后续修正。
+Token 汇总、趋势与模型分布只累加完整用量，缺失不作零估计；缓存与 reasoning 是输入/输出的子集。输入缓存命中率独立展示，为缓存字段有效的完整记录中，缓存读取 token 总数 / 输入 token 总数，按 token 加权，不是命中过缓存的请求占比。缓存字段为 NULL、负数或超过该条输入量时不参与分子或分母；显式 0 是有效未命中，输入总数为 0 时显示未知。主卡片显示命中率和缓存 token 数，有效样本条数留在折叠诊断中，避免把缺失字段当作 0。请求概览并排显示总请求和已完成数，字号相同；完成率为 completed / 已结束记录，作为辅助信息，取消、异常及进行中分别计数。失败、未完整结束、取消和中断计入未完成数。in_progress 单列，可能表示请求进行中，也可能是后台尚未完成更新。用量完整情况及缓存字段覆盖情况放在默认折叠的“统计诊断”中，不占主卡片。仅正常完成（completed）的已识别生成请求，用量部分或缺失时在 Token 卡片显示提示；取消、中断、失败、进行中及非生成接口（如 models/raw/countTokens）没有用量不触发此提示。用量不完整表示缺少统计依据，也可能是上游未提供 usage，不自动判定为代理故障。每次看板查询使用同一 SQLite 读事务快照；记录异步写入，刷新后仍可能发生后续修正。
 
 SQLite 使用单独的只读连接和线程，`query_only=ON`，不访问上游。队列最多等待 8 个任务，单任务从入队开始最多 3 秒，SQLite progress handler 中断超时查询，锁等待最多 100ms；HTTP 等待最多 4 秒，满队列或失败返回 503。查询使用现有时间索引、有限返回量和 2 MiB SQLite page cache；大量历史查询仍会消耗共享磁盘/CPU，管理端口限制 64 个连接，不能作为无限并发分析接口。
 
@@ -148,12 +148,23 @@ max_total_bytes 默认 1 GiB，最小 64 KiB，按受管理 JSONL 的实际编�
 | 模型 | requested_model、别名后的 resolved_model、上游 response_model；无法提取时为空 |
 | 传输 | streaming、http_status/upstream_status、duration_ms、response_headers_ms、first_body_byte_ms、request_bytes/response_bytes |
 | 结果 | outcome、error_source/stage/code/message、finish_reason、response_status |
-| 用量 | input_tokens、output_tokens、total_tokens、cached_input_tokens、cache_write_input_tokens、reasoning_tokens、usage_json、usage_status |
+| 用量 | input_tokens、output_tokens、total_tokens、cache_read_tokens、cache_write_tokens、reasoning_tokens、usage_json、usage_status |
 | 观察质量 | observer_status、observer_error |
 
 不保存认证头、query、prompt/messages、工具参数、正常文本或 reasoning 内容。usage_json 仅保存允许列表中的数值字段及数值明细，未知扩展内容不会原样存储。错误摘要有界脱敏，但厂商错误仍可能包含业务信息，数据库应按私有数据管理。
 
-协议观察支持 OpenAI Chat/Completions/Responses 与 Anthropic Messages 的 JSON/SSE，只看 model、usage、结束标志和 error。不重写响应、不注入 stream_options；OpenAI 流若客户端未请求 include_usage，通常拿不到 token。Anthropic message_start/message_delta 的累计用量覆盖合并，不将每次 output_tokens 累加。统一 input_tokens 包含 Anthropic 普通输入、缓存读取和缓存写入；OpenAI 的 cached/reasoning 已包含在 input/output 内，不再加到 total。缺失值为 SQL NULL，不能当成 0。
+协议观察支持 OpenAI Chat/Completions/Responses、Anthropic Messages 与 Gemini GenerateContent 的 JSON/SSE，只看 model、usage、结束标志和 error。不重写响应、不注入 stream_options；OpenAI 流若客户端未请求 include_usage，通常拿不到 token。Anthropic message_start/message_delta 的累计用量覆盖合并，不将每次 output_tokens 累加。统一 input_tokens 包含 Anthropic 普通输入、缓存读取和缓存写入；OpenAI 的 cached/reasoning 已包含在 input/output 内，不再加到 total。缺失值为 SQL NULL，不能当成 0。
+
+用量按已识别的上游协议解析，再归一化到数据库和看板 API；不根据 provider 名称猜测字段。下表中的字段位于 `usage`，Gemini 位于 `usageMetadata`：
+
+| 协议 | 输入 / 输出 | cache_read_tokens | cache_write_tokens |
+| --- | --- | --- | --- |
+| OpenAI Chat / Completions | prompt_tokens / completion_tokens | prompt_tokens_details.cached_tokens | prompt_tokens_details.cache_write_tokens |
+| OpenAI Responses | input_tokens / output_tokens | input_tokens_details.cached_tokens | input_tokens_details.cache_write_tokens |
+| Anthropic Messages | input_tokens + cache_read_input_tokens + cache_creation_input_tokens / output_tokens | cache_read_input_tokens | cache_creation_input_tokens |
+| Gemini GenerateContent | promptTokenCount + toolUsePromptTokenCount / candidatesTokenCount + thoughtsTokenCount | cachedContentTokenCount | 未提供，保留 NULL |
+
+缓存读取和写入是输入的细分计数，不再加到 total_tokens；Anthropic 仅在归一化输入时相加。usage_json 保留允许列表中的原始字段名，不随数据库列重命名。数据库 schema v2 在启动时通过事务将 v1 的 cached_input_tokens/cache_write_input_tokens 重命名为 cache_read_tokens/cache_write_tokens，保留历史值和 NULL；旧版程序不支持 v2 数据库，不能仅替换旧二进制来回退。
 
 usage_status 为 complete / partial / missing：complete 需要输入输出均已知、观察到协议终结且传输正常完成；取消、截断或观察失败时保留已收到的计数并标 partial，完全没有用量为 missing。complete 仅表示已观察到完整计数，不证明模型计费准确。usage_json 保留原口径，便于核对归一化结果。
 

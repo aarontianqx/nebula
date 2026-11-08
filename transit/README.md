@@ -2,7 +2,7 @@
 
 Transit 是位于客户端与模型服务之间的 HTTP 代理，主要部署在 Linux，也可在 macOS 运行。普通路径流式透传，指定路径执行协议转换；调用 key 始终由客户端维护。
 
-当前提供 provider 路由、默认 provider、模型别名、配置热加载，以及 Zed Edit Prediction 的 Completions → Chat 转换。提供可选的 SQLite 请求审计、OpenAI/Anthropic 用量观察及严格准入过滤。运行日志按 UTC 日滚动，默认保留 14 天；SQLite 审计默认保留 90 天，只保存元数据和用量，不估算费用。排障时可独立开启原始请求/响应抓取，默认关闭。
+当前提供 provider 路由、默认 provider、模型别名、配置热加载，以及 Zed Edit Prediction 的 Completions → Chat 转换。提供可选的 SQLite 请求审计、OpenAI/Anthropic/Gemini 用量观察及严格准入过滤。运行日志按 UTC 日滚动，默认保留 14 天；SQLite 审计默认保留 90 天，只保存元数据和用量，不估算费用。排障时可独立开启原始请求/响应抓取，默认关闭。
 
 ## 构建与启动
 
@@ -65,6 +65,12 @@ Edit Prediction 独立配置：
 
 在普通代码文件中输入后等待预测，或在命令面板执行 `editor: show edit prediction`，出现建议后按 Tab 接受。Edit Prediction 的认证仍在 Zed 侧配置。infer 依赖 Zed 对模型名的识别，自定义别名应显式指定格式；详见 [Zed 转换](specs/features/zed_edit.md)。
 
+## Gemini 原生协议
+
+客户端的 base URL 可填 `http://服务器地址:8787/gemini`，SDK 在其后追加 `/v1beta/models/<model>:generateContent` 或 `:streamGenerateContent`；手动调用流式接口时使用 `?alt=sse`。确保客户端保留 `/gemini` 前缀，不要重复追加 API 版本。
+
+参考配置中的独立 Gemini provider 和 `/gemini` 前缀路由；上游须实际支持 Gemini 原生协议，可以替换为其他原生协议渠道。调用侧维护 key，支持 `x-goog-api-key`、query `key` 或 Bearer 认证，按原值透传。请求使用 `contents`，模型来自 URL，不转换为 OpenAI messages。支持生成、流式生成、countTokens 和模型列表/详情；文件上传、Live/WebSocket 等不在当前严格准入范围内。详情及 Token 统计口径见[路由与协议](specs/features/routing.md#gemini-原生协议)。
+
 ## 健康与日志
 
 ```bash
@@ -91,7 +97,7 @@ expose_health = false
 requests_per_second = 60
 ```
 
-审计默认写入 `${XDG_STATE_HOME:-$HOME/.local/state}/transit/transit.sqlite3`。记录请求时间、path、provider、模型、耗时、状态、错误和上游 reported usage。支持 OpenAI Chat/Completions/Responses 与 Anthropic Messages 的 JSON/SSE；支持旁路解压 gzip、deflate、Brotli、Zstd，并根据少量内容识别错误 Content-Type 的 JSON/SSE。响应与抓取仍保留上游原字节。
+审计默认写入 `${XDG_STATE_HOME:-$HOME/.local/state}/transit/transit.sqlite3`。记录请求时间、path、provider、模型、耗时、状态、错误和上游 reported usage。支持 OpenAI Chat/Completions/Responses、Anthropic Messages 和 Gemini GenerateContent 的 JSON/SSE；支持旁路解压 gzip、deflate、Brotli、Zstd，并根据少量内容识别错误 Content-Type 的 JSON/SSE。响应与抓取仍保留上游原字节。
 
 解压和协议解析使用独立的两线程运行时，SQLite 使用独立写线程；模型请求不等待起始记录提交或最终统计。队列满、超限或写入失败只降低统计完整性，不阻止转发或使 ready 失败；日志及健康计数报告缺失原因。记录可能稍晚出现或更新，极端拥堵、强杀时可能丢失；这是一套尽力记录的统计机制。必要的准入检查、模型改写和协议转换仍在调用链路内执行。
 

@@ -11,8 +11,8 @@ pub struct Observation {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
-    pub cached_input_tokens: Option<u64>,
-    pub cache_write_input_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
     pub usage_json: Option<String>,
     pub usage_status: String,
@@ -224,11 +224,44 @@ impl Observer {
             value
         };
         if let Some(model) = object
-            .get("model")
+            .get(if self.protocol == Protocol::GeminiGenerateContent {
+                "modelVersion"
+            } else {
+                "model"
+            })
             .and_then(Value::as_str)
             .filter(|m| model_name(m))
         {
             self.result.response_model = Some(scrub(model, &self.secrets, 256));
+        }
+        if self.protocol == Protocol::GeminiGenerateContent {
+            if let Some(usage) = object.get("usageMetadata").and_then(Value::as_object) {
+                for key in [
+                    "promptTokenCount",
+                    "candidatesTokenCount",
+                    "totalTokenCount",
+                    "cachedContentTokenCount",
+                    "thoughtsTokenCount",
+                    "toolUsePromptTokenCount",
+                ] {
+                    if let Some(number) = usage
+                        .get(key)
+                        .filter(|v| v.as_u64().is_some_and(|n| n <= i64::MAX as u64))
+                    {
+                        self.usage.insert(key.into(), number.clone());
+                        self.saw_usage = true;
+                    }
+                }
+            }
+            if let Some(reason) = object
+                .pointer("/candidates/0/finishReason")
+                .or_else(|| object.pointer("/promptFeedback/blockReason"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                self.result.finish_reason = Some(scrub(reason, &self.secrets, 128));
+                self.terminal = true;
+            }
         }
         // Only numeric usage fields are retained: arbitrary provider extensions may contain user data.
         if let Some(usage) = object.get("usage").and_then(Value::as_object) {
@@ -317,11 +350,15 @@ impl Observer {
                 .get("code")
                 .and_then(Value::as_str)
                 .or_else(|| error.get("type").and_then(Value::as_str))
+                .or_else(|| error.get("status").and_then(Value::as_str))
                 .map(|s| scrub(s, &self.secrets, 128));
             self.result.error_message = error
                 .get("message")
                 .and_then(Value::as_str)
                 .map(|s| scrub(s, &self.secrets, 512));
+            if self.protocol == Protocol::GeminiGenerateContent {
+                self.terminal = true;
+            }
         }
         if self.result.response_status.as_deref() == Some("failed")
             && self.result.error_source.is_none()
@@ -342,11 +379,21 @@ impl Observer {
         let get = |key: &str| u.get(key).and_then(Value::as_u64);
         let detail = |path: &str| u.pointer(path).and_then(Value::as_u64);
         match self.protocol {
+            Protocol::GeminiGenerateContent => {
+                self.result.input_tokens = get("promptTokenCount")
+                    .and_then(|n| n.checked_add(get("toolUsePromptTokenCount").unwrap_or(0)))
+                    .filter(|n| *n <= i64::MAX as u64);
+                self.result.reasoning_tokens = get("thoughtsTokenCount");
+                self.result.output_tokens = get("candidatesTokenCount")
+                    .and_then(|n| n.checked_add(self.result.reasoning_tokens.unwrap_or(0)))
+                    .filter(|n| *n <= i64::MAX as u64);
+                self.result.cache_read_tokens = get("cachedContentTokenCount");
+            }
             Protocol::OpenaiChat | Protocol::OpenaiCompletions => {
                 self.result.input_tokens = get("prompt_tokens");
                 self.result.output_tokens = get("completion_tokens");
-                self.result.cached_input_tokens = detail("/prompt_tokens_details/cached_tokens");
-                self.result.cache_write_input_tokens =
+                self.result.cache_read_tokens = detail("/prompt_tokens_details/cached_tokens");
+                self.result.cache_write_tokens =
                     detail("/prompt_tokens_details/cache_write_tokens");
                 self.result.reasoning_tokens =
                     detail("/completion_tokens_details/reasoning_tokens");
@@ -354,24 +401,28 @@ impl Observer {
             Protocol::OpenaiResponses => {
                 self.result.input_tokens = get("input_tokens");
                 self.result.output_tokens = get("output_tokens");
-                self.result.cached_input_tokens = detail("/input_tokens_details/cached_tokens");
-                self.result.cache_write_input_tokens =
-                    detail("/input_tokens_details/cache_write_tokens");
+                self.result.cache_read_tokens = detail("/input_tokens_details/cached_tokens");
+                self.result.cache_write_tokens = detail("/input_tokens_details/cache_write_tokens");
                 self.result.reasoning_tokens = detail("/output_tokens_details/reasoning_tokens");
             }
             Protocol::AnthropicMessages => {
-                self.result.cached_input_tokens = get("cache_read_input_tokens");
-                self.result.cache_write_input_tokens = get("cache_creation_input_tokens");
+                self.result.cache_read_tokens = get("cache_read_input_tokens");
+                self.result.cache_write_tokens = get("cache_creation_input_tokens");
                 self.result.input_tokens = get("input_tokens")
-                    .and_then(|base| base.checked_add(self.result.cached_input_tokens.unwrap_or(0)))
-                    .and_then(|n| n.checked_add(self.result.cache_write_input_tokens.unwrap_or(0)))
+                    .and_then(|base| base.checked_add(self.result.cache_read_tokens.unwrap_or(0)))
+                    .and_then(|n| n.checked_add(self.result.cache_write_tokens.unwrap_or(0)))
                     .filter(|n| *n <= i64::MAX as u64);
                 self.result.output_tokens = get("output_tokens");
                 self.result.reasoning_tokens = detail("/output_tokens_details/thinking_tokens");
             }
             _ => {}
         }
-        self.result.total_tokens = get("total_tokens").or_else(|| {
+        self.result.total_tokens = get(if self.protocol == Protocol::GeminiGenerateContent {
+            "totalTokenCount"
+        } else {
+            "total_tokens"
+        })
+        .or_else(|| {
             self.result
                 .input_tokens
                 .zip(self.result.output_tokens)
@@ -387,6 +438,17 @@ impl Observer {
         if !self.failed && matches!(self.format, Format::Json) && !self.buffer.is_empty() {
             let bytes = std::mem::take(&mut self.buffer);
             match serde_json::from_slice::<Value>(&bytes) {
+                Ok(Value::Array(values)) if self.protocol == Protocol::GeminiGenerateContent => {
+                    for value in values {
+                        self.value(&value, true);
+                        if self.failed {
+                            break;
+                        }
+                    }
+                    if transport_complete && !self.terminal && !self.failed {
+                        self.degrade("missing_terminal_event");
+                    }
+                }
                 Ok(v) => self.value(&v, false),
                 Err(_) => self.degrade("invalid_or_truncated_json"),
             }
@@ -428,6 +490,46 @@ impl Observer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gemini_json_sse_and_json_array_usage_include_thinking_without_double_counting() {
+        let first = serde_json::json!({"modelVersion":"fixture-native","candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":1}});
+        let last = serde_json::json!({"modelVersion":"fixture-native","candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":20,"thoughtsTokenCount":5,"toolUsePromptTokenCount":3,"cachedContentTokenCount":60,"totalTokenCount":128,"privateExtension":"fixture-secret"}});
+        for body in [
+            last.to_string(),
+            format!("data: {first}\n\ndata: {last}\n\n"),
+            serde_json::json!([first, last]).to_string(),
+        ] {
+            let mut o = observer(Protocol::GeminiGenerateContent);
+            o.headers("application/json", true);
+            for part in body.as_bytes().chunks(3) {
+                o.bytes(part);
+            }
+            let r = o.finish(true);
+            assert_eq!(r.input_tokens, Some(103));
+            assert_eq!(r.output_tokens, Some(25));
+            assert_eq!(r.total_tokens, Some(128));
+            assert_eq!(r.cache_read_tokens, Some(60));
+            assert_eq!(r.cache_write_tokens, None);
+            assert_eq!(r.reasoning_tokens, Some(5));
+            assert_eq!(r.finish_reason.as_deref(), Some("STOP"));
+            assert_eq!(r.response_model.as_deref(), Some("fixture-native"));
+            assert_eq!(r.usage_status, "complete");
+            assert!(!r.usage_json.unwrap().contains("privateExtension"));
+        }
+        let mut o = observer(Protocol::GeminiGenerateContent);
+        o.headers("text/event-stream", true);
+        o.bytes(format!("data: {first}\n\n").as_bytes());
+        let r = o.finish(true);
+        assert_eq!(r.usage_status, "partial");
+        assert_eq!(r.observer_error.as_deref(), Some("missing_terminal_event"));
+        let mut o = observer(Protocol::GeminiGenerateContent);
+        o.headers("text/event-stream", true);
+        o.bytes(b"data: {\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"retry fixture-secret\"}}\n\n");
+        let r = o.finish(true);
+        assert_eq!(r.error_code.as_deref(), Some("RESOURCE_EXHAUSTED"));
+        assert!(!r.error_message.unwrap().contains("fixture-secret"));
+        assert!(r.observer_error.is_none());
+    }
     use serde_json::json;
     fn observer(protocol: Protocol) -> Observer {
         Observer::new(protocol, &Audit::default(), vec!["fixture-secret".into()])
@@ -440,25 +542,65 @@ mod tests {
     }
     #[test]
     fn chat_usage_does_not_double_count_cached_or_reasoning_tokens() {
-        let mut o = observer(Protocol::OpenaiChat);
-        o.headers("text/event-stream", true);
-        sse(
-            &mut o,
-            json!({"choices":[{"delta":{"content":"private response"}}],"usage":null}),
-        );
-        sse(
-            &mut o,
-            json!({"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":80},"completion_tokens_details":{"reasoning_tokens":12},"custom":"private input"}}),
-        );
-        o.bytes(b"data: [DONE]\n\n");
-        let r = o.finish(true);
-        assert_eq!(r.input_tokens, Some(100));
-        assert_eq!(r.output_tokens, Some(20));
-        assert_eq!(r.total_tokens, Some(120));
-        assert_eq!(r.reasoning_tokens, Some(12));
-        assert_eq!(r.cached_input_tokens, Some(80));
-        assert_eq!(r.usage_status, "complete");
-        assert!(!serde_json::to_string(&r).unwrap().contains("private"));
+        for protocol in [Protocol::OpenaiChat, Protocol::OpenaiCompletions] {
+            let mut o = observer(protocol);
+            o.headers("text/event-stream", true);
+            sse(
+                &mut o,
+                json!({"choices":[{"delta":{"content":"private response"}}],"usage":null}),
+            );
+            sse(
+                &mut o,
+                json!({"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":12},"custom":"private input"}}),
+            );
+            o.bytes(b"data: [DONE]\n\n");
+            let r = o.finish(true);
+            assert_eq!(r.input_tokens, Some(100));
+            assert_eq!(r.output_tokens, Some(20));
+            assert_eq!(r.total_tokens, Some(120));
+            assert_eq!(r.reasoning_tokens, Some(12));
+            assert_eq!(r.cache_read_tokens, Some(80));
+            assert_eq!(r.cache_write_tokens, Some(10));
+            assert_eq!(r.usage_status, "complete");
+            assert!(!serde_json::to_string(&r).unwrap().contains("private"));
+        }
+    }
+    #[test]
+    fn responses_json_and_sse_use_input_details_and_preserve_unknown_and_zero_cache_writes() {
+        for write in [None, Some(0), Some(10)] {
+            let mut response = json!({"status":"completed","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120,"input_tokens_details":{"cached_tokens":80},"output_tokens_details":{"reasoning_tokens":12}}});
+            if let Some(write) = write {
+                response["usage"]["input_tokens_details"]["cache_write_tokens"] = json!(write);
+            }
+            for streaming in [false, true] {
+                let mut o = observer(Protocol::OpenaiResponses);
+                o.headers("application/json", true);
+                if streaming {
+                    sse(
+                        &mut o,
+                        json!({"type":"response.completed","response":response}),
+                    );
+                } else {
+                    o.bytes(response.to_string().as_bytes());
+                }
+                let r = o.finish(true);
+                assert_eq!(r.input_tokens, Some(100));
+                assert_eq!(r.output_tokens, Some(20));
+                assert_eq!(r.total_tokens, Some(120));
+                assert_eq!(r.cache_read_tokens, Some(80));
+                assert_eq!(r.cache_write_tokens, write);
+                assert_eq!(r.reasoning_tokens, Some(12));
+                assert_eq!(r.usage_status, "complete");
+                let stored = serde_json::to_value(&r).unwrap();
+                assert!(stored.get("cached_input_tokens").is_none());
+                assert!(stored.get("cache_write_input_tokens").is_none());
+                let usage: Value = serde_json::from_str(r.usage_json.as_ref().unwrap()).unwrap();
+                assert_eq!(
+                    usage["input_tokens_details"]["cache_write_tokens"].as_u64(),
+                    write
+                );
+            }
+        }
     }
     #[test]
     fn anthropic_cumulative_updates_merge_and_input_includes_cache() {
@@ -482,6 +624,8 @@ mod tests {
         assert_eq!(r.input_tokens, Some(60));
         assert_eq!(r.output_tokens, Some(7));
         assert_eq!(r.total_tokens, Some(67));
+        assert_eq!(r.cache_read_tokens, Some(30));
+        assert_eq!(r.cache_write_tokens, Some(20));
         assert_eq!(r.usage_status, "complete");
         assert_eq!(r.finish_reason.as_deref(), Some("end_turn"));
     }

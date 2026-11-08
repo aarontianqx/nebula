@@ -14,6 +14,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+const SCHEMA_VERSION: i64 = 2;
+
 const FIELDS: &[(&str, &str)] = &[
     ("request_id", "TEXT PRIMARY KEY"),
     ("started_at_ms", "INTEGER NOT NULL"),
@@ -50,8 +52,8 @@ const FIELDS: &[(&str, &str)] = &[
     ("input_tokens", "INTEGER"),
     ("output_tokens", "INTEGER"),
     ("total_tokens", "INTEGER"),
-    ("cached_input_tokens", "INTEGER"),
-    ("cache_write_input_tokens", "INTEGER"),
+    ("cache_read_tokens", "INTEGER"),
+    ("cache_write_tokens", "INTEGER"),
     ("reasoning_tokens", "INTEGER"),
     ("usage_json", "TEXT"),
 ];
@@ -195,33 +197,21 @@ pub fn open(
     lock.try_lock_exclusive()
         .map_err(|_| "audit database is already in use")?;
     drop(private_file(&path)?);
-    let connection = Connection::open(&path).map_err(|_| "cannot open SQLite audit database")?;
+    let mut connection =
+        Connection::open(&path).map_err(|_| "cannot open SQLite audit database")?;
     connection
         .busy_timeout(Duration::from_secs(2))
         .map_err(|_| "cannot set SQLite busy timeout")?;
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|_| "cannot read audit schema version")?;
-    if version > 1 {
+    if version > SCHEMA_VERSION {
         return Err("unsupported audit schema version".into());
     }
     connection
         .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")
         .map_err(|_| "cannot configure SQLite WAL")?;
-    let definitions = FIELDS
-        .iter()
-        .map(|(name, kind)| format!("{name} {kind}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    connection
-        .execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS requests ({definitions});
-        CREATE INDEX IF NOT EXISTS requests_time ON requests(started_at_ms);
-        CREATE INDEX IF NOT EXISTS requests_provider_time ON requests(provider,started_at_ms);
-        CREATE INDEX IF NOT EXISTS requests_model_time ON requests(resolved_model,started_at_ms);
-        PRAGMA user_version=1;"
-        ))
-        .map_err(|_| "cannot initialize audit schema")?;
+    initialize_schema(&mut connection, version)?;
     connection.execute("UPDATE requests SET outcome='interrupted',finished_at_ms=?1,error_source='local',error_code='service_interrupted',usage_status=CASE WHEN usage_json IS NULL THEN 'missing' ELSE 'partial' END WHERE outcome='in_progress'",[now_ms()]).map_err(|_|"cannot recover interrupted audit requests")?;
     cleanup(&connection, settings.retention_days).map_err(|_| "cannot apply audit retention")?;
     let (sender, mut receiver) = mpsc::channel(2 * max_in_flight + 64);
@@ -290,6 +280,37 @@ pub fn open(
         },
     )))
 }
+fn initialize_schema(connection: &mut Connection, version: i64) -> Result<(), String> {
+    let transaction = connection
+        .transaction()
+        .map_err(|_| "cannot start audit schema transaction")?;
+    if version == 1 {
+        transaction
+            .execute_batch(
+                "ALTER TABLE requests RENAME COLUMN cached_input_tokens TO cache_read_tokens;
+                 ALTER TABLE requests RENAME COLUMN cache_write_input_tokens TO cache_write_tokens;",
+            )
+            .map_err(|_| "cannot migrate audit cache token columns")?;
+    }
+    let definitions = FIELDS
+        .iter()
+        .map(|(name, kind)| format!("{name} {kind}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    transaction
+        .execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS requests ({definitions});
+             CREATE INDEX IF NOT EXISTS requests_time ON requests(started_at_ms);
+             CREATE INDEX IF NOT EXISTS requests_provider_time ON requests(provider,started_at_ms);
+             CREATE INDEX IF NOT EXISTS requests_model_time ON requests(resolved_model,started_at_ms);
+             PRAGMA user_version={SCHEMA_VERSION};"
+        ))
+        .map_err(|_| "cannot initialize audit schema")?;
+    transaction
+        .commit()
+        .map_err(|_| "cannot commit audit schema transaction".into())
+}
+
 fn cleanup(connection: &Connection, days: u64) -> rusqlite::Result<usize> {
     let cutoff = now_ms().saturating_sub((days * 86400 * 1000).min(i64::MAX as u64) as i64);
     connection.execute(
@@ -302,6 +323,130 @@ fn cleanup(connection: &Connection, days: u64) -> rusqlite::Result<usize> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn legacy_cache_columns_migrate_without_losing_values_and_remain_writable() {
+        let dir = std::env::temp_dir().join(format!("transit-audit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let settings = Audit {
+            enabled: true,
+            database: Some(dir.join("requests.sqlite3")),
+            ..Default::default()
+        };
+        let reader = Connection::open(settings.database.as_ref().unwrap()).unwrap();
+        let definitions = FIELDS
+            .iter()
+            .map(|(name, kind)| {
+                let name = match *name {
+                    "cache_read_tokens" => "cached_input_tokens",
+                    "cache_write_tokens" => "cache_write_input_tokens",
+                    name => name,
+                };
+                format!("{name} {kind}")
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        reader
+            .execute_batch(&format!(
+                "CREATE TABLE requests ({definitions}); PRAGMA user_version=1;"
+            ))
+            .unwrap();
+        let usage = r#"{"input_tokens_details":{"cached_tokens":10,"cache_write_tokens":20}}"#;
+        for (id, read, write) in [
+            ("positive", Some(10), Some(20)),
+            ("zero", Some(0), Some(0)),
+            ("missing", None, None),
+        ] {
+            reader.execute(
+                "INSERT INTO requests(request_id,started_at_ms,outcome,cached_input_tokens,cache_write_input_tokens,usage_json) VALUES(?1,?2,'completed',?3,?4,?5)",
+                rusqlite::params![id, now_ms(), read, write, usage],
+            ).unwrap();
+        }
+        let (log, guard) = open(&settings, 2).unwrap().unwrap();
+        let ticket = log
+            .begin(json!({"request_id":"new","started_at_ms":now_ms(),"outcome":"in_progress"}))
+            .unwrap();
+        ticket.finish(json!({"request_id":"new","outcome":"completed","cache_read_tokens":30,"cache_write_tokens":40}));
+        drop(log);
+        guard.shutdown().await;
+        // Reopening must neither repeat the rename nor replace existing values.
+        let (log, guard) = open(&settings, 2).unwrap().unwrap();
+        drop(log);
+        guard.shutdown().await;
+        assert_eq!(
+            reader
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
+        for (id, read, write) in [
+            ("positive", Some(10), Some(20)),
+            ("zero", Some(0), Some(0)),
+            ("missing", None, None),
+            ("new", Some(30), Some(40)),
+        ] {
+            assert_eq!(
+                reader.query_row(
+                    "SELECT cache_read_tokens,cache_write_tokens FROM requests WHERE request_id=?1",
+                    [id],
+                    |row| Ok((row.get::<_,Option<i64>>(0)?, row.get::<_,Option<i64>>(1)?)),
+                ).unwrap(),
+                (read, write),
+            );
+        }
+        assert_eq!(
+            reader
+                .query_row(
+                    "SELECT usage_json FROM requests WHERE request_id='positive'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            usage
+        );
+        let columns = {
+            let mut statement = reader.prepare("PRAGMA table_info(requests)").unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect::<Vec<_>>()
+        };
+        assert!(!columns.iter().any(|name| matches!(
+            name.as_str(),
+            "cached_input_tokens" | "cache_write_input_tokens"
+        )));
+        drop(reader);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_cache_migration_rolls_back_all_column_renames() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE requests(cached_input_tokens INTEGER); PRAGMA user_version=1;",
+            )
+            .unwrap();
+        assert!(initialize_schema(&mut connection, 1).is_err());
+        assert!(
+            connection
+                .prepare("SELECT cached_input_tokens FROM requests")
+                .is_ok()
+        );
+        assert!(
+            connection
+                .prepare("SELECT cache_read_tokens FROM requests")
+                .is_err()
+        );
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn storage_failures_do_not_block_admission_and_recovery_is_visible() {
         let dir = std::env::temp_dir().join(format!("transit-audit-{}", uuid::Uuid::new_v4()));

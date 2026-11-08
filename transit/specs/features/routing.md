@@ -32,11 +32,11 @@ origin 只接受 HTTP/HTTPS scheme 和 authority，不允许用户名、密码�
 /v1/messages
 ```
 
-adapter 路径及通过 route.protocol 声明的自定义生成接口也应用所选 provider 的映射。其它 endpoint、multipart、query/path 内的模型名不改写。
+adapter 路径及通过 route.protocol 声明的自定义生成接口也应用所选 provider 的映射。Gemini 原生接口的模型别名作用于 URL 的 models 资源名；其它 endpoint、multipart 或 query 内的模型名不改写。
 
 配置了别名的 provider 在这些 endpoint 上要求未压缩的 JSON 对象，读取受 server.max_rewrite_bytes 和上传上限约束；不满足时返回 400/413/415，不静默跳过。顶层 model 如存在，必须是 1～256 字节字符串，字符限于 ASCII 字母、数字及 `-_.:/@+`。普通映射不补缺失 model，adapter 另行要求 model。
 
-未命中别名时保留原 JSON 字节；命中时重序列化，只替换顶层 model，保留其它字段、顺序和数字精度。依赖原始 body 签名的请求不能透明改写，应为其配置不做映射的 provider。
+未命中别名时保留原 JSON 字节；命中时重序列化，只替换顶层 model，保留其它字段、顺序和数字精度。Gemini 使用路径别名时不重写 body。依赖原始 body 签名的请求不能透明改写，应为其配置不做映射的 provider。
 
 ## 上游请求配置
 
@@ -73,7 +73,7 @@ request_profile = "edit_prediction"
 
 ## 认证与 HTTP 保真边界
 
-客户端的 Authorization、x-api-key 等端到端认证头按原值转发，无任何 provider key、环境变量 key 或 key 池配置。请求不会因重定向或 fallback 被带去另一个 provider。
+客户端的 Authorization、x-api-key、x-goog-api-key 等端到端认证头按原值转发，无任何 provider key、环境变量 key 或 key 池配置。请求不会因重定向或 fallback 被带去另一个 provider。
 
 | 项目 | 行为 |
 | --- | --- |
@@ -114,8 +114,13 @@ request_profile = "edit_prediction"
 | POST /v1/completions | openai_completions |
 | POST /v1/responses | openai_responses |
 | POST /v1/messages | anthropic_messages |
-| GET /v1/models | models |
+| GET /v1/models | models（OpenAI/Gemini 共享路径） |
+| POST /v1beta/models/<model>:generateContent 或 :streamGenerateContent | gemini_generate_content |
+| POST /v1beta/models/<model>:countTokens | gemini_count_tokens |
+| GET /v1beta/models 或 /v1beta/models/<model> | gemini_models |
 | 其它 | raw |
+
+Gemini 路径也识别 `/v1`、`/v1alpha` 版本前缀；模型资源名限 1–256 字节的 ASCII 字母、数字及 `-_.`，不接受嵌套资源、编码斜杠、点路径或未知 action。
 
 base_path 只是上游路径前缀，不影响识别。adapter 自动声明客户端 completions、上游 chat。自定义 endpoint 可在精确 method/path 路由声明 protocol；upstream_protocol 默认相同，二者只决定准入/观察语义，不自动转换请求或响应。需要跨协议转换时仍须 adapter。
 
@@ -135,12 +140,28 @@ protocol/upstream_protocol 不支持前缀或省略 method 的路由，避免一
 admission.strict=true 时，在上游连接前检查：
 
 - 只允许上表中的接口或显式声明协议的精确路由；raw、CONNECT、Upgrade 和无效请求目标返回空 404。
-- 默认要求非空 Bearer 认证；Anthropic Messages 也接受 x-api-key。不保存或校验上游 key，不添加独立服务 key。
+- 默认要求非空 Bearer 认证；Anthropic Messages 也接受 x-api-key；Gemini 接受 x-goog-api-key 或 query key，共享的 GET /v1/models 同样接受 Gemini key。不保存或校验上游 key，不添加独立服务 key。
 - 生成接口要求未压缩 application/json 或 +json 对象，stream 如存在必须为布尔值。Chat 要求 model 和非空 messages（role、content 或工具调用结构）；Anthropic 另要求正整数 max_tokens；Completions 要求 model 和 prompt；Responses 接受 input 或 previous_response_id 的续接结构。保留未知扩展字段，不验证模型能力、工具 schema 或所有嵌套语义。
-- GET /v1/models 要求空 body。JSON 读取受 max_rewrite_bytes/max_upload_bytes 约束，adapter 使用路由请求上限；超限、无效 JSON 或基本结构不符也返回空 404。
+- Gemini 的 contents/parts 需为非空数组，各 part 为对象；role 可省略，不对工具调用、图片或其它 part 内容做深度 schema 验证。countTokens 同时接受 contents 和 generateContentRequest.contents。模型列表/详情 GET 要求空 body。JSON 读取受 max_rewrite_bytes/max_upload_bytes 约束，adapter 使用路由请求上限；超限、无效 JSON 或基本结构不符也返回空 404。
 - 全局每秒最多接纳 requests_per_second 次准入尝试，采用固定一秒窗口，超限同样返回 404。连接/请求并发与空闲超时仍独立生效。
 - 健康接口默认隐藏；expose_health=true 时允许 GET，响应无需认证，因此只应在受控网络暴露。
 
 准入拒绝不附 Transit ID、不写逐请求审计记录；每 10 秒汇总拒绝数。HTTP parser 在应用之前拒绝的畸形请求可能表现为 HTTP 库错误或连接关闭。strict=false 时维持默认 provider 的宽松透传，认证头检查、协议 allowlist 和准入速率限制均关闭。
 
 这些规则能过滤普通扫描，但不能阻止仿造合法 LLM JSON 的请求。公网私有服务的访问权限、TLS、IP 限流应在入口控制，不能把空 404 当作身份认证。
+
+## Gemini 原生协议
+
+`/gemini` 是可配置的 provider 路由前缀，不是写死的厂商入口。示例剥离前缀后，把 `/v1beta/models/<model>:streamGenerateContent?alt=sse` 发给配置的原生上游；default_provider 继续负责其它未匹配路径。前缀路由本身不会做 OpenAI ↔ Gemini 转换；相同 endpoint 是否支持多种协议取决于上游。
+
+- model 和 streaming 从 URL 提取，不要求 JSON 顶层 model/stream；contents、systemInstruction、tools、toolConfig、generationConfig 和多模态 parts 等字段保持原字节。仅检查基本结构，不验证厂商支持的模型或 generationConfig 参数。
+- provider.model_aliases 精确替换 URL 中的模型段，适用于生成、countTokens 和单个模型详情；目标作为单个路径段编码，不允许插入路径或 query。响应 modelVersion 保留原值，列表不合成别名。countTokens.generateContentRequest 内的嵌套 model 字段不改写，调用侧使用该形式时须确保与路径的真实模型一致。
+- query 按原字节转发，包括 key、alt=sse、分页参数等；日志和审计的 path 不含 query，认证头不写入抓取元数据。Google key 纳入错误摘要脱敏。原始正文抓取仍属于私有数据，不保证清理正文中回显的 key。
+- SSE 不要求 OpenAI 的 [DONE]，观察器使用 candidates[0].finishReason 或 promptFeedback.blockReason 识别结束。非 SSE 的 JSON 响应及流式 JSON 数组也可有界观察；数组在响应结束后解析，超限仅降低统计完整性。网络响应始终按上游字节流转发，不等待统计。
+- 观察 modelVersion、finishReason、usageMetadata，以及 error.status/message；HTTP 错误和流内错误原样返回客户端，后台记录受限错误摘要，不把未知业务字段写入 SQLite。
+- 输入为 promptTokenCount + toolUsePromptTokenCount（如提供），其中已包含 cachedContentTokenCount，不重复加缓存；输出为 candidatesTokenCount + thoughtsTokenCount（如提供），reasoning 单独记录为输出子集。totalTokenCount 优先采用上游值，缺失时按完整输入/输出求和；流内累计字段覆盖更新，不逐块求和。缺失关键字段保留未知，不猜测为 0。
+- countTokens 是输入预估，不计作实际生成用量；模型目录同样不产生用量统计告警。未提供 usage 的正常生成请求仍在看板中提示统计缺失。
+
+当前不支持协议互转、Vertex AI 项目/区域资源路径、文件/缓存管理、批处理或 Live/WebSocket；严格模式对此类未识别接口仍返回空 404，宽松模式维持默认透传。
+
+协议参考：[GenerateContent](https://aistudio.google.com/api-reference/generate-content/generate-content)、[流式生成](https://aistudio.google.com/api-reference/generate-content/stream-generate-content)、[countTokens](https://aistudio.google.com/api-reference/tokens/count-tokens)、[API key](https://ai.google.dev/gemini-api/docs/api-key)。

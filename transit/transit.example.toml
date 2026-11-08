@@ -92,6 +92,17 @@ remove = ["temperature", "reasoning_effort"]
 origin = "https://secondary.example.com"
 base_path = "/gateway"
 
+# Native Gemini provider: replace origin if using a compatible gateway.
+[providers.gemini]
+origin = "https://generativelanguage.googleapis.com"
+base_path = ""
+
+[[routes]]
+id = "gemini-direct"
+path_prefix = "/gemini"
+strip_prefix = true
+provider = "gemini"
+
 [[routes]]
 id = "secondary-direct"
 path_prefix = "/secondary"
