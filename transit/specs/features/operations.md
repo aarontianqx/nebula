@@ -36,6 +36,8 @@ Unix 新建私有目录权限 0700，文件 0600，不改写已有目录/文件�
 | WARN | 上游 4xx、本地参数拒绝、无效 reload、容量拒绝、无法分类的连接失败、清理失败、reasoning-only 空补全 |
 | ERROR | 上游 5xx、连接/超时、转换/截断、内部任务或日志基础设施错误 |
 
+准入拒绝逐条记录 INFO `admission_rejected`，包含 method、request_path、status=404 和 reason；路径不含 query/scheme/host、不解码，最多保留 1024 个字符，超出追加 `...[truncated]`。reason 区分未识别协议、认证格式、方法、Content-Type、压缩、限流、无效 JSON、基本结构、body 读取/大小限制及隐藏的健康接口，不记录认证值、headers 或 body。拒绝仍不写审计表、不向客户端附加请求 ID；每 10 秒另以 `admission_rejections` 汇总（含隐藏健康接口）。逐条事件受 logging.level 控制，日志只能保存在私有目录。
+
 request_id 是 Transit 生成的 UUID，经 X-Transit-Request-Id 返回。日志按需包含 provider、rule_id、config_generation、method、adapter、请求/实际模型、状态、outcome、error_code、stage、耗时、首个上游 body 字节时间和上下行字节数。request_started 还记录选中的 request_profile 名称，不输出 profile 参数值。request_started/request_finished 均记录 request_path（客户端入口）和 upstream_path（应用前缀剥离、base_path 或路径覆盖后的上游路径），不含 query、scheme、host；不解码路径，每个字段最多保留 1024 个字符，超出追加 ...[truncated]。历史日志没有这些字段，不能补全过去的路径统计。
 
 adapter 成功响应仅有 reasoning、没有补全文本时记录 WARN empty_completion，携带 request_id、reason=reasoning_only 和 streaming，不记录 reasoning 正文；该请求仍按 completed 记录，不计为转换失败。普通透传响应不解析此条件。

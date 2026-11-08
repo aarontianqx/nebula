@@ -160,6 +160,92 @@ fn rows(service: &Service) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn message_extensions_pass_admission_unchanged_while_invalid_envelopes_stay_local() {
+    let body = r#"{ "model":"fixture-model", "messages":[{"role":"system","tools":[{"type":"function","function":{"name":"fixture_tool","parameters":{"type":"object"}}}]},{"kind":"future_extension","payload":{"x":true}},{"role":"assistant","content":null,"reasoning_content":"fixture reasoning"}], "max_tokens":16, "stream":true }"#;
+    let expected: Value = serde_json::from_str(body).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = listener.local_addr().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let stream = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    let app = Router::new().fallback(move |request: Request<Body>| {
+        let expected = expected.clone();
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::Relaxed);
+            assert!(matches!(
+                request.uri().path(),
+                "/v1/chat/completions" | "/v1/messages" | "/vendor/chat"
+            ));
+            let raw = to_bytes(request.into_body(), 4096).await.unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&raw).unwrap(), expected);
+            // The first three requests do not map a model and must retain the original bytes.
+            if count.load(Ordering::Relaxed) <= 3 {
+                assert_eq!(raw.as_ref(), body.as_bytes());
+            }
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from(stream))
+                .unwrap()
+        }
+    });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let directory = std::env::temp_dir().join(format!(
+        "transit-message-extensions-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let (service, base) = start(upstream, directory).await;
+    let auth = Some(("authorization", "Bearer fixture-secret"));
+    for path in ["/v1/chat/completions", "/anthropic/v1/messages", "/custom"] {
+        let (status, _, response) = call(&base, "POST", path, body, auth).await;
+        assert_eq!(status, 200, "extension rejected at {path}");
+        assert_eq!(response, stream);
+    }
+    let mut mapped: Value = serde_json::from_str(body).unwrap();
+    mapped["model"] = json!("chat-latest");
+    assert_eq!(
+        call(
+            &base,
+            "POST",
+            "/v1/chat/completions",
+            &mapped.to_string(),
+            auth
+        )
+        .await
+        .0,
+        200
+    );
+    for invalid in [
+        json!([]),
+        json!({"messages":[{}]}),
+        json!({"model":23,"messages":[{}]}),
+        json!({"model":"fixture-model"}),
+        json!({"model":"fixture-model","messages":[]}),
+        json!({"model":"fixture-model","messages":{}}),
+        json!({"model":"fixture-model","messages":[null]}),
+        json!({"model":"fixture-model","messages":["text"]}),
+        json!({"model":"fixture-model","messages":[{}],"stream":"true"}),
+    ] {
+        let (status, headers, response) = call(
+            &base,
+            "POST",
+            "/v1/chat/completions",
+            &invalid.to_string(),
+            auth,
+        )
+        .await;
+        assert_eq!(status, 404);
+        assert!(response.is_empty());
+        assert!(!headers.contains_key("x-transit-request-id"));
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+    drop(service);
+    server.abort();
+}
+
+#[tokio::test]
 async fn gemini_native_routing_auth_streams_errors_and_usage_are_preserved() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream = listener.local_addr().unwrap();
@@ -443,6 +529,69 @@ async fn strict_admission_never_forwards_probes_and_audit_observes_without_rewri
             .0,
         404
     );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    assert!(rows(&service).is_empty());
+    let query_secret = "fixture-rejected-query-secret";
+    for path in [
+        format!("/blocked?key={query_secret}"),
+        format!("/{}?key={query_secret}", "a".repeat(1300)),
+    ] {
+        let (status, headers, body) = call(&base, "POST", &path, &chat, auth).await;
+        assert_eq!(status, 404);
+        assert!(body.is_empty());
+        assert!(!headers.contains_key("x-transit-request-id"));
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let rejected = loop {
+        let events: Vec<Value> = fs::read_dir(service.directory.join("logs"))
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
+            .flat_map(|entry| {
+                fs::read_to_string(entry.path())
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .filter(|event| event["fields"]["event"] == "admission_rejected")
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if events.len() == 11 {
+            break events;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "missing rejection logs"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    for (path, reason) in [
+        ("/.env", "unsupported_protocol"),
+        ("/_transit/health/ready", "health_hidden_or_method"),
+        ("/v1/chat/completions", "missing_or_invalid_auth"),
+        ("/v1/chat/completions", "invalid_json"),
+        ("/v1/chat/completions", "invalid_body_envelope"),
+        ("/v1/chat/completions", "request_too_large"),
+        ("/v1/models", "request_too_large"),
+        ("/blocked", "unsupported_protocol"),
+    ] {
+        assert!(
+            rejected.iter().any(|event| {
+                event["fields"]["request_path"] == path && event["fields"]["reason"] == reason
+            }),
+            "missing {path} / {reason}"
+        );
+    }
+    assert!(rejected.iter().all(|event| {
+        event["fields"]["status"] == 404 && event["fields"]["method"].is_string()
+    }));
+    assert!(rejected.iter().any(|event| {
+        event["fields"]["request_path"] == format!("/{}...[truncated]", "a".repeat(1023))
+    }));
+    let rejected_json = serde_json::to_string(&rejected).unwrap();
+    for private in ["fixture-secret", query_secret, "private input", "?key="] {
+        assert!(!rejected_json.contains(private));
+    }
     assert_eq!(calls.load(Ordering::Relaxed), 0);
     assert!(rows(&service).is_empty());
     let (status, _, body) = call(

@@ -109,17 +109,28 @@ fn not_found() -> Response<Body> {
         .body(Body::empty())
         .expect("static HTTP response")
 }
-async fn live(State(app): State<Arc<App>>, method: Method) -> Response<Body> {
+fn reject_admission(app: &App, method: &Method, uri: &Uri, reason: &str) -> Response<Body> {
+    app.gate.reject();
+    tracing::info!(
+        event = "admission_rejected",
+        method = %method,
+        request_path = %path_for_log(uri.path()),
+        status = 404,
+        reason,
+    );
+    not_found()
+}
+async fn live(State(app): State<Arc<App>>, method: Method, uri: Uri) -> Response<Body> {
     if !health_allowed(&app, &method) {
-        return not_found();
+        return reject_admission(&app, &method, &uri, "health_hidden_or_method");
     }
     Json(
         json!({"status":"alive","logging_degraded":app.logs.health.degraded.load(Ordering::Relaxed),"log_write_failures":app.logs.health.failures.load(Ordering::Relaxed),"log_events_dropped":app.logs.dropped.dropped_lines(),"capture_enabled":app.capture.settings.read().unwrap_or_else(|e|e.into_inner()).enabled,"capture_degraded":app.capture.is_degraded(),"capture_failures":app.capture.health.failures.load(Ordering::Relaxed),"audit_enabled":app.audit.is_some(),"audit_degraded":app.audit.as_ref().is_some_and(|a|a.is_degraded()),"audit_write_failures":app.audit.as_ref().map_or(0,|a|a.health.failures.load(Ordering::Relaxed)),"audit_dropped_records":app.audit.as_ref().map_or(0,|a|a.health.dropped_records.load(Ordering::Relaxed)),"observation_active":app.observations.as_ref().map_or(0,|o|o.health.active.load(Ordering::Relaxed)),"observation_skipped":app.observations.as_ref().map_or(0,|o|o.health.skipped.load(Ordering::Relaxed)),"observation_failures":app.observations.as_ref().map_or(0,|o|o.health.failures.load(Ordering::Relaxed)),"admission_rejected":app.gate.rejected.load(Ordering::Relaxed)}),
     ).into_response()
 }
-async fn ready(State(app): State<Arc<App>>, method: Method) -> Response<Body> {
+async fn ready(State(app): State<Arc<App>>, method: Method, uri: Uri) -> Response<Body> {
     if !health_allowed(&app, &method) {
-        return not_found();
+        return reject_admission(&app, &method, &uri, "health_hidden_or_method");
     }
     let snapshot = app
         .snapshot
@@ -334,17 +345,17 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     let preplan = snapshot.config.plan(request.method(), request.uri().path());
-    if !app.gate.rate_allowed(&snapshot.config.admission)
-        || !admission::headers_allowed(
-            &snapshot.config.admission,
-            preplan.protocol,
-            request.method(),
-            request.headers(),
-            request.uri().query(),
-        )
-    {
-        app.gate.reject();
-        return not_found();
+    if !app.gate.rate_allowed(&snapshot.config.admission) {
+        return reject_admission(&app, request.method(), request.uri(), "rate_limit");
+    }
+    if let Some(reason) = admission::headers_rejection(
+        &snapshot.config.admission,
+        preplan.protocol,
+        request.method(),
+        request.headers(),
+        request.uri().query(),
+    ) {
+        return reject_admission(&app, request.method(), request.uri(), reason);
     }
     let request_started = Instant::now();
     let started_at_ms = audit::now_ms();
@@ -372,8 +383,12 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
         || uri.path().contains('\\')
     {
         if snapshot.config.admission.strict {
-            app.gate.reject();
-            return not_found();
+            return reject_admission(
+                &app,
+                request.method(),
+                request.uri(),
+                "invalid_request_target",
+            );
         }
         tracing::warn!(event="request_rejected",request_id=%id,error_code="invalid_request_target");
         return identify(
@@ -402,9 +417,8 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
         .await
         {
             Ok(_) => {}
-            Err(_) => {
-                app.gate.reject();
-                return not_found();
+            Err(error) => {
+                return reject_admission(&app, request.method(), request.uri(), error.code);
             }
         }
     }
@@ -428,16 +442,22 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
         .await
         {
             Ok(raw) => raw,
-            Err(_) => {
-                app.gate.reject();
-                return not_found();
+            Err(error) => {
+                return reject_admission(&app, request.method(), request.uri(), error.code);
             }
         };
         let value = match serde_json::from_slice::<Value>(&raw) {
             Ok(value) if admission::body_allowed(plan.protocol, &value) => value,
-            _ => {
-                app.gate.reject();
-                return not_found();
+            Ok(_) => {
+                return reject_admission(
+                    &app,
+                    request.method(),
+                    request.uri(),
+                    "invalid_body_envelope",
+                );
+            }
+            Err(_) => {
+                return reject_admission(&app, request.method(), request.uri(), "invalid_json");
             }
         };
         decoded = Some((raw, value));

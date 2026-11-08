@@ -141,12 +141,12 @@ admission.strict=true 时，在上游连接前检查：
 
 - 只允许上表中的接口或显式声明协议的精确路由；raw、CONNECT、Upgrade 和无效请求目标返回空 404。
 - 默认要求非空 Bearer 认证；Anthropic Messages 也接受 x-api-key；Gemini 接受 x-goog-api-key 或 query key，共享的 GET /v1/models 同样接受 Gemini key。不保存或校验上游 key，不添加独立服务 key。
-- 生成接口要求未压缩 application/json 或 +json 对象，stream 如存在必须为布尔值。Chat 要求 model 和非空 messages（role、content 或工具调用结构）；Anthropic 另要求正整数 max_tokens；Completions 要求 model 和 prompt；Responses 接受 input 或 previous_response_id 的续接结构。保留未知扩展字段，不验证模型能力、工具 schema 或所有嵌套语义。
+- 生成接口要求未压缩 application/json 或 +json 对象，stream 如存在必须为布尔值。Chat 和 Anthropic 要求合法 model 和非空 messages 对象数组，不校验消息内部 role/content/tools 等字段的类型、取值或组合，允许无 content 的工具定义消息及未知扩展，由上游判断语义是否有效；Anthropic 另要求正整数 max_tokens。Completions 要求 model 和 prompt；Responses 接受 input 或 previous_response_id 的续接结构。准入只识别协议外壳，不承担完整 schema 校验；需要显式转换的 adapter 仍独立校验转换所必需的字段。
 - Gemini 的 contents/parts 需为非空数组，各 part 为对象；role 可省略，不对工具调用、图片或其它 part 内容做深度 schema 验证。countTokens 同时接受 contents 和 generateContentRequest.contents。模型列表/详情 GET 要求空 body。JSON 读取受 max_rewrite_bytes/max_upload_bytes 约束，adapter 使用路由请求上限；超限、无效 JSON 或基本结构不符也返回空 404。
 - 全局每秒最多接纳 requests_per_second 次准入尝试，采用固定一秒窗口，超限同样返回 404。连接/请求并发与空闲超时仍独立生效。
 - 健康接口默认隐藏；expose_health=true 时允许 GET，响应无需认证，因此只应在受控网络暴露。
 
-准入拒绝不附 Transit ID、不写逐请求审计记录；每 10 秒汇总拒绝数。HTTP parser 在应用之前拒绝的畸形请求可能表现为 HTTP 库错误或连接关闭。strict=false 时维持默认 provider 的宽松透传，认证头检查、协议 allowlist 和准入速率限制均关闭。
+准入拒绝不附 Transit ID、不写逐请求审计记录；运行日志逐条以 INFO admission_rejected 记录 method、request_path、status=404 和 reason（不含 query/认证/body，路径有界截断），每 10 秒另汇总拒绝数。HTTP parser 在应用之前拒绝的畸形请求可能表现为 HTTP 库错误或连接关闭。strict=false 时维持默认 provider 的宽松透传，认证头检查、协议 allowlist 和准入速率限制均关闭。
 
 这些规则能过滤普通扫描，但不能阻止仿造合法 LLM JSON 的请求。公网私有服务的访问权限、TLS、IP 限流应在入口控制，不能把空 404 当作身份认证。
 

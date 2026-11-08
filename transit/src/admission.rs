@@ -51,21 +51,21 @@ impl Gate {
         }
     }
 }
-pub fn headers_allowed(
+pub fn headers_rejection(
     config: &Admission,
     protocol: Protocol,
     method: &Method,
     headers: &HeaderMap,
     query: Option<&str>,
-) -> bool {
+) -> Option<&'static str> {
     if !config.strict {
-        return true;
+        return None;
     }
-    if protocol == Protocol::Raw
-        || headers.contains_key(header::UPGRADE)
-        || *method == Method::CONNECT
-    {
-        return false;
+    if protocol == Protocol::Raw {
+        return Some("unsupported_protocol");
+    }
+    if headers.contains_key(header::UPGRADE) || *method == Method::CONNECT {
+        return Some("unsupported_transport");
     }
     let bearer = headers
         .get(header::AUTHORIZATION)
@@ -90,10 +90,10 @@ pub fn headers_allowed(
     if config.require_auth
         && !(bearer || protocol == Protocol::AnthropicMessages && api_key || google_key)
     {
-        return false;
+        return Some("missing_or_invalid_auth");
     }
     if matches!(protocol, Protocol::Models | Protocol::GeminiModels) {
-        return *method == Method::GET;
+        return (*method != Method::GET).then_some("invalid_method");
     }
     let json = headers
         .get(header::CONTENT_TYPE)
@@ -106,11 +106,19 @@ pub fn headers_allowed(
                 .to_ascii_lowercase()
         })
         .is_some_and(|s| s == "application/json" || s.ends_with("+json"));
-    *method == Method::POST
-        && json
-        && headers
-            .get(header::CONTENT_ENCODING)
-            .is_none_or(|s| s.as_bytes().eq_ignore_ascii_case(b"identity"))
+    if *method != Method::POST {
+        return Some("invalid_method");
+    }
+    if !json {
+        return Some("invalid_content_type");
+    }
+    if headers
+        .get(header::CONTENT_ENCODING)
+        .is_some_and(|s| !s.as_bytes().eq_ignore_ascii_case(b"identity"))
+    {
+        return Some("unsupported_content_encoding");
+    }
+    None
 }
 fn valid_key(value: &str) -> bool {
     !value.is_empty() && !value.chars().any(|c| c.is_whitespace() || c.is_control())
@@ -135,22 +143,8 @@ pub fn body_allowed(protocol: Protocol, value: &Value) -> bool {
         object
             .get("messages")
             .and_then(Value::as_array)
-            .is_some_and(|a| {
-                !a.is_empty()
-                    && a.iter().all(|m| {
-                        m.is_object()
-                            && m.get("role")
-                                .and_then(Value::as_str)
-                                .is_some_and(|s| !s.is_empty())
-                            && (m
-                                .get("content")
-                                .is_some_and(|v| v.is_string() || v.is_array())
-                                || protocol == Protocol::OpenaiChat
-                                    && (m.get("tool_calls").is_some_and(Value::is_array)
-                                        || m.get("function_call").is_some_and(Value::is_object)
-                                        || m.get("refusal").is_some_and(Value::is_string)))
-                    })
-            })
+            // Admission recognizes an LLM envelope; message semantics belong to the upstream.
+            .is_some_and(|a| !a.is_empty() && a.iter().all(Value::is_object))
     };
     match protocol {
         Protocol::GeminiGenerateContent | Protocol::GeminiCountTokens => {
@@ -228,48 +222,57 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
         headers.insert("x-goog-api-key", "fixture-key".parse().unwrap());
-        assert!(headers_allowed(
-            &config,
-            Protocol::GeminiGenerateContent,
-            &Method::POST,
-            &headers,
-            None
-        ));
-        assert!(!headers_allowed(
-            &config,
-            Protocol::OpenaiChat,
-            &Method::POST,
-            &headers,
-            None
-        ));
+        assert!(
+            headers_rejection(
+                &config,
+                Protocol::GeminiGenerateContent,
+                &Method::POST,
+                &headers,
+                None
+            )
+            .is_none()
+        );
+        assert!(
+            headers_rejection(&config, Protocol::OpenaiChat, &Method::POST, &headers, None)
+                .is_some()
+        );
         headers.remove("x-goog-api-key");
-        assert!(headers_allowed(
-            &config,
-            Protocol::GeminiGenerateContent,
-            &Method::POST,
-            &headers,
-            Some("alt=sse&key=fixture%2Dkey")
-        ));
-        assert!(!headers_allowed(
-            &config,
-            Protocol::OpenaiChat,
-            &Method::POST,
-            &headers,
-            Some("key=fixture-key")
-        ));
+        assert!(
+            headers_rejection(
+                &config,
+                Protocol::GeminiGenerateContent,
+                &Method::POST,
+                &headers,
+                Some("alt=sse&key=fixture%2Dkey")
+            )
+            .is_none()
+        );
+        assert!(
+            headers_rejection(
+                &config,
+                Protocol::OpenaiChat,
+                &Method::POST,
+                &headers,
+                Some("key=fixture-key")
+            )
+            .is_some()
+        );
         for query in [
             None,
             Some("key="),
             Some("key=%0A"),
             Some("api_key=fixture-key"),
         ] {
-            assert!(!headers_allowed(
-                &config,
-                Protocol::GeminiGenerateContent,
-                &Method::POST,
-                &headers,
-                query
-            ));
+            assert!(
+                headers_rejection(
+                    &config,
+                    Protocol::GeminiGenerateContent,
+                    &Method::POST,
+                    &headers,
+                    query
+                )
+                .is_some()
+            );
         }
         let contents = json!([{"parts":[{"text":"hello"},{"inlineData":{"mimeType":"image/png","data":"AA=="}},{"functionResponse":{"name":"tool","response":{"ok":true}}}]}]);
         assert!(body_allowed(
@@ -334,50 +337,35 @@ mod tests {
         };
         let mut headers = HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
-        assert!(!headers_allowed(
-            &config,
-            Protocol::OpenaiChat,
-            &Method::POST,
-            &headers,
-            None
-        ));
+        assert!(
+            headers_rejection(&config, Protocol::OpenaiChat, &Method::POST, &headers, None)
+                .is_some()
+        );
         headers.insert("x-api-key", "client-key".parse().unwrap());
-        assert!(headers_allowed(
-            &config,
-            Protocol::AnthropicMessages,
-            &Method::POST,
-            &headers,
-            None
-        ));
-        assert!(!headers_allowed(
-            &config,
-            Protocol::OpenaiChat,
-            &Method::POST,
-            &headers,
-            None
-        ));
+        assert!(
+            headers_rejection(
+                &config,
+                Protocol::AnthropicMessages,
+                &Method::POST,
+                &headers,
+                None
+            )
+            .is_none()
+        );
+        assert!(
+            headers_rejection(&config, Protocol::OpenaiChat, &Method::POST, &headers, None)
+                .is_some()
+        );
         headers.insert("authorization", "Bearer client-key".parse().unwrap());
-        assert!(headers_allowed(
-            &config,
-            Protocol::OpenaiChat,
-            &Method::POST,
-            &headers,
-            None
-        ));
-        assert!(!headers_allowed(
-            &config,
-            Protocol::Raw,
-            &Method::POST,
-            &headers,
-            None
-        ));
+        assert!(
+            headers_rejection(&config, Protocol::OpenaiChat, &Method::POST, &headers, None)
+                .is_none()
+        );
+        assert!(headers_rejection(&config, Protocol::Raw, &Method::POST, &headers, None).is_some());
         headers.insert("content-encoding", "gzip".parse().unwrap());
-        assert!(!headers_allowed(
-            &config,
-            Protocol::OpenaiChat,
-            &Method::POST,
-            &headers,
-            None
-        ));
+        assert!(
+            headers_rejection(&config, Protocol::OpenaiChat, &Method::POST, &headers, None)
+                .is_some()
+        );
     }
 }
