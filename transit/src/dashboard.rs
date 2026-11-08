@@ -23,6 +23,46 @@ use std::{
 use tokio::sync::oneshot;
 
 const WINDOW_MS: i64 = 366 * 86_400_000;
+const BUCKET_MINUTES: [i64; 14] = [
+    1, 2, 5, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 7200, 14400,
+];
+
+#[derive(Debug)]
+struct Timeline {
+    from_ms: i64,
+    to_ms: i64,
+    bucket_ms: i64,
+}
+impl Timeline {
+    fn new(start: i64, end: i64, utc_offset_minutes: i32) -> Self {
+        let offset_ms = i64::from(utc_offset_minutes) * 60_000;
+        BUCKET_MINUTES
+            .into_iter()
+            .map(|minutes| {
+                let bucket_ms = minutes * 60_000;
+                // Align to wall-clock boundaries using the browser's UTC offset.
+                // The multi-day grid is anchored at local 1970-01-01 midnight.
+                let remainder = (start.rem_euclid(bucket_ms) + offset_ms).rem_euclid(bucket_ms);
+                let from_ms = start - remainder;
+                let count = (end - from_ms + bucket_ms - 1) / bucket_ms;
+                Self {
+                    from_ms,
+                    to_ms: from_ms + count * bucket_ms,
+                    bucket_ms,
+                }
+            })
+            .min_by_key(|timeline| {
+                let count = (timeline.to_ms - timeline.from_ms) / timeline.bucket_ms;
+                let distance = if count < 20 {
+                    20 - count
+                } else {
+                    (count - 30).max(0)
+                };
+                (distance, (count - 25).abs(), timeline.bucket_ms)
+            })
+            .expect("bucket intervals are nonempty")
+    }
+}
 const MODEL: &str = "COALESCE(response_model,resolved_model,requested_model)";
 const FILTER: &str = "started_at_ms >= ?1 AND started_at_ms < ?2
     AND (?3 IS NULL OR provider = ?3)
@@ -52,6 +92,7 @@ enum Read {
 pub struct Filters {
     from_ms: Option<i64>,
     to_ms: Option<i64>,
+    utc_offset_minutes: Option<i32>,
     provider: Option<String>,
     model: Option<String>,
     path: Option<String>,
@@ -64,8 +105,18 @@ impl Filters {
     fn validate(&mut self) -> Result<(), &'static str> {
         let end = self.to_ms.unwrap_or_else(crate::audit::now_ms);
         let start = self.from_ms.unwrap_or(end.saturating_sub(86_400_000));
-        if start < 0 || end <= start || end.saturating_sub(start) > WINDOW_MS {
+        if start < 0
+            || end <= start
+            || end.saturating_sub(start) > WINDOW_MS
+            || end > i64::MAX - 10 * 86_400_000
+        {
             return Err("时间范围须为 1 毫秒至 366 天");
+        }
+        if self
+            .utc_offset_minutes
+            .is_some_and(|offset| !(-840..=840).contains(&offset))
+        {
+            return Err("无效的 UTC 时区偏移");
         }
         self.from_ms = Some(start);
         self.to_ms = Some(end);
@@ -288,10 +339,11 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
         FROM requests WHERE {FILTER}"), &parameters)?.pop().unwrap();
     let start = filters.from_ms.unwrap();
     let end = filters.to_ms.unwrap();
-    let bucket_ms = (((end - start) / 48 + 59_999) / 60_000 * 60_000).max(60_000);
+    let timeline = Timeline::new(start, end, filters.utc_offset_minutes.unwrap_or(0));
     let mut series_parameters = parameters.clone();
-    series_parameters.push(bucket_ms.into());
-    let series = rows(&transaction,&format!("SELECT ((started_at_ms-?1)/?7)*?7+?1 AS time_ms,
+    series_parameters.push(timeline.from_ms.into());
+    series_parameters.push(timeline.bucket_ms.into());
+    let series = rows(&transaction,&format!("SELECT ((started_at_ms-?7)/?8)*?8+?7 AS time_ms,
         COUNT(*) AS requests,COALESCE(SUM(outcome IN ('failed','incomplete','cancelled','interrupted')),0) AS unsuccessful,
         COALESCE(SUM(CASE WHEN usage_status='complete' THEN total_tokens END),0) AS total_tokens
         FROM requests WHERE {FILTER} GROUP BY time_ms ORDER BY time_ms"),&series_parameters)?;
@@ -336,7 +388,9 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
     transaction.commit()?;
     Ok(
         json!({"summary":summary,"series":series,"groups":groups,"requests":requests,"next_cursor":cursor,
-        "from_ms":start,"to_ms":end,"bucket_ms":bucket_ms,"generated_at_ms":crate::audit::now_ms(),
+        "from_ms":start,"to_ms":end,"bucket_ms":timeline.bucket_ms,
+        "chart_from_ms":timeline.from_ms,"chart_to_ms":timeline.to_ms,
+        "utc_offset_minutes":filters.utc_offset_minutes.unwrap_or(0),"generated_at_ms":crate::audit::now_ms(),
         "options":{"providers":option_rows.iter().map(|r| &r["value"]).collect::<Vec<_>>(),
         "models":model_rows.iter().map(|r| &r["value"]).collect::<Vec<_>>(),
         "paths":path_rows.iter().map(|r| &r["value"]).collect::<Vec<_>>()}}),
@@ -440,4 +494,54 @@ async fn private_headers(request: Request, next: Next) -> Response {
         );
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const MINUTE: i64 = 60_000;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+
+    #[test]
+    fn common_windows_use_stable_intervals_near_twenty_to_thirty_bars() {
+        let end = 500 * DAY + 12 * HOUR + 48 * MINUTE;
+        for (span, bucket, count) in [
+            (HOUR, 2 * MINUTE, 30),
+            (DAY, HOUR, 25),
+            (7 * DAY, 6 * HOUR, 29),
+            (30 * DAY, DAY, 31),
+        ] {
+            let timeline = Timeline::new(end - span, end, 480);
+            assert_eq!(timeline.bucket_ms, bucket);
+            assert_eq!((timeline.to_ms - timeline.from_ms) / bucket, count);
+        }
+        let original = Timeline::new(end - DAY, end, 480);
+        let refreshed = Timeline::new(end - DAY + MINUTE, end + MINUTE, 480);
+        assert_eq!(original.from_ms, refreshed.from_ms);
+        assert_eq!(original.to_ms, refreshed.to_ms);
+    }
+
+    #[test]
+    fn buckets_align_to_local_boundaries_and_include_only_intersecting_periods() {
+        let end = 500 * DAY + 12 * HOUR + 48 * MINUTE;
+        for offset in [-840, -210, 0, 330, 345, 480, 840] {
+            for span in [1, HOUR, DAY, 3 * DAY, 30 * DAY, WINDOW_MS] {
+                let start = end - span;
+                let timeline = Timeline::new(start, end, offset);
+                let shift = i64::from(offset) * MINUTE;
+                assert_eq!((timeline.from_ms + shift).rem_euclid(timeline.bucket_ms), 0);
+                assert_eq!((timeline.to_ms + shift).rem_euclid(timeline.bucket_ms), 0);
+                assert!(timeline.from_ms <= start && start < timeline.from_ms + timeline.bucket_ms);
+                assert!(timeline.to_ms - timeline.bucket_ms < end && end <= timeline.to_ms);
+            }
+        }
+        let aligned_end = 500 * DAY + 13 * HOUR;
+        let exact = Timeline::new(aligned_end - DAY, aligned_end, 480);
+        assert_eq!(exact.to_ms, aligned_end);
+        assert_eq!(exact.from_ms, aligned_end - DAY);
+        let partial = Timeline::new(end - DAY, end, 480);
+        assert_eq!(partial.to_ms, aligned_end);
+        assert_eq!(partial.to_ms - partial.bucket_ms, 500 * DAY + 12 * HOUR);
+    }
 }

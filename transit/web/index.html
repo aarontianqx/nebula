@@ -59,36 +59,14 @@
           /></label>
         </div>
         <div class="filter-fields">
+          <label>PROVIDER<input id="provider" type="hidden" /></label>
           <label
-            >PROVIDER<select id="provider">
-              <option value="">全部 provider</option>
-            </select></label
-          >
+            >模型<input id="model" placeholder="全部模型" autocomplete="off"
+          /></label>
           <label
-            >模型<input
-              id="model"
-              list="models"
-              placeholder="全部模型"
-              autocomplete="off" /><datalist id="models"></datalist
-          ></label>
-          <label
-            >请求路径<input
-              id="path"
-              list="paths"
-              placeholder="全部 path"
-              autocomplete="off" /><datalist id="paths"></datalist
-          ></label>
-          <label
-            >请求结果<select id="outcome">
-              <option value="">全部结果</option>
-              <option value="completed">已完成</option>
-              <option value="failed">失败</option>
-              <option value="incomplete">未完整结束</option>
-              <option value="cancelled">已取消</option>
-              <option value="interrupted">已中断</option>
-              <option value="in_progress">等待结束 / 更新</option>
-            </select></label
-          >
+            >请求路径<input id="path" placeholder="全部路径" autocomplete="off"
+          /></label>
+          <label>请求结果<input id="outcome" type="hidden" /></label>
           <button type="button" id="reset" class="reset">重置筛选</button>
         </div>
       </form>
@@ -136,7 +114,9 @@
           <div class="panel-heading">
             <div>
               <p class="eyebrow">ACTIVITY</p>
-              <h2>调用趋势</h2>
+              <h2>
+                调用趋势 <span id="chart-bucket" class="chart-bucket"></span>
+              </h2>
             </div>
             <div class="chart-toggle" role="group" aria-label="图表指标">
               <button
@@ -213,20 +193,25 @@
     </main>
     <dialog id="detail" aria-labelledby="detail-title">
       <div class="dialog-header">
-        <div>
-          <p class="eyebrow">REQUEST DETAIL</p>
-          <h2 id="detail-title">请求记录</h2>
+        <div class="detail-headline">
+          <h2 id="detail-title">请求详情</h2>
+          <div id="detail-status"></div>
+          <button
+            id="close-detail"
+            type="button"
+            aria-label="关闭请求详情"
+            autofocus
+          >
+            ✕
+          </button>
         </div>
-        <button id="close-detail" type="button" aria-label="关闭请求详情">
-          ✕
-        </button>
+        <div id="detail-meta" class="detail-meta"></div>
       </div>
-      <div
-        id="detail-content"
-        tabindex="0"
-        role="region"
-        aria-label="请求详情"
-      ></div>
+      <div id="detail-content"></div>
+      <div class="detail-footer">
+        <span id="detail-feedback" role="status" aria-live="polite"></span
+        ><span>Esc 关闭</span>
+      </div>
     </dialog>
   </body>
 </html>

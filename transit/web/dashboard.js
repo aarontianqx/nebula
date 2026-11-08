@@ -103,7 +103,11 @@ function filters() {
     to - from > 366 * 86400000
   )
     throw new Error("请选择有效的开始、结束时间，最长支持 366 天。");
-  const result = { from_ms: Math.floor(from), to_ms: Math.floor(to) };
+  const result = {
+    from_ms: Math.floor(from),
+    to_ms: Math.floor(to),
+    utc_offset_minutes: -new Date(to).getTimezoneOffset(),
+  };
   for (const key of ["provider", "model", "path", "outcome"]) {
     const value = $(key).value.trim();
     if (value) result[key] = value;
@@ -131,6 +135,7 @@ async function load(reset = true, pageMove = 0) {
     ...proposedFilters,
     ...(proposedCursors.at(-1) || {}),
   });
+  syncFilterControls();
   busy = true;
   const version = ++requestVersion;
   for (const control of document.querySelectorAll(
@@ -174,29 +179,249 @@ async function load(reset = true, pageMove = 0) {
     $("next").disabled = !nextCursor;
   }
 }
-function fillOptions(id, values, select = false) {
-  const target = $(id),
-    current = target.value;
-  target.replaceChildren();
-  if (select) {
-    const option = element("option", "", "全部 provider");
-    option.value = "";
-    target.append(option);
+const filterWidgets = new Map();
+let activeFilter = null;
+function createFilter(id, placeholder, editable, initialOptions = []) {
+  const source = $(id),
+    label = source.closest("label");
+  const wrapper = element("span", "filter-combo");
+  const control = editable ? source : element("button", "filter-select");
+  const arrow = element("span", "filter-chevron");
+  const toggle = editable ? element("button", "filter-toggle") : null;
+  const popup = element("div", "filter-popup");
+  let options = initialOptions,
+    visible = [],
+    active = -1,
+    query = "",
+    committed = source.value;
+  source.before(wrapper);
+  if (editable) wrapper.append(source);
+  else {
+    control.type = "button";
+    control.id = `${id}-control`;
+    wrapper.append(control);
   }
-  for (const value of values) {
-    const option = element("option", "", value);
-    option.value = value;
-    target.append(option);
-  }
-  if (select) {
-    if (current && !values.includes(current)) {
-      const option = element("option", "", current);
-      option.value = current;
-      target.append(option);
+  label.htmlFor = control.id;
+  const title = element(
+    "span",
+    "filter-label",
+    label.firstChild.textContent.trim(),
+  );
+  title.id = `${id}-label`;
+  label.firstChild.replaceWith(title);
+  control.setAttribute("aria-labelledby", title.id);
+  control.setAttribute("role", "combobox");
+  control.setAttribute("aria-expanded", "false");
+  control.setAttribute("aria-haspopup", "listbox");
+  control.setAttribute("aria-controls", `${id}-options`);
+  if (editable) {
+    control.setAttribute("aria-autocomplete", "list");
+    control.spellcheck = false;
+    toggle.type = "button";
+    toggle.tabIndex = -1;
+    toggle.setAttribute(
+      "aria-label",
+      `展开${placeholder.replace("全部", "")}选项`,
+    );
+    toggle.setAttribute("aria-controls", `${id}-options`);
+    toggle.append(arrow);
+    wrapper.append(toggle);
+    toggle.addEventListener("mousedown", (event) => event.preventDefault());
+    toggle.addEventListener("click", () => {
+      control.focus();
+      if (activeFilter === widget) close();
+      else open();
+    });
+  } else control.append(arrow);
+  popup.id = `${id}-options`;
+  popup.hidden = true;
+  popup.setAttribute("role", "listbox");
+  popup.setAttribute("aria-labelledby", title.id);
+  document.body.append(popup);
+  function sync() {
+    committed = source.value;
+    if (!editable) {
+      let text = control.querySelector(".filter-value");
+      if (!text) {
+        text = element("span", "filter-value");
+        control.prepend(text);
+      }
+      text.textContent =
+        options.find((option) => option.value === source.value)?.label ||
+        source.value ||
+        placeholder;
+      control.classList.toggle("is-placeholder", !source.value);
     }
-    target.value = current;
   }
+  function position() {
+    if (popup.hidden) return;
+    const rect = wrapper.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > innerHeight) {
+      close();
+      return;
+    }
+    const width = Math.min(
+      Math.max(rect.width, editable ? 420 : 220),
+      innerWidth - 24,
+    );
+    const below = innerHeight - rect.bottom - 16,
+      above = rect.top - 16;
+    const upwards = below < 180 && above > below;
+    popup.style.width = `${width}px`;
+    popup.style.left = `${Math.max(12, Math.min(rect.left, innerWidth - width - 12))}px`;
+    popup.style.maxHeight = `${Math.max(60, Math.min(300, upwards ? above : below))}px`;
+    popup.style.top = upwards ? "auto" : `${rect.bottom + 6}px`;
+    popup.style.bottom = upwards ? `${innerHeight - rect.top + 6}px` : "auto";
+  }
+  function highlight(index, scroll = false) {
+    active = index;
+    for (const [i, option] of [
+      ...popup.querySelectorAll("[role=option]"),
+    ].entries())
+      option.classList.toggle("active", i === active);
+    if (index < 0) control.removeAttribute("aria-activedescendant");
+    else {
+      const option = popup.querySelectorAll("[role=option]")[index];
+      control.setAttribute("aria-activedescendant", option.id);
+      if (scroll) option.scrollIntoView({ block: "nearest" });
+    }
+  }
+  function renderOptions() {
+    const needle = query.toLocaleLowerCase();
+    visible = [{ value: "", label: placeholder }, ...options].filter(
+      (option) => !needle || option.label.toLocaleLowerCase().includes(needle),
+    );
+    popup.replaceChildren();
+    for (const [index, option] of visible.entries()) {
+      const item = element("div", "filter-option"),
+        text = element("span", "", option.label);
+      item.id = `${id}-option-${index}`;
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", String(option.value === source.value));
+      item.title = option.label;
+      item.append(
+        text,
+        element(
+          "span",
+          "filter-check",
+          option.value === source.value ? "✓" : "",
+        ),
+      );
+      item.addEventListener("mouseenter", () => highlight(index));
+      item.addEventListener("click", () => commit(option.value));
+      popup.append(item);
+    }
+    if (!visible.length) {
+      const empty = element(
+        "div",
+        "filter-no-options",
+        editable ? "无匹配项，按 Enter 应用输入值" : "暂无选项",
+      );
+      empty.setAttribute("role", "option");
+      empty.setAttribute("aria-disabled", "true");
+      popup.append(empty);
+    }
+    highlight(visible.findIndex((option) => option.value === source.value));
+    position();
+  }
+  function open(search = "") {
+    if (control.disabled) return;
+    if (activeFilter && activeFilter !== widget) activeFilter.close();
+    query = search;
+    activeFilter = widget;
+    popup.hidden = false;
+    wrapper.classList.add("is-open");
+    control.setAttribute("aria-expanded", "true");
+    renderOptions();
+  }
+  function close() {
+    popup.hidden = true;
+    wrapper.classList.remove("is-open");
+    control.setAttribute("aria-expanded", "false");
+    control.removeAttribute("aria-activedescendant");
+    if (activeFilter === widget) activeFilter = null;
+  }
+  function commit(value) {
+    const changed = value !== committed;
+    source.value = value;
+    sync();
+    close();
+    if (changed) load();
+  }
+  popup.addEventListener("mousedown", (event) => event.preventDefault());
+  control.addEventListener("click", () => {
+    if (!editable && activeFilter === widget) close();
+    else open();
+  });
+  if (editable) control.addEventListener("input", () => open(control.value));
+  control.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (
+      ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) &&
+      (activeFilter === widget || event.key.startsWith("Arrow"))
+    ) {
+      event.preventDefault();
+      if (activeFilter !== widget) {
+        open();
+        highlight(event.key === "ArrowUp" ? visible.length - 1 : 0, true);
+      } else {
+        const index =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? visible.length - 1
+              : (active +
+                  (event.key === "ArrowDown" ? 1 : -1) +
+                  visible.length) %
+                visible.length;
+        highlight(visible.length ? index : -1, true);
+      }
+    } else if (event.key === "Escape" && activeFilter === widget) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (editable) control.value = committed;
+      close();
+    } else if (event.key === "Enter" || (!editable && event.key === " ")) {
+      event.preventDefault();
+      if (activeFilter === widget && active >= 0) commit(visible[active].value);
+      else if (editable) commit(control.value);
+      else open();
+    } else if (event.key === "Tab") close();
+  });
+  wrapper.addEventListener("focusout", (event) => {
+    if (wrapper.contains(event.relatedTarget)) return;
+    close();
+    if (editable && !control.disabled) commit(control.value);
+  });
+  const widget = {
+    close,
+    position,
+    wrapper,
+    popup,
+    sync,
+    setOptions(values) {
+      options = values;
+      sync();
+      if (activeFilter === widget) renderOptions();
+    },
+  };
+  sync();
+  filterWidgets.set(id, widget);
 }
+function syncFilterControls() {
+  activeFilter?.close();
+  for (const widget of filterWidgets.values()) widget.sync();
+}
+document.addEventListener("pointerdown", (event) => {
+  if (
+    activeFilter &&
+    !activeFilter.wrapper.contains(event.target) &&
+    !activeFilter.popup.contains(event.target)
+  )
+    activeFilter.close();
+});
+window.addEventListener("resize", () => activeFilter?.position());
+window.addEventListener("scroll", () => activeFilter?.position(), true);
 function render() {
   const s = data.summary,
     ended = s.requests - s.pending;
@@ -246,9 +471,15 @@ function render() {
     "usage-notice",
     `${n(s.completed_usage_issues)} 条已完成请求用量不完整 · 查看诊断 ↗`,
   );
-  fillOptions("provider", data.options.providers, true);
-  fillOptions("models", data.options.models);
-  fillOptions("paths", data.options.paths);
+  for (const [id, values] of [
+    ["provider", data.options.providers],
+    ["model", data.options.models],
+    ["path", data.options.paths],
+  ]) {
+    filterWidgets
+      .get(id)
+      .setOptions(values.map((value) => ({ value, label: value })));
+  }
   renderChart();
   renderDistribution();
   renderRequests();
@@ -274,8 +505,19 @@ function renderChart() {
   let step = [1, 2, 2.5, 5, 10].find((v) => v * power >= rawStep) * power;
   if (chartMetric === "requests") step = Math.max(1, Math.ceil(step));
   const ceiling = Math.max(step, Math.ceil(max / step) * step);
+  const chartFrom = data.chart_from_ms,
+    chartTo = data.chart_to_ms;
+  const count = Math.round((chartTo - chartFrom) / data.bucket_ms);
+  const bucketMinutes = data.bucket_ms / 60000;
+  const bucketLabel =
+    bucketMinutes < 60
+      ? `${bucketMinutes} 分钟`
+      : bucketMinutes < 1440
+        ? `${bucketMinutes / 60} 小时`
+        : `${bucketMinutes / 1440} 天`;
+  setText("chart-bucket", `每柱 ${bucketLabel}`);
   const x = (time) =>
-    left + ((time - data.from_ms) / (data.to_ms - data.from_ms)) * plotWidth;
+    left + ((time - chartFrom) / (chartTo - chartFrom)) * plotWidth;
   const y = (value) => bottom - (value / ceiling) * plotHeight;
   const svgElement = (tag, attrs = {}, text) => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -324,11 +566,30 @@ function renderChart() {
       minute: "2-digit",
       hour12: false,
     });
-  const span = data.to_ms - data.from_ms;
-  const ticks = width < 480 ? 3 : 5;
-  for (let index = 0; index < ticks; index++) {
-    const time = data.from_ms + (span * index) / (ticks - 1),
-      position = x(time);
+  const span = chartTo - chartFrom;
+  const maxTicks = width < 480 ? 3 : 5;
+  const desiredTickStep = span / (maxTicks - 1);
+  const tickSteps = [
+    1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 7200, 14400, 21600,
+    43200, 86400, 129600, 259200,
+  ]
+    .map((minutes) => minutes * 60000)
+    .filter((step) => step >= data.bucket_ms && step % data.bucket_ms === 0);
+  const tickStep = tickSteps.reduce((best, step) =>
+    Math.abs(step - desiredTickStep) < Math.abs(best - desiredTickStep)
+      ? step
+      : best,
+  );
+  const offset = data.utc_offset_minutes * 60000;
+  const firstTick =
+    Math.ceil((chartFrom + offset) / tickStep) * tickStep - offset;
+  const tickTimes = [];
+  for (let time = firstTick; time <= chartTo; time += tickStep)
+    tickTimes.push(time);
+  if (tickTimes.length < 2)
+    tickTimes.splice(0, tickTimes.length, chartFrom, chartTo);
+  for (const time of tickTimes) {
+    const position = x(time);
     svg.append(
       svgElement("line", {
         x1: position,
@@ -338,6 +599,13 @@ function renderChart() {
         class: "chart-grid",
       }),
     );
+    const text =
+      data.bucket_ms >= 86400000
+        ? new Date(time).toLocaleDateString("zh-CN", {
+            month: "2-digit",
+            day: "2-digit",
+          })
+        : shortTime(time, span > 86400000);
     svg.append(
       svgElement(
         "text",
@@ -345,17 +613,21 @@ function renderChart() {
           x: position,
           y: bottom + 21,
           "text-anchor":
-            index === 0 ? "start" : index === ticks - 1 ? "end" : "middle",
+            position - left < 55
+              ? "start"
+              : right - position < 55
+                ? "end"
+                : "middle",
           class: "chart-tick x-tick",
         },
-        shortTime(time, span > 86400000),
+        text,
       ),
     );
   }
   const bars = [];
-  for (let time = data.from_ms; time < data.to_ms; time += data.bucket_ms) {
+  for (let time = chartFrom; time < chartTo; time += data.bucket_ms) {
     const value = bins.get(time)?.[chartMetric] || 0,
-      end = Math.min(time + data.bucket_ms, data.to_ms);
+      end = time + data.bucket_ms;
     const gap = Math.min(4, (x(end) - x(time)) * 0.2);
     const bar = svgElement("rect", {
       x: x(time) + gap / 2,
@@ -427,13 +699,13 @@ function renderChart() {
       clear();
       return;
     }
-    const time = data.from_ms + ((px - left) / plotWidth) * span;
+    const time = chartFrom + ((px - left) / plotWidth) * span;
     const index = Math.min(
       bars.length - 1,
-      Math.floor((time - data.from_ms) / data.bucket_ms),
+      Math.floor((time - chartFrom) / data.bucket_ms),
     );
-    const start = data.from_ms + index * data.bucket_ms,
-      end = Math.min(start + data.bucket_ms, data.to_ms);
+    const start = chartFrom + index * data.bucket_ms,
+      end = start + data.bucket_ms;
     const value = bins.get(start)?.[chartMetric] || 0;
     active?.classList.remove("active");
     active = bars[index];
@@ -460,6 +732,15 @@ function renderChart() {
         `${n(value)} ${chartMetric === "requests" ? "次请求" : "token"}`,
       ),
     );
+    const partial = [];
+    if (start < data.from_ms)
+      partial.push(`自 ${shortTime(data.from_ms, span > 86400000)} 起`);
+    if (end > data.to_ms)
+      partial.push(`截至 ${shortTime(data.to_ms, span > 86400000)}`);
+    if (partial.length)
+      tooltip.append(
+        element("span", "chart-tooltip-partial", partial.join(" · ")),
+      );
     tooltip.hidden = false;
     tooltip.style.left = `${Math.max(0, Math.min(width - tooltip.offsetWidth, px + 12))}px`;
     tooltip.style.top = `${py > height / 2 ? py - tooltip.offsetHeight - 12 : py + 12}px`;
@@ -584,103 +865,417 @@ function renderRequests() {
     target.append(row);
   }
 }
-const sections = [
-  [
-    "关联与时间",
-    [
-      "request_id",
-      "started_at_ms",
-      "finished_at_ms",
-      "config_generation",
-      "rule_id",
-    ],
+const detailFields = {
+  routing: [
+    ["Provider", "provider"],
+    ["请求模型", "requested_model"],
+    ["解析后模型", "resolved_model"],
+    ["响应模型", "response_model"],
+    ["请求方法", "method"],
+    ["请求路径", "request_path"],
+    ["上游路径", "upstream_path"],
+    ["客户端协议", "client_protocol"],
+    ["上游协议", "upstream_protocol"],
+    ["路由规则", "rule_id"],
+    ["配置版本", "config_generation"],
+    ["流式响应", "streaming"],
   ],
-  [
-    "路由与模型",
-    [
-      "method",
-      "request_path",
-      "upstream_path",
-      "provider",
-      "client_protocol",
-      "upstream_protocol",
-      "requested_model",
-      "resolved_model",
-      "response_model",
-      "streaming",
-    ],
+  usage: [
+    ["输入 Token", "input_tokens"],
+    ["输出 Token", "output_tokens"],
+    ["总 Token", "total_tokens"],
+    ["缓存读取", "cache_read_tokens"],
+    ["缓存写入", "cache_write_tokens"],
+    ["推理 Token", "reasoning_tokens"],
+    ["用量状态", "usage_status"],
   ],
-  [
-    "结果与时延",
-    [
-      "outcome",
-      "http_status",
-      "upstream_status",
-      "duration_ms",
-      "response_headers_ms",
-      "first_body_byte_ms",
-      "request_bytes",
-      "response_bytes",
-      "finish_reason",
-      "response_status",
-    ],
+  diagnostics: [
+    ["请求结果", "outcome"],
+    ["HTTP 状态", "http_status"],
+    ["上游状态", "upstream_status"],
+    ["结束原因", "finish_reason"],
+    ["响应状态", "response_status"],
+    ["错误来源", "error_source"],
+    ["错误阶段", "error_stage"],
+    ["错误代码", "error_code"],
+    ["错误信息", "error_message"],
+    ["观察状态", "observer_status"],
+    ["观察错误", "observer_error"],
+    ["请求 ID", "request_id"],
+    ["开始时间", "started_at_ms"],
+    ["结束时间", "finished_at_ms"],
+    ["总耗时", "duration_ms"],
+    ["上游响应头", "response_headers_ms"],
+    ["响应首字节", "first_body_byte_ms"],
+    ["请求字节数", "request_bytes"],
+    ["响应字节数", "response_bytes"],
   ],
-  [
-    "用量与观察",
+};
+function detailFacts(request, fields, technical = true) {
+  const list = element("dl", "detail-facts");
+  for (const [title, key] of fields) {
+    let value = request[key];
+    if (key.endsWith("_at_ms")) value = date(value, true);
+    else if (key.endsWith("_ms")) value = duration(value);
+    else if (typeof value === "boolean") value = value ? "是" : "否";
+    else if (typeof value === "number") value = n(value);
+    else value = labels[value] || value;
+    const item = element("div", "detail-fact");
+    const label = element("dt", "", title);
+    if (technical) label.append(element("small", "", key));
+    item.append(label, element("dd", "", value ?? "—"));
+    list.append(item);
+  }
+  return list;
+}
+function detailSection(title, ...children) {
+  const section = element("section", "detail-section");
+  section.append(element("h3", "", title), ...children);
+  return section;
+}
+function detailNotice(request) {
+  if (request.outcome === "cancelled") return null;
+  if (
+    !request.error_message &&
+    !["failed", "incomplete", "interrupted"].includes(request.outcome)
+  )
+    return null;
+  const notice = element(
+    "div",
+    request.outcome === "failed" ? "detail-notice bad" : "detail-notice",
+  );
+  notice.append(element("strong", "", labels[request.outcome] || "请求异常"));
+  if (request.error_message)
+    notice.append(element("p", "", request.error_message));
+  return notice;
+}
+function detailJson(value) {
+  if (value == null) return element("p", "detail-quiet", "未提供");
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      /* Keep legacy values as text. */
+    }
+  }
+  return element(
+    "pre",
+    "",
+    typeof value === "string" ? value : JSON.stringify(value, null, 2),
+  );
+}
+function detailTimeline(request) {
+  const pane = element("section", "detail-process");
+  pane.setAttribute("aria-label", "请求过程");
+  pane.append(
+    element("h3", "", "请求过程"),
+    element("p", "detail-duration", duration(request.duration_ms)),
+  );
+  const total = request.duration_ms,
+    first = request.first_body_byte_ms;
+  if (
+    Number.isFinite(total) &&
+    total > 0 &&
+    Number.isFinite(first) &&
+    first >= 0 &&
+    first <= total
+  ) {
+    const strip = element("div", "detail-timing-strip");
+    strip.setAttribute("aria-hidden", "true");
+    const wait = element("span"),
+      transfer = element("span");
+    wait.style.width = `${(first / total) * 100}%`;
+    transfer.style.flex = "1";
+    strip.append(wait, transfer);
+    const caption = element("div", "detail-timing-caption");
+    caption.append(
+      element("span", "", `首字节前 ${duration(first)}`),
+      element("span", "", `后续传输 ${duration(total - first)}`),
+    );
+    pane.append(strip, caption);
+  }
+  const timeline = element("ol", "detail-timeline");
+  const event = (title, elapsed, note, state = "") => {
+    const item = element("li", `detail-event ${state}`),
+      head = element("div", "detail-event-head");
+    head.append(
+      element("span", "", title),
+      element("span", "mono", elapsed == null ? "—" : `+${duration(elapsed)}`),
+    );
+    item.append(head);
+    if (note) item.append(element("p", "", note));
+    timeline.append(item);
+  };
+  event(
+    "接收请求",
+    0,
+    `${request.method || "—"} ${request.request_path || "—"}`,
+  );
+  if (request.response_headers_ms != null)
+    event(
+      "收到上游响应头",
+      request.response_headers_ms,
+      `上游 HTTP ${request.upstream_status ?? "—"}`,
+    );
+  if (first != null)
+    event("收到响应首字节", first, "传输层首字节，并非首个生成 Token");
+  const finished =
+    request.finished_at_ms != null ||
+    (request.outcome && request.outcome !== "in_progress");
+  if (finished)
+    event(
+      labels[request.outcome] || "请求结束",
+      total,
+      request.finish_reason || null,
+      request.outcome,
+    );
+  else event("等待结束记录", null, "请求进行中，或后台尚未更新");
+  const bytes = (value) =>
+    value == null
+      ? "—"
+      : value < 1024
+        ? `${n(value)} B`
+        : `${(value / 1024).toFixed(1)} KiB`;
+  const transfer = element("div", "detail-transfer");
+  transfer.append(
+    element("span", "", `上传 ${bytes(request.request_bytes)}`),
+    element("span", "", `下载 ${bytes(request.response_bytes)}`),
+  );
+  pane.append(timeline, transfer);
+  return pane;
+}
+function detailSummary(request) {
+  const result = element("div", "detail-summary");
+  const notice = detailNotice(request);
+  if (notice) result.append(notice);
+  const flow = element("div", "detail-route");
+  for (const [index, [label, value]] of [
+    ["请求模型", request.requested_model],
+    ["Provider", request.provider],
     [
-      "usage_status",
-      "observer_status",
-      "observer_error",
-      "input_tokens",
-      "output_tokens",
-      "total_tokens",
-      "cache_read_tokens",
-      "cache_write_tokens",
-      "reasoning_tokens",
+      "实际模型",
+      request.response_model ||
+        request.resolved_model ||
+        request.requested_model,
     ],
-  ],
-  ["错误", ["error_source", "error_stage", "error_code", "error_message"]],
-];
+  ].entries()) {
+    if (index) flow.append(element("span", "detail-arrow", "→"));
+    const node = element("div", "detail-route-node");
+    node.append(
+      element("span", "", label),
+      element("strong", "mono", value ?? "—"),
+    );
+    flow.append(node);
+  }
+  const path = element(
+    "p",
+    "detail-path mono",
+    `${request.method || "—"} ${request.request_path || "—"}`,
+  );
+  result.append(detailSection("模型与路由", flow, path));
+  const metrics = element("div", "detail-token-metrics");
+  for (const [label, key] of [
+    ["输入", "input_tokens"],
+    ["输出", "output_tokens"],
+  ]) {
+    const metric = element("div");
+    metric.append(
+      element("span", "", label),
+      element("strong", "", n(request[key])),
+    );
+    metrics.append(metric);
+  }
+  const usage = detailSection("Token 用量", metrics);
+  const cache = element("div", "detail-cache-caption");
+  const input = request.input_tokens,
+    read = request.cache_read_tokens;
+  const known =
+    Number.isFinite(input) &&
+    input > 0 &&
+    Number.isFinite(read) &&
+    read >= 0 &&
+    read <= input;
+  cache.append(
+    element("span", "", "输入缓存命中"),
+    element(
+      "strong",
+      "",
+      known ? `${((read / input) * 100).toFixed(1)}%` : "—",
+    ),
+  );
+  usage.append(cache);
+  if (known) {
+    const track = element("div", "detail-cache-track"),
+      fill = element("span");
+    fill.style.width = `${(read / input) * 100}%`;
+    track.append(fill);
+    usage.append(track);
+  }
+  usage.append(
+    detailFacts(
+      request,
+      [
+        ["总 Token", "total_tokens"],
+        ["缓存读取", "cache_read_tokens"],
+        ["缓存写入", "cache_write_tokens"],
+        ["推理 Token", "reasoning_tokens"],
+      ],
+      false,
+    ),
+  );
+  result.append(usage);
+  const foot = element("div", "detail-summary-foot");
+  foot.append(
+    element("span", "", `结束原因 ${request.finish_reason ?? "—"}`),
+    element("span", "", `用量${labels[request.usage_status] || "未知"}`),
+  );
+  result.append(foot);
+  return result;
+}
+function renderDetail(request) {
+  const status = badge(request.outcome);
+  status.textContent +=
+    request.http_status != null ? ` · HTTP ${request.http_status}` : "";
+  $("detail-status").replaceChildren(status);
+  const copy = element(
+    "button",
+    "detail-copy mono",
+    `${String(request.request_id).slice(0, 12)} ⧉`,
+  );
+  copy.type = "button";
+  copy.title = `复制请求 ID：${request.request_id}`;
+  copy.setAttribute("aria-label", "复制请求 ID");
+  copy.addEventListener("click", async () => {
+    const feedback = $("detail-feedback");
+    let input;
+    try {
+      let copied = false;
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(request.request_id);
+          copied = true;
+        } catch {
+          // Browser permissions may still deny the modern clipboard API.
+        }
+      }
+      if (!copied) {
+        input = element("textarea", "copy-buffer");
+        input.value = request.request_id;
+        $("detail").append(input);
+        input.select();
+        if (!document.execCommand("copy")) throw new Error("copy unavailable");
+      }
+      feedback.textContent = "请求 ID 已复制";
+    } catch {
+      feedback.textContent = "复制不可用，可在 JSON 页手动复制";
+    } finally {
+      if (input) {
+        input.remove();
+        copy.focus();
+      }
+    }
+  });
+  $("detail-meta").replaceChildren(
+    element("span", "", date(request.started_at_ms, true)),
+    element(
+      "span",
+      "",
+      request.streaming == null
+        ? "响应类型未知"
+        : request.streaming
+          ? "流式响应"
+          : "非流式响应",
+    ),
+    copy,
+  );
+  const inspector = element("section", "detail-inspector"),
+    nav = element("div", "detail-tabs"),
+    panel = element("div", "detail-tab-panel");
+  nav.setAttribute("role", "tablist");
+  nav.setAttribute("aria-label", "详情分类");
+  panel.id = "detail-tab-panel";
+  panel.setAttribute("role", "tabpanel");
+  panel.tabIndex = 0;
+  const tabs = [
+    ["summary", "摘要"],
+    ["routing", "路由"],
+    ["usage", "用量"],
+    ["diagnostics", "诊断"],
+    ["json", "JSON"],
+  ];
+  function selectTab(key) {
+    for (const button of nav.children) {
+      const active = button.dataset.tab === key;
+      button.setAttribute("aria-selected", String(active));
+      button.tabIndex = active ? 0 : -1;
+    }
+    panel.setAttribute("aria-labelledby", `detail-tab-${key}`);
+    panel.replaceChildren();
+    if (key === "summary") panel.append(detailSummary(request));
+    else if (key === "json")
+      panel.append(detailSection("完整记录", detailJson(request)));
+    else {
+      const notice = key === "diagnostics" ? detailNotice(request) : null;
+      if (notice) panel.append(notice);
+      panel.append(
+        detailSection(
+          {
+            routing: "模型与路由",
+            usage: "Token 明细",
+            diagnostics: "诊断与关联",
+          }[key],
+          detailFacts(request, detailFields[key]),
+        ),
+      );
+      if (key === "usage")
+        panel.append(
+          detailSection("上游原始用量", detailJson(request.usage_json)),
+        );
+    }
+    panel.scrollTop = 0;
+  }
+  for (const [key, title] of tabs) {
+    const button = element("button", "", title);
+    button.type = "button";
+    button.dataset.tab = key;
+    button.id = `detail-tab-${key}`;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", panel.id);
+    button.addEventListener("click", () => selectTab(key));
+    button.addEventListener("keydown", (event) => {
+      const index = tabs.findIndex(([name]) => name === key);
+      const next = {
+        ArrowRight: (index + 1) % tabs.length,
+        ArrowLeft: (index + tabs.length - 1) % tabs.length,
+        Home: 0,
+        End: tabs.length - 1,
+      }[event.key];
+      if (next == null) return;
+      event.preventDefault();
+      selectTab(tabs[next][0]);
+      nav.children[next].focus();
+    });
+    nav.append(button);
+  }
+  inspector.append(nav, panel);
+  $("detail-content").replaceChildren(detailTimeline(request), inspector);
+  selectTab("summary");
+}
 async function showDetail(id) {
   const version = ++detailVersion,
     target = $("detail-content");
   target.replaceChildren(element("p", "empty", "正在读取记录…"));
+  $("detail-status").replaceChildren();
+  $("detail-meta").replaceChildren();
+  $("detail-feedback").textContent = "";
   target.scrollTop = 0;
   if (!$("detail").open) $("detail").showModal();
   try {
     const request = await fetchJson(`/api/requests/${encodeURIComponent(id)}`);
     if (version !== detailVersion || !$("detail").open) return;
-    target.replaceChildren();
-    for (const [title, fields] of sections) {
-      const section = element("section", "detail-section"),
-        list = element("dl", "detail-grid");
-      section.append(element("h3", "", title));
-      for (const field of fields) {
-        const item = element("div", "detail-field");
-        let value = request[field];
-        if (field.endsWith("_at_ms")) value = date(value, true);
-        else if (field === "streaming")
-          value = value == null ? "—" : value ? "true" : "false";
-        item.append(
-          element("dt", "", field),
-          element("dd", "", value == null ? "—" : String(value)),
-        );
-        list.append(item);
-      }
-      section.append(list);
-      target.append(section);
-    }
-    if (request.usage_json) {
-      let usage = request.usage_json;
-      try {
-        usage = JSON.stringify(JSON.parse(usage), null, 2);
-      } catch {
-        /* Preserve a legacy non-JSON value as text. */
-      }
-      target.append(element("h3", "", "usage_json"), element("pre", "", usage));
-    }
+    renderDetail(request);
   } catch (error) {
-    if (version === detailVersion)
+    if (version === detailVersion && $("detail").open)
       target.replaceChildren(
         element("p", "empty", `详情读取失败：${error.message}`),
       );
@@ -719,10 +1314,22 @@ for (const button of document.querySelectorAll("[data-chart]")) {
     if (data) renderChart();
   });
 }
-for (const id of ["provider", "outcome"])
-  $(id).addEventListener("change", () => load());
-for (const id of ["model", "path"])
-  $(id).addEventListener("change", () => load());
+createFilter("provider", "全部 provider", false);
+createFilter("model", "全部模型", true);
+createFilter("path", "全部路径", true);
+createFilter(
+  "outcome",
+  "全部结果",
+  false,
+  [
+    ["completed", "已完成"],
+    ["failed", "失败"],
+    ["incomplete", "未完整结束"],
+    ["cancelled", "已取消"],
+    ["interrupted", "已中断"],
+    ["in_progress", "等待结束 / 更新"],
+  ].map(([value, label]) => ({ value, label })),
+);
 $("reset").addEventListener("click", () => {
   if (busy) return;
   for (const id of ["provider", "model", "path", "outcome"]) $(id).value = "";
@@ -766,7 +1373,13 @@ $("to").value = localInput(Date.now());
 $("updated").title =
   `显示时区：${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
 setInterval(() => {
-  if ($("auto").checked && !document.hidden && !$("detail").open && !busy)
+  if (
+    $("auto").checked &&
+    !document.hidden &&
+    !$("detail").open &&
+    !activeFilter &&
+    !busy
+  )
     load();
 }, 15000);
 load();

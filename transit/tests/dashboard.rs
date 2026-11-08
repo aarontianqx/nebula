@@ -279,9 +279,43 @@ origin="http://127.0.0.1:1"
     assert_eq!(detail["cache_write_tokens"], 10);
     assert!(detail.get("cached_input_tokens").is_none());
     assert!(detail.get("cache_write_input_tokens").is_none());
+    // An aligned chart must not widen the requested statistics window.
+    let hour = 3_600_000i64;
+    let offset = 330 * 60_000i64;
+    let origin = (timestamp + offset) / hour * hour - offset;
+    let start = origin + 48 * 60_000;
+    let end = start + 24 * hour;
+    for (id, time) in ids.iter().zip([start - 1, start, origin + hour, end]) {
+        c.execute(
+            "UPDATE requests SET started_at_ms=?1 WHERE request_id=?2",
+            params![time, id],
+        )
+        .unwrap();
+    }
+    let (code, _, body) = get(
+        address,
+        &format!("/api/stats?from_ms={start}&to_ms={end}&utc_offset_minutes=330"),
+        "",
+    );
+    assert_eq!(code, 200, "{body}");
+    let aligned: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(aligned["from_ms"], start);
+    assert_eq!(aligned["to_ms"], end);
+    assert_eq!(aligned["bucket_ms"], hour);
+    assert_eq!(aligned["chart_from_ms"], origin);
+    assert_eq!(aligned["chart_to_ms"], origin + 25 * hour);
+    assert_eq!(aligned["summary"]["requests"], 2);
+    assert_eq!(aligned["series"][0]["time_ms"], origin);
+    assert_eq!(aligned["series"][0]["requests"], 1);
+    assert_eq!(aligned["series"][1]["time_ms"], origin + hour);
+    assert_eq!(aligned["series"][1]["requests"], 1);
+    assert_eq!(aligned["series"].as_array().unwrap().len(), 2);
     for path in [
         "/api/stats?from_ms=10&to_ms=1",
         "/api/stats?limit=101",
+        "/api/stats?utc_offset_minutes=841",
+        "/api/stats?utc_offset_minutes=-841",
+        "/api/stats?from_ms=9223372036854775806&to_ms=9223372036854775807",
         "/api/stats?outcome=unknown",
         "/api/stats?from_ms=0&to_ms=99999999999999",
         "/api/requests/invalid",
