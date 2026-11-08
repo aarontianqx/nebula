@@ -409,38 +409,47 @@ pub fn router(reader: Reader) -> Router {
             }),
         )
         .route(
-            "/dashboard.css",
+            "/static/favicon.svg",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "image/svg+xml")],
+                    include_str!("../web/static/favicon.svg"),
+                )
+            }),
+        )
+        .route(
+            "/static/dashboard.css",
             get(|| async {
                 (
                     [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-                    include_str!("../web/dashboard.css"),
+                    include_str!("../web/static/dashboard.css"),
                 )
             }),
         )
         .route(
-            "/dashboard.js",
+            "/static/dashboard.js",
             get(|| async {
                 (
                     [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-                    include_str!("../web/dashboard.js"),
+                    include_str!("../web/static/dashboard.js"),
                 )
             }),
         )
         .route(
-            "/i18n.js",
+            "/static/i18n.js",
             get(|| async {
                 (
                     [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-                    include_str!("../web/i18n.js"),
+                    include_str!("../web/static/i18n.js"),
                 )
             }),
         )
         .route(
-            "/locales.js",
+            "/static/locales.js",
             get(|| async {
                 (
                     [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-                    include_str!("../web/locales.js"),
+                    include_str!("../web/static/locales.js"),
                 )
             }),
         )

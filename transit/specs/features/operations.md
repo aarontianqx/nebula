@@ -90,6 +90,23 @@ SIGTERM/SIGINT 开始 drain，默认 grace=180 秒，停止接收新连接/请�
 - `limit` 默认 50、最大 100。后续页使用 `next_cursor` 中的 `before_ms`/`before_id`，按 started_at_ms/request_id 降序查询；分页时沿用相同时间窗口，避免新请求导致偏移分页重复。
 - `GET /api/requests/<request_id>`：单条完整审计记录，不提供原始抓取或配置内容。
 
+看板首页为 `/`，编译内嵌的 CSS、JavaScript 和语言文件统一放在 `/static/*`。首页链接及资源使用相对地址，API 地址以当前模块 URL 的上一级（看板根目录）为基准；不读取或信任 `X-Forwarded-Prefix`，无需 base_path 配置。同一实例支持 `:8788/` 直连、独立域名的 `/` 和任意反向代理前缀，Transit 始终处理无前缀的路径。
+
+例如 Nginx 挂载 `/proxy-console/` 时，将整个子树（包括 static 和 api）剥离前缀后发给管理端口，保留 query；页面无需响应内容替换。`proxy_pass` 末尾的 `/` 不能省略，并将无末尾斜杠的入口重定向到目录 URL，否则浏览器会错误解析相对资源路径：
+
+```nginx
+location = /proxy-console {
+    return 308 /proxy-console/$is_args$args;
+}
+
+location /proxy-console/ {
+    proxy_pass http://127.0.0.1:8788/;
+    proxy_set_header Host $proxy_host;
+}
+```
+
+示例管理监听地址为 `127.0.0.1:8788`，自定义监听时同步修改 upstream；域名入口的 Host 校验要求见下文。入口认证应覆盖整个子树。更换为其它前缀只改 Nginx 的两处 location 和重定向目标，后端不接收带前缀路径；独立域名使用 `location /` 并代理到同一管理端口即可。原根目录静态文件路径（如 `/dashboard.js`）不保留别名，新首页统一引用 `/static/*`。
+
 Token 汇总、趋势与模型分布只累加完整用量，缺失不作零估计；缓存与 reasoning 是输入/输出的子集。输入缓存命中率独立展示，为缓存字段有效的完整记录中，缓存读取 token 总数 / 输入 token 总数，按 token 加权，不是命中过缓存的请求占比。缓存字段为 NULL、负数或超过该条输入量时不参与分子或分母；显式 0 是有效未命中，输入总数为 0 时显示未知。主卡片显示命中率和缓存 token 数，有效样本条数留在折叠诊断中，避免把缺失字段当作 0。请求概览并排显示总请求和已完成数，字号相同；完成率为 completed / 已结束记录，作为辅助信息，取消、异常及进行中分别计数。失败、未完整结束、取消和中断计入未完成数。in_progress 单列，可能表示请求进行中，也可能是后台尚未完成更新。用量完整情况及缓存字段覆盖情况放在默认折叠的“统计诊断”中，不占主卡片。仅正常完成（completed）的已识别生成请求，用量部分或缺失时在 Token 卡片显示提示；取消、中断、失败、进行中及非生成接口（如 models/raw/countTokens）没有用量不触发此提示。用量不完整表示缺少统计依据，也可能是上游未提供 usage，不自动判定为代理故障。每次看板查询使用同一 SQLite 读事务快照；记录异步写入，刷新后仍可能发生后续修正。
 
 SQLite 使用单独的只读连接和线程，`query_only=ON`，不访问上游。队列最多等待 8 个任务，单任务从入队开始最多 3 秒，SQLite progress handler 中断超时查询，锁等待最多 100ms；HTTP 等待最多 4 秒，满队列或失败返回 503。查询使用现有时间索引、有限返回量和 2 MiB SQLite page cache；大量历史查询仍会消耗共享磁盘/CPU，管理端口限制 64 个连接，不能作为无限并发分析接口。

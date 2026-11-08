@@ -343,15 +343,17 @@ origin="http://127.0.0.1:1"
         403
     );
     let (_, _, html) = get(address, "/", "");
-    assert!(html.contains("/dashboard.js"));
+    assert!(html.contains("src=\"./static/dashboard.js\""));
+    assert!(html.contains("href=\"./static/dashboard.css\""));
+    assert!(html.contains("href=\"./\""));
     assert!(html.contains("请求观测"));
     assert!(html.contains("type=\"module\""));
     assert!(html.contains("id=\"language-switch\""));
     // ESM dependencies must ship with the binary and use a JavaScript MIME type.
     for (path, marker) in [
-        ("/dashboard.js", "./i18n.js"),
-        ("/i18n.js", "./locales.js"),
-        ("/locales.js", "export const languages"),
+        ("/static/dashboard.js", "./i18n.js"),
+        ("/static/i18n.js", "./locales.js"),
+        ("/static/locales.js", "export const languages"),
     ] {
         let (code, headers, script) = get(address, path, "");
         assert_eq!(code, 200, "{path}");
@@ -359,6 +361,24 @@ origin="http://127.0.0.1:1"
         assert!(headers.to_lowercase().contains("content-security-policy:"));
         assert!(script.contains(marker), "{path}");
         assert_eq!(get(proxy_address, path, "").0, 404, "{path}");
+    }
+    let (code, headers, css) = get(address, "/static/dashboard.css", "");
+    assert_eq!(code, 200);
+    assert!(headers.contains("text/css"));
+    assert!(!css.is_empty());
+    let (code, headers, icon) = get(address, "/static/favicon.svg", "");
+    assert_eq!(code, 200);
+    assert!(headers.contains("image/svg+xml"));
+    assert!(icon.contains("<svg"));
+    for path in [
+        "/dashboard.js",
+        "/dashboard.css",
+        "/i18n.js",
+        "/locales.js",
+        "/static/missing.js",
+        "/static/index.html",
+    ] {
+        assert_eq!(get(address, path, "").0, 404, "{path}");
     }
     assert_eq!(get(proxy_address, "/api/stats", "").0, 404);
     assert_eq!(

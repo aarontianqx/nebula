@@ -6,6 +6,7 @@ import {
   languages,
   applyTranslations,
 } from "./i18n.js";
+const dashboardRoot = new URL("../", import.meta.url);
 const $ = (id) => document.getElementById(id);
 let number, compact, decimal, labels;
 function configureFormatters() {
@@ -131,7 +132,7 @@ async function fetchJson(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(url, {
+    const response = await fetch(new URL(url, dashboardRoot), {
       signal: controller.signal,
       cache: "no-store",
     });
@@ -205,7 +206,7 @@ async function load(reset = true, pageMove = 0) {
   connectionState = "loading";
   setText("connection", t("connection.loading"));
   try {
-    const result = await fetchJson(`/api/stats?${query}`);
+    const result = await fetchJson(`api/stats?${query}`);
     if (version !== requestVersion) return;
     data = result;
     currentFilters = proposedFilters;
@@ -1414,7 +1415,7 @@ async function showDetail(id) {
   target.scrollTop = 0;
   if (!$("detail").open) $("detail").showModal();
   try {
-    const request = await fetchJson(`/api/requests/${encodeURIComponent(id)}`);
+    const request = await fetchJson(`api/requests/${encodeURIComponent(id)}`);
     if (version !== detailVersion || !$("detail").open) return;
     renderDetail(request);
   } catch (error) {
