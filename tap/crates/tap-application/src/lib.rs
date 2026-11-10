@@ -7,6 +7,8 @@
 //! - `session` — the canonical [`MacroDocument`](tap_core::MacroDocument) source of truth.
 //! - `engine` — the playback [`Player`] thread, its command/event protocol, and
 //!   the [`ActionExecutor`] / [`PlatformConditionProvider`] ports it depends on.
+//! - `clock` — the active-time clock the scheduler uses (pauses and lost target
+//!   windows do not count as elapsed timeline time).
 //! - `resolve` — the Resolve stage: parameterized `DslAction` → concrete `Action`.
 //! - `recorder` — captures raw input events into a [`Timeline`](tap_core::Timeline).
 //! - `storage` — canonical YAML persistence for macro documents (+ legacy JSON).
@@ -16,6 +18,7 @@
 //! infrastructure (`tap-platform`) and adapter (`src-tauri`) layers supply the
 //! concrete implementations.
 
+mod clock;
 mod coordinator;
 mod engine;
 mod recorder;

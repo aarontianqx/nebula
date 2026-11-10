@@ -679,3 +679,201 @@ fn sub_second_arming_still_runs_and_ticks() {
         "a sub-second arming delay should still emit a countdown tick"
     );
 }
+
+// === Tests: timeline clock (pause / lost target window must not cause a burst) ===
+
+/// Executor that records *when* each action reached the injector.
+struct TimestampedExecutor {
+    injected: Arc<Mutex<Vec<(Instant, Action)>>>,
+}
+
+impl ActionExecutor for TimestampedExecutor {
+    fn execute(&self, action: &Action) -> Result<(), String> {
+        self.injected
+            .lock()
+            .unwrap()
+            .push((Instant::now(), action.clone()));
+        Ok(())
+    }
+}
+
+/// Platform stub whose "target window is focused" answer can be flipped live.
+struct SwitchablePlatform {
+    focused: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PlatformConditionProvider for SwitchablePlatform {
+    fn is_window_focused(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
+        self.focused.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn window_exists(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
+        true
+    }
+    fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::ConditionColor> {
+        None
+    }
+}
+
+/// Three clicks 300ms apart: at 0, 300 and 600 ms of timeline time.
+fn spaced_clicks_document() -> MacroDocument {
+    let at = |at_ms: u64, x: i64| DslTimedAction {
+        at_ms,
+        action: dsl_click(x, 0),
+        enabled: true,
+        note: None,
+    };
+    document(vec![at(0, 1), at(300, 2), at(600, 3)], 1)
+}
+
+fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    condition()
+}
+
+fn ms(d: Duration) -> u128 {
+    d.as_millis()
+}
+
+#[test]
+fn pausing_does_not_make_the_remaining_steps_fire_as_a_burst() {
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn(
+        TimestampedExecutor {
+            injected: injected.clone(),
+        },
+        MockPlatform,
+    );
+    handle.send(EngineCommand::SetDocument(Box::new(
+        spaced_clicks_document(),
+    )));
+    handle.send(EngineCommand::Start);
+
+    // Pause right after the first click, long enough that both remaining steps
+    // would be overdue on the wall clock (600ms) by the time we resume.
+    assert!(wait_for(Duration::from_secs(2), || {
+        !injected.lock().unwrap().is_empty()
+    }));
+    handle.send(EngineCommand::Pause);
+    std::thread::sleep(Duration::from_millis(900));
+    let resumed_at = Instant::now();
+    handle.send(EngineCommand::Resume);
+
+    assert!(wait_for(Duration::from_secs(3), || {
+        injected.lock().unwrap().len() == 3
+    }));
+    let stamps: Vec<Instant> = injected.lock().unwrap().iter().map(|(t, _)| *t).collect();
+    drop(handle);
+
+    // Spacing is preserved on the active-time clock (expected ~250-300ms).
+    // Lower bounds only: a burst would put both gaps at ~0.
+    let first_after_resume = stamps[1].duration_since(resumed_at);
+    let second_gap = stamps[2].duration_since(stamps[1]);
+    assert!(
+        ms(first_after_resume) >= 200,
+        "step 2 fired {}ms after resume, expected the remaining ~250-300ms of its delay",
+        ms(first_after_resume)
+    );
+    assert!(
+        ms(second_gap) >= 200,
+        "steps 2 and 3 fired {}ms apart, expected ~300ms",
+        ms(second_gap)
+    );
+}
+
+#[test]
+fn losing_the_target_window_does_not_make_the_remaining_steps_fire_as_a_burst() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let focused = Arc::new(AtomicBool::new(false)); // target starts unfocused
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn(
+        TimestampedExecutor {
+            injected: injected.clone(),
+        },
+        SwitchablePlatform {
+            focused: focused.clone(),
+        },
+    );
+
+    let mut doc = spaced_clicks_document();
+    doc.target_window = Some(tap_core::DslTargetWindow {
+        title: Some("Game".to_string()),
+        process: None,
+        pause_when_unfocused: true,
+    });
+    handle.send(EngineCommand::SetDocument(Box::new(doc)));
+    handle.send(EngineCommand::Start);
+
+    // The engine blocks on the very first step while the window is unfocused.
+    // Stay away long enough that every step would be overdue on the wall clock.
+    std::thread::sleep(Duration::from_millis(900));
+    assert!(
+        injected.lock().unwrap().is_empty(),
+        "nothing may be injected while the target window is unfocused"
+    );
+    focused.store(true, Ordering::SeqCst);
+
+    assert!(wait_for(Duration::from_secs(4), || {
+        injected.lock().unwrap().len() == 3
+    }));
+    let stamps: Vec<Instant> = injected.lock().unwrap().iter().map(|(t, _)| *t).collect();
+    drop(handle);
+
+    // Full spacing is preserved after refocus (expected ~600ms end to end).
+    let total = stamps[2].duration_since(stamps[0]);
+    assert!(
+        ms(total) >= 500,
+        "first and last step fired {}ms apart, expected ~600ms",
+        ms(total)
+    );
+}
+
+#[test]
+fn an_overrun_step_still_runs_immediately_without_any_stall() {
+    // Documented semantics (D1): `at_ms` is a not-before offset. A step that is
+    // already overdue because an earlier step took long (here an explicit Wait)
+    // is NOT delayed further. Only pauses / lost windows are excluded.
+    let at = |at_ms: u64, action: DslAction| DslTimedAction {
+        at_ms,
+        action,
+        enabled: true,
+        note: None,
+    };
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn(
+        TimestampedExecutor {
+            injected: injected.clone(),
+        },
+        MockPlatform,
+    );
+    let doc = document(
+        vec![
+            at(0, dsl_click(1, 0)),
+            at(0, DslAction::Wait { ms: 300 }),
+            at(100, dsl_click(2, 0)), // due at 100ms, but the Wait ends at ~300ms
+        ],
+        1,
+    );
+    handle.send(EngineCommand::SetDocument(Box::new(doc)));
+    handle.send(EngineCommand::Start);
+
+    assert!(wait_for(Duration::from_secs(3), || {
+        injected.lock().unwrap().len() == 2
+    }));
+    let stamps: Vec<Instant> = injected.lock().unwrap().iter().map(|(t, _)| *t).collect();
+    drop(handle);
+
+    let gap = stamps[1].duration_since(stamps[0]);
+    assert!(ms(gap) >= 250, "the Wait must still elapse ({}ms)", ms(gap));
+    assert!(
+        ms(gap) < 400,
+        "an overdue step after a Wait must not be delayed further ({}ms)",
+        ms(gap)
+    );
+}

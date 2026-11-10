@@ -24,6 +24,7 @@ const DRAG_STEP_MS: u64 = 16;
 /// remaining interruptible within one step.
 const MAX_DRAG_STEPS: u32 = 240;
 
+use crate::clock::RunClock;
 use crate::resolve::resolve_action;
 use crate::storage::load_document;
 use crate::submacro::{
@@ -168,6 +169,9 @@ pub struct Player<E: ActionExecutor, P: PlatformConditionProvider> {
     variables: Arc<Mutex<VariableStore>>,
     expr_engine: ExpressionEngineHandle,
     loader: SubMacroLoader,
+    /// Active-time clock for scheduling: pauses and a lost target window are
+    /// excluded so resuming never fires the remaining steps as a burst.
+    clock: RunClock,
     /// Consecutive injection failures in the current run (reset on success and
     /// at the start of each run); drives the auto-stop safety net.
     consecutive_failures: AtomicU32,
@@ -198,6 +202,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             variables: Arc::new(Mutex::new(VariableStore::new())),
             expr_engine: create_expression_engine(),
             loader,
+            clock: RunClock::new(),
             consecutive_failures: AtomicU32::new(0),
             cmd_rx,
             event_tx,
@@ -336,7 +341,9 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         doc: &MacroDocument,
         sub_ctx: &SubMacroContextHandle,
     ) -> bool {
-        let start = Instant::now();
+        // Scheduling runs on active time (see `crate::clock`): time spent paused
+        // or waiting for the target window does not count towards `at_ms`.
+        let origin = self.clock.origin();
 
         for (index, timed_action) in timeline.iter().enumerate() {
             // Check for stop/pause
@@ -362,7 +369,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
 
             // Wait until the scheduled time
             let target_ms = (timed_action.at_ms as f32 / speed) as u64;
-            let elapsed = start.elapsed().as_millis() as u64;
+            let elapsed = self.clock.active_elapsed_ms(origin);
             if target_ms > elapsed {
                 let wait_ms = target_ms - elapsed;
                 self.interruptible_sleep(wait_ms);
@@ -542,6 +549,12 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         };
 
         if let Some(old) = old {
+            // A pause is a stall: its duration must not advance the timeline clock.
+            if new_state == EngineState::Paused {
+                self.clock.begin_stall();
+            } else if old == EngineState::Paused {
+                self.clock.end_stall();
+            }
             self.emit(EngineEvent::StateChanged {
                 old,
                 new: new_state,
@@ -575,6 +588,10 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                     title: target.title.clone(),
                     process: target.process.clone(),
                 });
+
+                // Waiting for the window is a stall (ended on every exit path by
+                // the guard), so the time away does not advance the timeline clock.
+                let _stall = self.clock.stall();
 
                 // Wait until window is focused again or stopped
                 loop {

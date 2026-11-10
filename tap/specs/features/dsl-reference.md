@@ -141,7 +141,7 @@ timeline:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `at_ms` | number | Yes | Milliseconds since timeline start |
+| `at_ms` | number | Yes | Earliest start, in milliseconds since timeline start (see below) |
 | `action` | tagged value | Yes | The action to perform |
 | `enabled` | boolean | No | Whether the action runs (default `true`) |
 | `note` | string | No | User comment |
@@ -149,6 +149,23 @@ timeline:
 ## Actions
 
 ### Coordinate system
+
+### Timing semantics
+
+`at_ms` is a **not-before** offset measured on an *active-time* clock that
+restarts at the beginning of every pass over the timeline (and for each
+`call_macro` child):
+
+- A step runs once its `at_ms` has elapsed (scaled by `run.speed`). If it is
+  already overdue, it runs **immediately** — for example a step scheduled at
+  100 ms that follows a `wait` of 300 ms, or a click right after a `wait_until`
+  that took several seconds.
+- Time spent inside a step's own execution (`wait`, `wait_until`, `drag`,
+  `call_macro`) counts as elapsed, so it can make later steps overdue.
+- Time the run **could not make progress** does *not* count: the clock stops
+  while the engine is **paused** and while it is **waiting for the bound target
+  window** to regain focus. After resuming, the remaining steps keep their
+  original spacing instead of firing back-to-back.
 
 All `x`/`y` are in the OS **injection space**, shared by recording, playback and
 the picker: **physical pixels on Windows** (the app opts into Per-Monitor V2 DPI
