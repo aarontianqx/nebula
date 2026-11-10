@@ -9,6 +9,7 @@ import { StatusBar } from "./components/StatusBar";
 import { Topbar } from "./components/Topbar";
 import { TimelineEditor } from "./components/timeline/TimelineEditor";
 import { VariableDialog } from "./components/modals/VariableDialog";
+import { VariablesEditor } from "./components/modals/VariablesEditor";
 import { setupEventListeners } from "./lib/events";
 import { useDocumentStore } from "./stores/documentStore";
 import { usePermissionStore } from "./stores/permissionStore";
@@ -57,6 +58,7 @@ export default function App() {
         </main>
       </div>
       <VariableDialog />
+      <VariablesEditor />
       <StatusBar />
     </div>
   );

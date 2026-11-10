@@ -17,9 +17,10 @@ yarn tauri:dev
 ### 代码检查（提交前 / CI）
 
 ```bash
-# 前端：类型检查 + Lint
+# 前端：类型检查 + Lint + 单测（vitest，需 Node 22+）
 yarn typecheck
 yarn lint
+yarn test
 
 # Rust：格式化 + Clippy + 测试
 cargo fmt --all --check

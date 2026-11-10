@@ -11,13 +11,13 @@ export function TargetWindowCard() {
   const isIdle = engineState === "Idle";
   const active = engineState === "Running" || engineState === "Paused";
 
-  const targetTitle = useDocumentStore((s) => s.targetTitle);
-  const pauseWhenUnfocused = useDocumentStore((s) => s.pauseWhenUnfocused);
-  const editable = useDocumentStore((s) => s.editable);
+  const target = useDocumentStore((s) => s.doc.target_window);
+  const targetTitle = target?.title ?? "";
+  const pauseWhenUnfocused = target?.pause_when_unfocused ?? true;
   const doc = useDocumentStore.getState;
 
   const [windowList, setWindowList] = useState<WindowInfoResponse[]>([]);
-  const disabled = !isIdle || !editable;
+  const disabled = !isIdle;
 
   const refresh = useCallback(async () => {
     try {
@@ -65,7 +65,7 @@ export function TargetWindowCard() {
               type="checkbox"
               checked={pauseWhenUnfocused}
               onChange={(e) => doc().setPauseWhenUnfocused(e.target.checked)}
-              disabled={disabled}
+              disabled={disabled || !target}
             />
             Pause when target window not focused
           </label>

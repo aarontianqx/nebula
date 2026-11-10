@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { variableEntries } from "../../lib/document";
 import { api } from "../../lib/ipc";
 import { startTimelineRun } from "../../lib/run";
 import { useDocumentStore } from "../../stores/documentStore";
@@ -9,15 +10,16 @@ import { useUiStore } from "../../stores/uiStore";
 export function VariableDialog() {
   const show = useUiStore((s) => s.showVariableDialog);
   const dialogMode = useUiStore((s) => s.variableDialogMode);
-  const variables = useDocumentStore((s) => s.variables);
+  const doc = useDocumentStore((s) => s.doc);
   const close = () => useUiStore.getState().setShowVariableDialog(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const variables = useMemo(() => variableEntries(doc), [doc]);
 
   useEffect(() => {
     if (!show) return;
     const seed: Record<string, unknown> = {};
-    for (const v of variables) {
-      seed[v.name] = v.default ?? (v.var_type === "number" ? 0 : v.var_type === "boolean" ? false : "");
+    for (const [name, def] of variables) {
+      seed[name] = def.default ?? (def.type === "number" ? 0 : def.type === "boolean" ? false : "");
     }
     setValues(seed);
   }, [show, variables]);
@@ -42,33 +44,33 @@ export function VariableDialog() {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{dialogMode === "run" ? "Set Variables & Run" : "Set Variables"}</h3>
         <div className="variable-form">
-          {variables.map((v) => (
-            <div key={v.name} className="field">
+          {variables.map(([name, def]) => (
+            <div key={name} className="field">
               <label className="label">
-                {v.name}
-                {v.description && <span className="var-desc"> - {v.description}</span>}
+                {name}
+                {def.description && <span className="var-desc"> - {def.description}</span>}
               </label>
-              {v.var_type === "boolean" ? (
+              {def.type === "boolean" ? (
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
-                    checked={!!values[v.name]}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [v.name]: e.target.checked }))}
+                    checked={!!values[name]}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [name]: e.target.checked }))}
                   />
                   Enabled
                 </label>
-              ) : v.var_type === "number" ? (
+              ) : def.type === "number" ? (
                 <input
                   type="number"
-                  value={(values[v.name] as number) ?? 0}
-                  onChange={(e) => setValues((prev) => ({ ...prev, [v.name]: parseFloat(e.target.value) || 0 }))}
+                  value={(values[name] as number) ?? 0}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [name]: parseFloat(e.target.value) || 0 }))}
                   className="input"
                 />
               ) : (
                 <input
                   type="text"
-                  value={(values[v.name] as string) ?? ""}
-                  onChange={(e) => setValues((prev) => ({ ...prev, [v.name]: e.target.value }))}
+                  value={(values[name] as string) ?? ""}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [name]: e.target.value }))}
                   className="input"
                 />
               )}

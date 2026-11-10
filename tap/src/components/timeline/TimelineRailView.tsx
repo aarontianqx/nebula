@@ -1,14 +1,14 @@
 import { useRef, useState } from "react";
 
-import { actionGlyph, formatAction } from "../../lib/actions";
+import { actionGlyph, formatDslAction } from "../../lib/actions";
+import { isEnabled } from "../../lib/document";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
 
 export function TimelineRailView() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
-  const timeline = useDocumentStore((s) => s.timeline);
-  const editable = useDocumentStore((s) => s.editable);
+  const timeline = useDocumentStore((s) => s.doc.timeline);
   const doc = useDocumentStore.getState;
   const selectedIdx = useUiStore((s) => s.selectedActionIdx);
   const selectAction = useUiStore((s) => s.selectAction);
@@ -17,7 +17,7 @@ export function TimelineRailView() {
   const scaleRef = useRef<number>(1);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
 
-  const canEdit = isIdle && editable;
+  const canEdit = isIdle;
   const maxAt = timeline.reduce((m, a) => Math.max(m, a.at_ms), 0);
   const scale = Math.max(maxAt, 1);
 
@@ -56,11 +56,11 @@ export function TimelineRailView() {
         {timeline.map((item, idx) => (
           <button
             key={idx}
-            className={`rail-marker ${!item.enabled ? "disabled" : ""} ${selectedIdx === idx ? "selected" : ""} ${
+            className={`rail-marker ${!isEnabled(item) ? "disabled" : ""} ${selectedIdx === idx ? "selected" : ""} ${
               canEdit ? "draggable" : ""
             }`}
             style={{ left: `${(item.at_ms / scale) * 100}%` }}
-            title={`${item.at_ms}ms — ${formatAction(item.action)}`}
+            title={`${item.at_ms}ms — ${formatDslAction(item.action)}`}
             onClick={() => selectAction(idx)}
             onPointerDown={(e) => {
               if (!canEdit) return;

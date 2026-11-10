@@ -1094,7 +1094,7 @@ select.input {
 /* ===== M8: Timeline editor body (view + inspector) ===== */
 .timeline-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 14px;
   align-items: start;
 }
@@ -1155,6 +1155,142 @@ select.input {
   font-style: italic;
   text-align: center;
   padding: 24px 8px;
+}
+
+/* ===== Inspector: values, conditions, nested actions, call arguments ===== */
+.inspector-card .field {
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+
+.inspector-summary {
+  font-weight: 600;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+.inspector-issues {
+  margin-top: 12px;
+}
+
+.field-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.field-hint-warn,
+.value-hint {
+  color: var(--warning);
+}
+
+.value-hint {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.value-cell {
+  min-width: 0;
+}
+
+.value-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.value-input .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.value-input select.value-ref {
+  flex: 0 0 auto;
+  width: 46px;
+  padding: 8px 4px;
+  text-align: center;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.color-swatch {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.nested-action,
+.args-editor {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin-bottom: 12px;
+}
+
+.nested-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.nested-add {
+  margin-bottom: 12px;
+}
+
+.arg-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+select.add-action {
+  cursor: pointer;
+}
+
+/* ===== Variable definitions dialog ===== */
+.modal-wide {
+  min-width: 560px;
+  max-width: 780px;
+}
+
+.modal-lead {
+  margin: -8px 0 16px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.var-def-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.var-def-row {
+  display: grid;
+  grid-template-columns: 130px 90px 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.var-def-head {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.modal-actions-spread {
+  justify-content: space-between;
 }
 
 /* ===== M8: Rail view ===== */

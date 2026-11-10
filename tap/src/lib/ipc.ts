@@ -9,16 +9,14 @@ import { listen as tauriListen, type EventCallback, type UnlistenFn } from "@tau
 
 import type {
   ColorResponse,
-  DocumentMeta,
   EngineState,
   KeyClickRequest,
+  MacroDocument,
   PermissionStatus,
-  Profile,
   RecordingStatus,
   TemplateInfo,
   Timeline,
   ValidationErrorResponse,
-  VariableDefinitionResponse,
   WindowInfoResponse,
 } from "./types";
 
@@ -68,32 +66,25 @@ export const api = {
   stopExecution: () => invoke<void>("stop_execution"),
   emergencyStop: () => invoke<void>("emergency_stop"),
 
-  // === Document / profile (sync contract) ===
-  updateProfile: (profile: Profile) => invoke<void>("update_profile", { profile }),
-  getCurrentProfile: () => invoke<Profile>("get_current_profile"),
+  // === Document (sync contract) ===
+  getDocument: () => invoke<MacroDocument>("get_document"),
+  /** Replaces the backend document; never rejected, returns validation findings as warnings. */
+  updateDocument: (document: MacroDocument) =>
+    invoke<ValidationErrorResponse[]>("update_document", { document }),
   saveProfile: (name: string) => invoke<string>("cmd_save_profile", { name }),
-  loadProfile: (name: string) => invoke<Profile>("cmd_load_profile", { name }),
+  loadProfile: (name: string) => invoke<MacroDocument>("cmd_load_profile", { name }),
   deleteProfile: (name: string) => invoke<void>("cmd_delete_profile", { name }),
   listProfiles: () => invoke<string[]>("cmd_list_profiles"),
   getLastUsed: () => invoke<string | null>("cmd_get_last_used"),
   getRecentProfiles: () => invoke<string[]>("cmd_get_recent_profiles"),
 
-  // === Metadata (lossless) ===
-  getDocumentMeta: () => invoke<DocumentMeta>("cmd_get_document_meta"),
-  setDocumentMeta: (meta: DocumentMeta) =>
-    invoke<void>("cmd_set_document_meta", {
-      description: meta.description,
-      author: meta.author,
-      tags: meta.tags,
-    }),
-
   // === Templates ===
   listTemplates: () => invoke<TemplateInfo[]>("cmd_list_templates"),
-  applyTemplate: (id: string) => invoke<Profile>("cmd_apply_template", { id }),
+  applyTemplate: (id: string) => invoke<MacroDocument>("cmd_apply_template", { id }),
 
   // === Native file import / export ===
   exportYamlToPath: (path: string) => invoke<void>("cmd_export_yaml_to_path", { path }),
-  importYamlFromPath: (path: string) => invoke<Profile>("cmd_import_yaml_from_path", { path }),
+  importYamlFromPath: (path: string) => invoke<MacroDocument>("cmd_import_yaml_from_path", { path }),
 
   // === OS permissions ===
   checkPermissions: () => invoke<PermissionStatus>("cmd_check_permissions"),
@@ -127,12 +118,11 @@ export const api = {
   // === Picker ===
   openPicker: () => invoke<void>("open_picker_window"),
 
-  // === YAML / variables ===
+  // === YAML / run-time variables ===
   exportYaml: () => invoke<string>("cmd_export_yaml"),
-  importYaml: (yamlContent: string) => invoke<Profile>("cmd_import_yaml", { yamlContent }),
+  importYaml: (yamlContent: string) => invoke<MacroDocument>("cmd_import_yaml", { yamlContent }),
   validateYaml: (yamlContent: string) =>
     invoke<ValidationErrorResponse[] | null>("cmd_validate_yaml", { yamlContent }),
-  getMacroVariables: () => invoke<VariableDefinitionResponse[]>("cmd_get_macro_variables"),
   setRuntimeVariables: (vars: Record<string, unknown>) =>
     invoke<void>("cmd_set_runtime_variables", { vars }),
 

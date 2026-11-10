@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { formatAction } from "../lib/actions";
+import { formatResolvedAction } from "../lib/actions";
 import { api } from "../lib/ipc";
 import type { EngineEvent, EngineState, LogEntry, Point } from "../lib/types";
 
@@ -90,7 +90,7 @@ export const useEngineStore = create<EngineStore>((set, get) => ({
     } else if ("CountdownTick" in e) {
       set({ countdown: e.CountdownTick.remaining_secs, status: `Starting in ${e.CountdownTick.remaining_secs}...` });
     } else if ("ActionStarting" in e) {
-      const actionStr = formatAction(e.ActionStarting.action);
+      const actionStr = formatResolvedAction(e.ActionStarting.action);
       set({ lastAction: actionStr, status: `Executing: ${actionStr}` });
       addLog(`-> ${actionStr}`);
     } else if ("ActionCompleted" in e) {

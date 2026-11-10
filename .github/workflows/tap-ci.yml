@@ -90,16 +90,17 @@ jobs:
         run: cargo test -p tap-platform -p tap-tauri
 
   frontend:
-    name: tap frontend (typecheck + lint)
+    name: tap frontend (typecheck + lint + test)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Node 22 matches the release workflow and is required by vitest 5.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
           cache-dependency-path: tap/yarn.lock
 
@@ -114,3 +115,7 @@ jobs:
       - name: Lint (eslint)
         working-directory: tap
         run: yarn lint
+
+      - name: Test (vitest)
+        working-directory: tap
+        run: yarn test

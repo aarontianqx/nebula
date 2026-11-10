@@ -1,19 +1,19 @@
 import type { MouseEvent } from "react";
 
-import { formatAction } from "../../lib/actions";
+import { formatDslAction } from "../../lib/actions";
+import { isEnabled } from "../../lib/document";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
 
 export function TimelineListView() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
-  const timeline = useDocumentStore((s) => s.timeline);
-  const editable = useDocumentStore((s) => s.editable);
+  const timeline = useDocumentStore((s) => s.doc.timeline);
   const doc = useDocumentStore.getState;
   const selectedIdx = useUiStore((s) => s.selectedActionIdx);
   const selectAction = useUiStore((s) => s.selectAction);
 
-  const canEdit = isIdle && editable;
+  const canEdit = isIdle;
 
   if (timeline.length === 0) {
     return (
@@ -31,23 +31,23 @@ export function TimelineListView() {
         {timeline.map((item, idx) => (
           <div
             key={idx}
-            className={`timeline-item ${!item.enabled ? "disabled" : ""} ${selectedIdx === idx ? "selected" : ""}`}
+            className={`timeline-item ${!isEnabled(item) ? "disabled" : ""} ${selectedIdx === idx ? "selected" : ""}`}
             onClick={() => selectAction(idx)}
           >
             <input
               type="checkbox"
               className="timeline-enable"
-              checked={item.enabled}
+              checked={isEnabled(item)}
               onChange={(e) => {
                 e.stopPropagation();
                 doc().toggleAction(idx);
               }}
               disabled={!canEdit}
-              title={item.enabled ? "Disable" : "Enable"}
+              title={isEnabled(item) ? "Disable" : "Enable"}
             />
             <span className="timeline-time">{item.at_ms}ms</span>
             <span className="timeline-action">
-              {formatAction(item.action)}
+              {formatDslAction(item.action)}
               {item.note && <span className="timeline-note"> — {item.note}</span>}
             </span>
             {canEdit && (

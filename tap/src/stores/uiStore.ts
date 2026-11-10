@@ -13,6 +13,8 @@ interface UiStore {
   selectedActionIdx: number | null;
   showVariableDialog: boolean;
   variableDialogMode: VariableDialogMode;
+  /** The editor for the macro's variable definitions (name, type, default, description). */
+  showVariableDefinitions: boolean;
   yamlContent: string;
   yamlErrors: ValidationErrorResponse[];
   /** When true, the backend skips real injection (safe preview of a run). */
@@ -23,6 +25,7 @@ interface UiStore {
   selectAction: (index: number | null) => void;
   setShowVariableDialog: (show: boolean) => void;
   openVariableDialog: (mode: VariableDialogMode) => void;
+  setShowVariableDefinitions: (show: boolean) => void;
   setYamlContent: (content: string) => void;
   setYamlErrors: (errors: ValidationErrorResponse[]) => void;
   setDryRun: (enabled: boolean) => void;
@@ -35,6 +38,7 @@ export const useUiStore = create<UiStore>((set) => ({
   selectedActionIdx: null,
   showVariableDialog: false,
   variableDialogMode: "edit",
+  showVariableDefinitions: false,
   yamlContent: "",
   yamlErrors: [],
   dryRun: false,
@@ -44,6 +48,7 @@ export const useUiStore = create<UiStore>((set) => ({
   selectAction: (selectedActionIdx) => set({ selectedActionIdx }),
   setShowVariableDialog: (showVariableDialog) => set({ showVariableDialog }),
   openVariableDialog: (variableDialogMode) => set({ variableDialogMode, showVariableDialog: true }),
+  setShowVariableDefinitions: (showVariableDefinitions) => set({ showVariableDefinitions }),
   setYamlContent: (yamlContent) => set({ yamlContent }),
   setYamlErrors: (yamlErrors) => set({ yamlErrors }),
 

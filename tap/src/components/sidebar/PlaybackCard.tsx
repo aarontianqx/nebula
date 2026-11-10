@@ -1,15 +1,15 @@
+import { repeatText as formatRepeat } from "../../lib/document";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 
 export function PlaybackCard() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
-  const run = useDocumentStore((s) => s.run);
-  const editable = useDocumentStore((s) => s.editable);
+  const run = useDocumentStore((s) => s.doc.run);
   const doc = useDocumentStore.getState;
 
-  const repeatText = run.repeat === "Forever" ? "" : String(run.repeat.Times);
+  const repeatText = formatRepeat(run);
   const countdownSecs = Math.floor(run.start_delay_ms / 1000);
-  const disabled = !isIdle || !editable;
+  const disabled = !isIdle;
 
   return (
     <>

@@ -4,12 +4,15 @@ import { api } from "../../lib/ipc";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 
+// A stable empty list: a selector must not mint a new array per call.
+const NO_TAGS: string[] = [];
+
 export function ProfilesCard() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
-  const name = useDocumentStore((s) => s.name);
-  const description = useDocumentStore((s) => s.description);
-  const author = useDocumentStore((s) => s.author);
-  const tags = useDocumentStore((s) => s.tags);
+  const name = useDocumentStore((s) => s.doc.name);
+  const description = useDocumentStore((s) => s.doc.description) ?? "";
+  const author = useDocumentStore((s) => s.doc.author) ?? "";
+  const tags = useDocumentStore((s) => s.doc.tags) ?? NO_TAGS;
   const profiles = useDocumentStore((s) => s.profiles);
   const recents = useDocumentStore((s) => s.recents);
   const templates = useDocumentStore((s) => s.templates);

@@ -104,8 +104,12 @@ timeline:
 ```
 
 A value left unresolved (an unfilled variable in a coordinate) is collected by
-the **run-before variable form** prompt; macros carrying variables are edited in
-the **Code (YAML)** view, since the visual editor projects a lossy resolved view.
+the **run-before variable form** prompt. The visual editor edits the document
+losslessly and covers every action kind: value fields take a literal or a
+`{{ }}` template (with a picker for variables and counters and a check for
+unclosed or unbalanced templates), and variables are defined in the editor's
+**Variables** dialog. Only combined conditions (`and` / `or` / `not`) are edited
+in the **Code (YAML)** view.
 
 ## Target window
 
@@ -146,10 +150,6 @@ timeline:
 | `enabled` | boolean | No | Whether the action runs (default `true`) |
 | `note` | string | No | User comment |
 
-## Actions
-
-### Coordinate system
-
 ### Timing semantics
 
 `at_ms` is a **not-before** offset measured on an *active-time* clock that
@@ -166,6 +166,10 @@ restarts at the beginning of every pass over the timeline (and for each
   while the engine is **paused** and while it is **waiting for the bound target
   window** to regain focus. After resuming, the remaining steps keep their
   original spacing instead of firing back-to-back.
+
+## Actions
+
+### Coordinate system
 
 All `x`/`y` are in the OS **injection space**, shared by recording, playback and
 the picker: **physical pixels on Windows** (the app opts into Per-Monitor V2 DPI

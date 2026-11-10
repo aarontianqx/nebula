@@ -1,3 +1,4 @@
+import { countVariables } from "../lib/document";
 import { startTimelineRun } from "../lib/run";
 import { useDocumentStore } from "../stores/documentStore";
 import { useEngineStore } from "../stores/engineStore";
@@ -26,8 +27,8 @@ export function RunPanel() {
   const keyClickCount = useToolStore((s) => s.keyClickCount);
   const tool = useToolStore;
 
-  const timelineLength = useDocumentStore((s) => s.timeline.length);
-  const variableCount = useDocumentStore((s) => s.variables.length);
+  const timelineLength = useDocumentStore((s) => s.doc.timeline.length);
+  const variableCount = useDocumentStore((s) => countVariables(s.doc));
 
   const inputReady = usePermissionStore(selectInputReady);
 

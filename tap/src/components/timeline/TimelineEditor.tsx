@@ -1,5 +1,7 @@
-import { defaultActionForKind } from "../../lib/actions";
+import { ACTION_GROUPS, ACTION_LABELS, defaultActionForKind } from "../../lib/actions";
+import { countVariables } from "../../lib/document";
 import { api } from "../../lib/ipc";
+import type { DslActionKind } from "../../lib/types";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
@@ -12,19 +14,29 @@ function log(msg: string): void {
   useEngineStore.getState().addLog(msg);
 }
 
+/** Append a new step of `kind` and open it in the Inspector. */
+function addAction(kind: DslActionKind): void {
+  const store = useDocumentStore.getState();
+  const index = store.doc.timeline.length;
+  store.appendAction(defaultActionForKind(kind));
+  useUiStore.getState().selectAction(index);
+}
+
 export function TimelineEditor() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
-  const count = useDocumentStore((s) => s.timeline.length);
-  const editable = useDocumentStore((s) => s.editable);
-  const variableCount = useDocumentStore((s) => s.variables.length);
+  const count = useDocumentStore((s) => s.doc.timeline.length);
+  const issues = useDocumentStore((s) => s.issues);
+  const variableCount = useDocumentStore((s) => countVariables(s.doc));
   const view = useUiStore((s) => s.timelineView);
   const ui = useUiStore.getState;
 
-  const canEdit = isIdle && editable;
+  const canEdit = isIdle;
 
   async function gotoCode() {
     ui().setTimelineView("code");
     try {
+      // The YAML is rendered from the backend's document: make sure it has the latest edits.
+      await useDocumentStore.getState().flush();
       ui().setYamlContent(await api.exportYaml());
     } catch (err) {
       log(`Export failed: ${String(err)}`);
@@ -55,9 +67,27 @@ export function TimelineEditor() {
           </button>
         </div>
         <div className="timeline-toolbar">
-          <button className="btn btn-sm" onClick={() => useDocumentStore.getState().appendAction(defaultActionForKind("Click"))} disabled={!canEdit} title="Add action">
-            + Add
-          </button>
+          <select
+            className="btn btn-sm add-action"
+            value=""
+            onChange={(e) => e.target.value && addAction(e.target.value as DslActionKind)}
+            disabled={!canEdit}
+            title="Add an action to the end of the timeline"
+            aria-label="Add action"
+          >
+            <option value="" disabled>
+              + Add
+            </option>
+            {ACTION_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.kinds.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {ACTION_LABELS[kind]}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
           <button className="btn btn-sm" onClick={() => useDocumentStore.getState().batchAdjustDelay(-50)} disabled={!canEdit} title="Shift all -50ms">
             All -50
           </button>
@@ -80,18 +110,29 @@ export function TimelineEditor() {
           >
             Import
           </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => useUiStore.getState().setShowVariableDefinitions(true)}
+            disabled={!isIdle}
+            title="Define the variables this macro uses"
+          >
+            Variables
+          </button>
           {variableCount > 0 && (
-            <button className="btn btn-sm" onClick={() => ui().openVariableDialog("edit")} disabled={!isIdle} title="Set variables">
-              Variables
+            <button className="btn btn-sm" onClick={() => ui().openVariableDialog("edit")} disabled={!isIdle} title="Set variable values for the next run">
+              Values
             </button>
           )}
         </div>
       </div>
 
-      {!editable && view !== "code" && (
-        <div className="info-box readonly-banner">
-          This macro uses variables/expressions. The visual view is a resolved preview; edit it in the{" "}
-          <strong>Code (YAML)</strong> view to keep parameters intact.
+      {issues.length > 0 && view !== "code" && (
+        <div className="warning-box timeline-issues">
+          {issues.map((issue, idx) => (
+            <div key={idx}>
+              <strong>{issue.path || "macro"}</strong>: {issue.message}
+            </div>
+          ))}
         </div>
       )}
 
