@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { api } from "../lib/ipc";
 import type { ColorResponse, PickedWindow } from "../lib/types";
-import { useEngineStore } from "./engineStore";
+import { log } from "./logStore";
 
 // Picking a position and capturing a key are one-shot requests made by a field of the editor.
 // The picker window reports through a global event, so the store remembers who asked: the
@@ -18,10 +18,6 @@ let positionConsumer: PositionConsumer | null = null;
 let positionWantsColor = false;
 /** Bumped to abandon a capture in flight: its result is then ignored. */
 let captureGeneration = 0;
-
-function log(msg: string): void {
-  useEngineStore.getState().addLog(msg);
-}
 
 interface PickStore {
   /** Identifies the field waiting for a picked position, for its "picking" state. */

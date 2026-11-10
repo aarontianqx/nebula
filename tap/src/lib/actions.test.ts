@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ACTION_GROUPS,
-  ACTION_LABELS,
+  ACTION_META,
   actionGlyph,
   actionKind,
   defaultActionForKind,
@@ -11,7 +11,7 @@ import {
 } from "./actions";
 import type { ActionInfo, DslActionKind } from "./types";
 
-const ALL_KINDS = Object.keys(ACTION_LABELS) as DslActionKind[];
+const ALL_KINDS = Object.keys(ACTION_META) as DslActionKind[];
 
 describe("document actions", () => {
   it("builds a default action whose kind matches, for every kind", () => {

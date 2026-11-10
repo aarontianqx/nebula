@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { api } from "../lib/ipc";
 import type { Mode, TimelineView, ValidationErrorResponse } from "../lib/types";
-import { useEngineStore } from "./engineStore";
+import { log } from "./logStore";
 
 /** Why the variable form is open: just set values, or set values then start a run. */
 export type VariableDialogMode = "edit" | "run";
@@ -56,8 +56,8 @@ export const useUiStore = create<UiStore>((set) => ({
     set({ dryRun });
     void api
       .setDryRun(dryRun)
-      .then(() => useEngineStore.getState().addLog(dryRun ? "Dry-run ON (no real input)" : "Dry-run OFF"))
-      .catch((err) => useEngineStore.getState().addLog(`Failed to set dry-run: ${String(err)}`));
+      .then(() => log(dryRun ? "Dry-run ON (no real input)" : "Dry-run OFF"))
+      .catch((err) => log(`Failed to set dry-run: ${String(err)}`));
   },
 
   loadDryRun: async () => {

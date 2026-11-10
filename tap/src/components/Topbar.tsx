@@ -1,4 +1,5 @@
 import { formatDuration } from "../lib/actions";
+import { useCursorStore } from "../stores/cursorStore";
 import { useEngineStore } from "../stores/engineStore";
 import { useRecorderStore } from "../stores/recorderStore";
 import { useUiStore } from "../stores/uiStore";
@@ -8,7 +9,7 @@ export function Topbar() {
   const setMode = useUiStore((s) => s.setMode);
   const dryRun = useUiStore((s) => s.dryRun);
   const engineState = useEngineStore((s) => s.engineState);
-  const mousePos = useEngineStore((s) => s.mousePos);
+  const mousePos = useCursorStore((s) => s.pos);
   const recorderState = useRecorderStore((s) => s.recorderState);
   const eventCount = useRecorderStore((s) => s.eventCount);
   const durationMs = useRecorderStore((s) => s.durationMs);

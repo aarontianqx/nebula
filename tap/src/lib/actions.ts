@@ -6,28 +6,68 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);
 }
 
-/** Human-readable label of every action kind (typed exhaustively: a new variant must be named). */
-export const ACTION_LABELS: Record<DslActionKind, string> = {
-  click: "Click",
-  double_click: "Double Click",
-  mouse_down: "Mouse Down",
-  mouse_up: "Mouse Up",
-  mouse_move: "Move",
-  drag: "Drag",
-  scroll: "Scroll",
-  key_tap: "Key Tap",
-  key_down: "Key Down",
-  key_up: "Key Up",
-  text_input: "Type Text",
-  wait: "Wait",
-  wait_until: "Wait Until",
-  conditional: "If",
-  set_counter: "Set Counter",
-  incr_counter: "Counter +1",
-  decr_counter: "Counter -1",
-  reset_counter: "Reset Counter",
-  exit: "Exit",
-  call_macro: "Call Macro",
+interface ActionMeta {
+  label: string;
+  /** Short glyph the rail view uses to denote the action's category. */
+  glyph: string;
+  /** What the editor inserts when a step is added or its type is changed. */
+  create: () => DslAction;
+}
+
+const MOUSE_GLYPH = "🖱";
+const KEY_GLYPH = "⌨";
+const COUNTER_GLYPH = "#";
+
+/** Everything the editor knows about each action kind; typed exhaustively, so a new variant must be described. */
+export const ACTION_META: Record<DslActionKind, ActionMeta> = {
+  click: { label: "Click", glyph: MOUSE_GLYPH, create: () => ({ click: { x: 0, y: 0, button: "left" } }) },
+  double_click: {
+    label: "Double Click",
+    glyph: MOUSE_GLYPH,
+    create: () => ({ double_click: { x: 0, y: 0, button: "left" } }),
+  },
+  mouse_down: {
+    label: "Mouse Down",
+    glyph: MOUSE_GLYPH,
+    create: () => ({ mouse_down: { x: 0, y: 0, button: "left" } }),
+  },
+  mouse_up: { label: "Mouse Up", glyph: MOUSE_GLYPH, create: () => ({ mouse_up: { x: 0, y: 0, button: "left" } }) },
+  mouse_move: { label: "Move", glyph: MOUSE_GLYPH, create: () => ({ mouse_move: { x: 0, y: 0 } }) },
+  drag: {
+    label: "Drag",
+    glyph: MOUSE_GLYPH,
+    create: () => ({ drag: { from_x: 0, from_y: 0, to_x: 100, to_y: 100, duration_ms: 300 } }),
+  },
+  scroll: { label: "Scroll", glyph: "↕", create: () => ({ scroll: { delta_x: 0, delta_y: -3 } }) },
+  key_tap: { label: "Key Tap", glyph: KEY_GLYPH, create: () => ({ key_tap: { key: "Space" } }) },
+  key_down: { label: "Key Down", glyph: KEY_GLYPH, create: () => ({ key_down: { key: "Shift" } }) },
+  key_up: { label: "Key Up", glyph: KEY_GLYPH, create: () => ({ key_up: { key: "Shift" } }) },
+  text_input: { label: "Type Text", glyph: "✎", create: () => ({ text_input: { text: "" } }) },
+  wait: { label: "Wait", glyph: "⏱", create: () => ({ wait: { ms: 500 } }) },
+  wait_until: {
+    label: "Wait Until",
+    glyph: "⏳",
+    create: () => ({ wait_until: { condition: "always", timeout_ms: 5000, poll_interval_ms: 100 } }),
+  },
+  conditional: {
+    label: "If",
+    glyph: "⑂",
+    create: () => ({ conditional: { condition: "always", then_action: { wait: { ms: 0 } } } }),
+  },
+  set_counter: {
+    label: "Set Counter",
+    glyph: COUNTER_GLYPH,
+    create: () => ({ set_counter: { key: "counter", value: 0 } }),
+  },
+  incr_counter: { label: "Counter +1", glyph: COUNTER_GLYPH, create: () => ({ incr_counter: { key: "counter" } }) },
+  decr_counter: { label: "Counter -1", glyph: COUNTER_GLYPH, create: () => ({ decr_counter: { key: "counter" } }) },
+  reset_counter: {
+    label: "Reset Counter",
+    glyph: COUNTER_GLYPH,
+    create: () => ({ reset_counter: { key: "counter" } }),
+  },
+  exit: { label: "Exit", glyph: "⏹", create: () => "exit" },
+  call_macro: { label: "Call Macro", glyph: "↪", create: () => ({ call_macro: { name: "" } }) },
 };
 
 /** The kinds the editor offers, grouped the way the "Add" menu and the Type select show them. */
@@ -59,51 +99,8 @@ export function actionKind(action: DslAction): DslActionKind {
   return typeof action === "string" ? action : (Object.keys(action)[0] as DslActionKind);
 }
 
-/** A sensible default action for a given kind (used when adding/changing type). */
 export function defaultActionForKind(kind: DslActionKind): DslAction {
-  const button: DslMouseButton = "left";
-  switch (kind) {
-    case "click":
-      return { click: { x: 0, y: 0, button } };
-    case "double_click":
-      return { double_click: { x: 0, y: 0, button } };
-    case "mouse_down":
-      return { mouse_down: { x: 0, y: 0, button } };
-    case "mouse_up":
-      return { mouse_up: { x: 0, y: 0, button } };
-    case "mouse_move":
-      return { mouse_move: { x: 0, y: 0 } };
-    case "drag":
-      return { drag: { from_x: 0, from_y: 0, to_x: 100, to_y: 100, duration_ms: 300 } };
-    case "scroll":
-      return { scroll: { delta_x: 0, delta_y: -3 } };
-    case "key_tap":
-      return { key_tap: { key: "Space" } };
-    case "key_down":
-      return { key_down: { key: "Shift" } };
-    case "key_up":
-      return { key_up: { key: "Shift" } };
-    case "text_input":
-      return { text_input: { text: "" } };
-    case "wait":
-      return { wait: { ms: 500 } };
-    case "wait_until":
-      return { wait_until: { condition: "always", timeout_ms: 5000, poll_interval_ms: 100 } };
-    case "conditional":
-      return { conditional: { condition: "always", then_action: { wait: { ms: 0 } } } };
-    case "set_counter":
-      return { set_counter: { key: "counter", value: 0 } };
-    case "incr_counter":
-      return { incr_counter: { key: "counter" } };
-    case "decr_counter":
-      return { decr_counter: { key: "counter" } };
-    case "reset_counter":
-      return { reset_counter: { key: "counter" } };
-    case "exit":
-      return "exit";
-    case "call_macro":
-      return { call_macro: { name: "" } };
-  }
+  return ACTION_META[kind].create();
 }
 
 export const MOUSE_BUTTONS: DslMouseButton[] = ["left", "right", "middle"];
@@ -119,7 +116,7 @@ export function formatValue(value: DslValue): string {
 
 /** Human-readable one-line summary of a document action. */
 export function formatDslAction(action: DslAction): string {
-  if (typeof action === "string") return ACTION_LABELS[action];
+  if (typeof action === "string") return ACTION_META[action].label;
   if ("click" in action) return `Click @ (${formatValue(action.click.x)}, ${formatValue(action.click.y)})`;
   if ("double_click" in action) {
     return `DblClick @ (${formatValue(action.double_click.x)}, ${formatValue(action.double_click.y)})`;
@@ -168,41 +165,8 @@ export function formatDslAction(action: DslAction): string {
   return assertNever(action);
 }
 
-/** Short glyph used by the rail view to denote action category. */
 export function actionGlyph(action: DslAction): string {
-  const kind = actionKind(action);
-  switch (kind) {
-    case "click":
-    case "double_click":
-    case "mouse_down":
-    case "mouse_up":
-    case "mouse_move":
-    case "drag":
-      return "🖱";
-    case "key_tap":
-    case "key_down":
-    case "key_up":
-      return "⌨";
-    case "text_input":
-      return "✎";
-    case "wait":
-      return "⏱";
-    case "scroll":
-      return "↕";
-    case "wait_until":
-      return "⏳";
-    case "conditional":
-      return "⑂";
-    case "set_counter":
-    case "incr_counter":
-    case "decr_counter":
-    case "reset_counter":
-      return "#";
-    case "exit":
-      return "⏹";
-    case "call_macro":
-      return "↪";
-  }
+  return ACTION_META[actionKind(action)].glyph;
 }
 
 /** One-line summary of a *resolved* action, as reported by the engine while it runs. */

@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ACTION_LABELS, actionGlyph, actionKind, defaultActionForKind, formatDslAction } from "./actions";
+import { ACTION_META, actionGlyph, actionKind, defaultActionForKind, formatDslAction } from "./actions";
 import fixture from "./__fixtures__/kitchen_sink.document.json";
 import type {
   DslAction,
@@ -160,12 +160,12 @@ describe("kitchen sink fixture (written by the Rust model)", () => {
     for (const step of doc.timeline) {
       expect(formatDslAction(step.action)).not.toMatch(/undefined|\[object/);
       expect(actionGlyph(step.action)).not.toBe("");
-      expect(ACTION_LABELS[actionKind(step.action)]).toBeTruthy();
+      expect(ACTION_META[actionKind(step.action)].label).toBeTruthy();
     }
   });
 
   it("names every action kind the UI can create the way the backend does", () => {
-    for (const kind of Object.keys(ACTION_LABELS) as DslActionKind[]) {
+    for (const kind of Object.keys(ACTION_META) as DslActionKind[]) {
       expect(actionKind(defaultActionForKind(kind))).toBe(kind);
     }
   });

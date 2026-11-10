@@ -3,6 +3,8 @@ import { useState } from "react";
 import { api } from "../../lib/ipc";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
+import { useLibraryStore } from "../../stores/libraryStore";
+import { log } from "../../stores/logStore";
 
 // A stable empty list: a selector must not mint a new array per call.
 const NO_TAGS: string[] = [];
@@ -13,10 +15,11 @@ export function ProfilesCard() {
   const description = useDocumentStore((s) => s.doc.description) ?? "";
   const author = useDocumentStore((s) => s.doc.author) ?? "";
   const tags = useDocumentStore((s) => s.doc.tags) ?? NO_TAGS;
-  const profiles = useDocumentStore((s) => s.profiles);
-  const recents = useDocumentStore((s) => s.recents);
-  const templates = useDocumentStore((s) => s.templates);
+  const profiles = useLibraryStore((s) => s.profiles);
+  const recents = useLibraryStore((s) => s.recents);
+  const templates = useLibraryStore((s) => s.templates);
   const doc = useDocumentStore.getState;
+  const library = useLibraryStore.getState;
 
   const [templateId, setTemplateId] = useState("");
 
@@ -24,10 +27,10 @@ export function ProfilesCard() {
     try {
       await doc().flush();
       await api.saveProfile(name);
-      await Promise.all([doc().loadProfiles(), doc().loadRecents()]);
-      useEngineStore.getState().addLog(`Saved: ${name}`);
+      await Promise.all([library().loadProfiles(), library().loadRecents()]);
+      log(`Saved: ${name}`);
     } catch (err) {
-      useEngineStore.getState().addLog(`Failed to save: ${String(err)}`);
+      log(`Failed to save: ${String(err)}`);
     }
   }
 
@@ -79,10 +82,10 @@ export function ProfilesCard() {
           </button>
         </div>
         <div className="btn-row">
-          <button className="btn btn-sm" onClick={() => doc().importFromFile()} disabled={!isIdle}>
+          <button className="btn btn-sm" onClick={() => library().importFromFile()} disabled={!isIdle}>
             Import…
           </button>
-          <button className="btn btn-sm" onClick={() => doc().exportToFile()} disabled={!isIdle}>
+          <button className="btn btn-sm" onClick={() => library().exportToFile()} disabled={!isIdle}>
             Export…
           </button>
         </div>
@@ -107,7 +110,7 @@ export function ProfilesCard() {
               </select>
               <button
                 className="btn btn-sm"
-                onClick={() => templateId && doc().applyTemplate(templateId)}
+                onClick={() => templateId && library().applyTemplate(templateId)}
                 disabled={!isIdle || templateId === ""}
               >
                 Apply
@@ -121,7 +124,7 @@ export function ProfilesCard() {
             <span className="list-caption">Recent</span>
             <div className="recent-chips">
               {recents.map((r) => (
-                <button key={r} className="chip" onClick={() => doc().loadProfile(r)} disabled={!isIdle} title={`Load ${r}`}>
+                <button key={r} className="chip" onClick={() => library().loadProfile(r)} disabled={!isIdle} title={`Load ${r}`}>
                   {r}
                 </button>
               ))}
@@ -133,13 +136,13 @@ export function ProfilesCard() {
           <div className="profile-list">
             {profiles.map((p) => (
               <div key={p} className={`profile-item ${p === name ? "active" : ""}`}>
-                <button className="profile-item-name" onClick={() => doc().loadProfile(p)} disabled={!isIdle}>
+                <button className="profile-item-name" onClick={() => library().loadProfile(p)} disabled={!isIdle}>
                   {p}
                 </button>
                 <button
                   className="profile-item-delete"
                   title="Delete"
-                  onClick={() => doc().deleteProfile(p)}
+                  onClick={() => library().deleteProfile(p)}
                   disabled={!isIdle}
                 >
                   ×

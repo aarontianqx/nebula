@@ -2,9 +2,10 @@ import { countVariables } from "../lib/document";
 import { startTimelineRun } from "../lib/run";
 import { useDocumentStore } from "../stores/documentStore";
 import { useEngineStore } from "../stores/engineStore";
+import { useKeyClickStore } from "../stores/keyClickStore";
 import { selectInputReady, usePermissionStore } from "../stores/permissionStore";
 import { useRecorderStore } from "../stores/recorderStore";
-import { useToolStore } from "../stores/toolStore";
+import { useSimpleStore } from "../stores/simpleStore";
 import { useUiStore } from "../stores/uiStore";
 
 const INPUT_BLOCKED_HINT = "Grant macOS Accessibility to record and replay (see the banner above).";
@@ -22,10 +23,9 @@ export function RunPanel() {
   const recorderState = useRecorderStore((s) => s.recorderState);
   const recorder = useRecorderStore;
 
-  const actionType = useToolStore((s) => s.actionType);
-  const keyClickRunning = useToolStore((s) => s.keyClickRunning);
-  const keyClickCount = useToolStore((s) => s.keyClickCount);
-  const tool = useToolStore;
+  const actionType = useSimpleStore((s) => s.actionType);
+  const keyClickRunning = useKeyClickStore((s) => s.running);
+  const keyClickCount = useKeyClickStore((s) => s.count);
 
   const timelineLength = useDocumentStore((s) => s.doc.timeline.length);
   const variableCount = useDocumentStore((s) => countVariables(s.doc));
@@ -47,7 +47,7 @@ export function RunPanel() {
 
   async function handlePlay() {
     if (mode === "simple") {
-      await tool.getState().startSimple();
+      await useSimpleStore.getState().start();
       return;
     }
     // Parameterized macros: collect run-time values first, then the dialog starts.
@@ -106,7 +106,7 @@ export function RunPanel() {
           {showKeyClickStart && (
             <button
               className="btn btn-primary btn-large"
-              onClick={() => tool.getState().startKeyClick()}
+              onClick={() => useKeyClickStore.getState().start()}
               disabled={!inputReady}
               title={inputReady ? undefined : INPUT_BLOCKED_HINT}
             >
@@ -114,7 +114,7 @@ export function RunPanel() {
             </button>
           )}
           {keyClickRunning && (
-            <button className="btn btn-danger btn-large" onClick={() => tool.getState().stopKeyClick()}>
+            <button className="btn btn-danger btn-large" onClick={() => useKeyClickStore.getState().stop()}>
               Stop Key-&gt;Click
             </button>
           )}

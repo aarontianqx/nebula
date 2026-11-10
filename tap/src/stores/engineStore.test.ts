@@ -22,7 +22,7 @@ function emit(event: EngineEvent): void {
 }
 
 function messages(): string[] {
-  return state().logs.map((l) => l.message);
+  return stores.useLogStore.getState().logs.map((l) => l.message);
 }
 
 describe("state transitions", () => {
@@ -121,15 +121,7 @@ describe("errors and unknown events", () => {
   });
 });
 
-describe("log and run stats", () => {
-  it("caps the log at 200 entries, keeping the newest", () => {
-    for (let i = 0; i < 250; i++) state().addLog(`line ${i}`);
-
-    expect(state().logs).toHaveLength(200);
-    expect(state().logs[0].message).toBe("line 50");
-    expect(state().logs.at(-1)?.message).toBe("line 249");
-  });
-
+describe("run stats", () => {
   it("resetRunStats clears counters and the log", () => {
     emit({ ActionCompleted: { index: 0 } });
     emit({ IterationCompleted: { iteration: 2 } });
@@ -137,7 +129,7 @@ describe("log and run stats", () => {
 
     expect(state().executedCount).toBe(0);
     expect(state().iteration).toBe(0);
-    expect(state().logs).toEqual([]);
+    expect(messages()).toEqual([]);
   });
 });
 

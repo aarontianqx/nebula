@@ -174,7 +174,7 @@ describe("flush", () => {
     store.setAtMs(0, 10);
     await vi.advanceTimersByTimeAsync(PUSH_DEBOUNCE_MS);
     expect(stores.api.updateDocument).toHaveBeenCalledTimes(1);
-    expect(stores.useEngineStore.getState().logs.some((l) => l.message.includes("Failed to sync edit"))).toBe(true);
+    expect(stores.useLogStore.getState().logs.some((l) => l.message.includes("Failed to sync edit"))).toBe(true);
 
     await store.flush();
     expect(stores.api.updateDocument).toHaveBeenCalledTimes(2);
@@ -204,17 +204,6 @@ describe("document replacement", () => {
 
     expect(doc(stores).name).toBe("Next");
     expect(doc(stores).timeline).toEqual([click(5)]);
-  });
-
-  it("loadProfile adopts the loaded document and refreshes recents", async () => {
-    const stores = await setup();
-    stores.api.loadProfile.mockResolvedValue(macro("Saved", [click(9)]));
-    stores.api.getRecentProfiles.mockResolvedValue(["Saved"]);
-
-    await stores.useDocumentStore.getState().loadProfile("Saved");
-
-    expect(doc(stores).name).toBe("Saved");
-    expect(stores.useDocumentStore.getState().recents).toEqual(["Saved"]);
   });
 
   it("importing YAML replaces the mirror and returns the document", async () => {

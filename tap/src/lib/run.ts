@@ -5,6 +5,7 @@
 import { useDocumentStore } from "../stores/documentStore";
 import { useEngineStore } from "../stores/engineStore";
 import { api } from "./ipc";
+import { log } from "../stores/logStore";
 
 /**
  * Force the latest edits to the canonical document, then start playback.
@@ -18,9 +19,9 @@ export async function startTimelineRun(): Promise<void> {
     engine.resetRunStats();
     await useDocumentStore.getState().flush();
     await api.startExecution();
-    engine.addLog("Playing timeline");
+    log("Playing timeline");
   } catch (err) {
     engine.setStatus(`Failed: ${String(err)}`);
-    engine.addLog(`Error: ${String(err)}`);
+    log(`Error: ${String(err)}`);
   }
 }

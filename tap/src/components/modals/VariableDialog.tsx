@@ -4,8 +4,8 @@ import { variableEntries } from "../../lib/document";
 import { api } from "../../lib/ipc";
 import { startTimelineRun } from "../../lib/run";
 import { useDocumentStore } from "../../stores/documentStore";
-import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
+import { log } from "../../stores/logStore";
 
 export function VariableDialog() {
   const show = useUiStore((s) => s.showVariableDialog);
@@ -29,13 +29,13 @@ export function VariableDialog() {
   async function handleApply() {
     try {
       await api.setRuntimeVariables(values);
-      useEngineStore.getState().addLog("Variables applied");
+      log("Variables applied");
       close();
       if (dialogMode === "run") {
         await startTimelineRun();
       }
     } catch (err) {
-      useEngineStore.getState().addLog(`Failed to apply variables: ${String(err)}`);
+      log(`Failed to apply variables: ${String(err)}`);
     }
   }
 

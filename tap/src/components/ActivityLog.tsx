@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 
-import { useEngineStore } from "../stores/engineStore";
+import { useLogStore } from "../stores/logStore";
 
 export function ActivityLog() {
-  const logs = useEngineStore((s) => s.logs);
+  const logs = useLogStore((s) => s.logs);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -20,10 +20,10 @@ export function ActivityLog() {
           {logs.length === 0 ? (
             <div className="log-empty">No activity yet</div>
           ) : (
-            logs.slice(-30).map((log, idx) => (
+            logs.slice(-30).map((entry, idx) => (
               <div key={idx} className="log-entry">
-                <span className="log-time">{log.time}</span>
-                <span className="log-msg">{log.message}</span>
+                <span className="log-time">{entry.time}</span>
+                <span className="log-msg">{entry.message}</span>
               </div>
             ))
           )}

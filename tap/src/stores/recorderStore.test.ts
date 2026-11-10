@@ -30,12 +30,12 @@ describe("starting a recording", () => {
   });
 
   it("reports a refusal (for example, the target window is not on screen) and stays idle", async () => {
-    const { api, useEngineStore, useRecorderStore } = await setup();
+    const { api, useLogStore, useRecorderStore } = await setup();
     api.startRecording.mockRejectedValue("The target window was not found.");
 
     await useRecorderStore.getState().start();
 
     expect(useRecorderStore.getState().recorderState).toBe("Idle");
-    expect(useEngineStore.getState().logs.at(-1)?.message).toMatch(/target window was not found/);
+    expect(useLogStore.getState().logs.at(-1)?.message).toMatch(/target window was not found/);
   });
 });

@@ -1,18 +1,16 @@
-import { ACTION_GROUPS, ACTION_LABELS, defaultActionForKind } from "../../lib/actions";
+import { ACTION_GROUPS, ACTION_META, defaultActionForKind } from "../../lib/actions";
 import { countVariables } from "../../lib/document";
 import { api } from "../../lib/ipc";
 import type { DslActionKind } from "../../lib/types";
 import { useDocumentStore } from "../../stores/documentStore";
+import { useLibraryStore } from "../../stores/libraryStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
 import { CodeView } from "./CodeView";
 import { Inspector } from "./Inspector";
 import { TimelineListView } from "./TimelineListView";
 import { TimelineRailView } from "./TimelineRailView";
-
-function log(msg: string): void {
-  useEngineStore.getState().addLog(msg);
-}
+import { log } from "../../stores/logStore";
 
 /** Append a new step of `kind` and open it in the Inspector. */
 function addAction(kind: DslActionKind): void {
@@ -82,7 +80,7 @@ export function TimelineEditor() {
               <optgroup key={group.label} label={group.label}>
                 {group.kinds.map((kind) => (
                   <option key={kind} value={kind}>
-                    {ACTION_LABELS[kind]}
+                    {ACTION_META[kind].label}
                   </option>
                 ))}
               </optgroup>
@@ -96,7 +94,7 @@ export function TimelineEditor() {
           </button>
           <button
             className="btn btn-sm"
-            onClick={() => useDocumentStore.getState().exportToFile()}
+            onClick={() => useLibraryStore.getState().exportToFile()}
             disabled={!isIdle}
             title="Export to a YAML file"
           >
@@ -104,7 +102,7 @@ export function TimelineEditor() {
           </button>
           <button
             className="btn btn-sm"
-            onClick={() => useDocumentStore.getState().importFromFile()}
+            onClick={() => useLibraryStore.getState().importFromFile()}
             disabled={!isIdle}
             title="Import from a YAML file"
           >

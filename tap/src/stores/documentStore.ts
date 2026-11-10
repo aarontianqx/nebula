@@ -1,31 +1,20 @@
 import { create } from "zustand";
 
 import { emptyDocument, MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX, orUndefined, parseRepeat } from "../lib/document";
-import { api, isTauri, pickOpenPath, pickSavePath } from "../lib/ipc";
+import { DebouncedPush } from "../lib/debouncedPush";
+import { api } from "../lib/ipc";
 import type {
   CoordinateSpace,
   DslAction,
   DslTimedAction,
   Humanize,
   MacroDocument,
-  TemplateInfo,
   ValidationErrorResponse,
   VariableDefinition,
 } from "../lib/types";
-import { useEngineStore } from "./engineStore";
+import { log } from "./logStore";
 
 const PUSH_DEBOUNCE_MS = 250;
-
-// Debounce/flush bookkeeping kept outside the reactive store.
-let pushTimer: ReturnType<typeof setTimeout> | null = null;
-let pushInFlight: Promise<void> | null = null;
-let needsPush = false;
-/** Bumped whenever the backend replaces the document, so a late push result is recognised as stale. */
-let generation = 0;
-
-function log(msg: string): void {
-  useEngineStore.getState().addLog(msg);
-}
 
 interface DocumentStore {
   /**
@@ -36,23 +25,12 @@ interface DocumentStore {
   doc: MacroDocument;
   /** Validation findings from the last push (non-blocking; shown inline). */
   issues: ValidationErrorResponse[];
-  profiles: string[];
-  recents: string[];
-  templates: TemplateInfo[];
 
   // === Backend sync ===
   /** Replace the mirror with a document the backend just produced; drops any pending push. */
   applyDocument: (doc: MacroDocument) => void;
   refreshFromBackend: () => Promise<void>;
-  loadProfiles: () => Promise<void>;
-  loadRecents: () => Promise<void>;
-  loadTemplates: () => Promise<void>;
-  loadProfile: (name: string) => Promise<void>;
-  deleteProfile: (name: string) => Promise<void>;
-  applyTemplate: (id: string) => Promise<void>;
   importYaml: (yaml: string) => Promise<MacroDocument>;
-  exportToFile: () => Promise<void>;
-  importFromFile: () => Promise<void>;
   /** Force the pending debounced push to complete (call before start/save/export). */
   flush: () => Promise<void>;
 
@@ -88,54 +66,17 @@ interface DocumentStore {
 }
 
 export const useDocumentStore = create<DocumentStore>((set, get) => {
-  function cancelPendingPush(): void {
-    if (pushTimer) {
-      clearTimeout(pushTimer);
-      pushTimer = null;
-    }
-    needsPush = false;
-  }
-
-  function schedulePush(): void {
-    needsPush = true;
-    if (pushTimer) clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => {
-      void pushNow();
-    }, PUSH_DEBOUNCE_MS);
-  }
-
-  async function pushNow(): Promise<void> {
-    if (pushTimer) {
-      clearTimeout(pushTimer);
-      pushTimer = null;
-    }
-    // Never overlap pushes: a slow older `update_document` must not be able to land after (and
-    // overwrite) a newer one. `pushInFlight` never rejects (failures are handled below).
-    while (pushInFlight) await pushInFlight;
-    // Snapshot after any wait so the push carries every edit made in the meantime. A failure of
-    // the push we just waited on is superseded by this snapshot, so clear its retry mark here.
-    needsPush = false;
-    const sentIn = generation;
-    pushInFlight = api
-      .updateDocument(get().doc)
-      .then((issues) => {
-        // A document the backend replaced meanwhile has its own findings (none, yet).
-        if (generation === sentIn) set({ issues });
-      })
-      .catch((err) => {
-        log(`Failed to sync edit: ${String(err)}`);
-        needsPush = true;
-      })
-      .finally(() => {
-        pushInFlight = null;
-      });
-    await pushInFlight;
-  }
+  const sync = new DebouncedPush({
+    delayMs: PUSH_DEBOUNCE_MS,
+    send: () => api.updateDocument(get().doc),
+    onResult: (issues) => set({ issues }),
+    onError: (err) => log(`Failed to sync edit: ${String(err)}`),
+  });
 
   /** Apply an edit to the mirror and schedule it for the backend. */
   function mutate(fn: (doc: MacroDocument) => MacroDocument): void {
     set((s) => ({ doc: fn(s.doc) }));
-    schedulePush();
+    sync.schedule();
   }
 
   function mutateTimeline(fn: (steps: DslTimedAction[]) => DslTimedAction[]): void {
@@ -153,14 +94,9 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
   return {
     doc: emptyDocument(),
     issues: [],
-    profiles: [],
-    recents: [],
-    templates: [],
 
     applyDocument: (doc) => {
-      // A fresh document from the backend replaces the mirror; drop pending pushes.
-      cancelPendingPush();
-      generation += 1;
+      sync.discard();
       set({ doc, issues: [] });
     },
 
@@ -172,60 +108,6 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
       }
     },
 
-    loadProfiles: async () => {
-      try {
-        set({ profiles: await api.listProfiles() });
-      } catch (err) {
-        log(`Failed to list profiles: ${String(err)}`);
-      }
-    },
-
-    loadRecents: async () => {
-      try {
-        set({ recents: await api.getRecentProfiles() });
-      } catch (err) {
-        log(`Failed to load recent profiles: ${String(err)}`);
-      }
-    },
-
-    loadTemplates: async () => {
-      try {
-        set({ templates: await api.listTemplates() });
-      } catch (err) {
-        log(`Failed to list templates: ${String(err)}`);
-      }
-    },
-
-    loadProfile: async (name) => {
-      try {
-        get().applyDocument(await api.loadProfile(name));
-        await get().loadRecents();
-        log(`Loaded: ${name}`);
-      } catch (err) {
-        log(`Failed to load ${name}: ${String(err)}`);
-      }
-    },
-
-    deleteProfile: async (name) => {
-      try {
-        await api.deleteProfile(name);
-        await get().loadProfiles();
-        log(`Deleted: ${name}`);
-      } catch (err) {
-        log(`Failed to delete ${name}: ${String(err)}`);
-      }
-    },
-
-    applyTemplate: async (id) => {
-      try {
-        const doc = await api.applyTemplate(id);
-        get().applyDocument(doc);
-        log(`Applied template: ${doc.name}`);
-      } catch (err) {
-        log(`Failed to apply template: ${String(err)}`);
-      }
-    },
-
     importYaml: async (yaml) => {
       const doc = await api.importYaml(yaml);
       get().applyDocument(doc);
@@ -233,47 +115,7 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
       return doc;
     },
 
-    exportToFile: async () => {
-      if (!isTauri()) {
-        log("Export needs the desktop app (native file dialog).");
-        return;
-      }
-      try {
-        const path = await pickSavePath(`${get().doc.name || "macro"}.yaml`);
-        if (!path) return;
-        // After the dialog, not before: the export writes what the backend holds, which must
-        // include anything edited while the dialog was open.
-        await get().flush();
-        await api.exportYamlToPath(path);
-        log(`Exported to ${path}`);
-      } catch (err) {
-        log(`Export failed: ${String(err)}`);
-      }
-    },
-
-    importFromFile: async () => {
-      if (!isTauri()) {
-        log("Import needs the desktop app (native file dialog).");
-        return;
-      }
-      try {
-        const path = await pickOpenPath();
-        if (!path) return;
-        const doc = await api.importYamlFromPath(path);
-        get().applyDocument(doc);
-        log(`Imported: ${doc.name}`);
-      } catch (err) {
-        log(`Import failed: ${String(err)}`);
-      }
-    },
-
-    flush: async () => {
-      if (needsPush || pushTimer) {
-        await pushNow();
-      } else if (pushInFlight) {
-        await pushInFlight;
-      }
-    },
+    flush: () => sync.flush(),
 
     setName: (name) => mutate((d) => ({ ...d, name })),
     setDescription: (value) => mutate((d) => ({ ...d, description: orUndefined(value) })),

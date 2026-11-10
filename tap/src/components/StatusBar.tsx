@@ -1,13 +1,12 @@
 import { useEngineStore } from "../stores/engineStore";
-import { useToolStore } from "../stores/toolStore";
+import { useKeyClickStore } from "../stores/keyClickStore";
 
 export function StatusBar() {
   const engineState = useEngineStore((s) => s.engineState);
   const status = useEngineStore((s) => s.status);
-  const uiMessage = useEngineStore((s) => s.uiMessage);
   const executedCount = useEngineStore((s) => s.executedCount);
   const iteration = useEngineStore((s) => s.iteration);
-  const keyClickRunning = useToolStore((s) => s.keyClickRunning);
+  const keyClickRunning = useKeyClickStore((s) => s.running);
 
   const active = engineState === "Running" || engineState === "Paused";
 
@@ -15,7 +14,7 @@ export function StatusBar() {
     <footer className="statusbar">
       <span className={`status-state state-${engineState.toLowerCase()}`}>{engineState}</span>
       <span className="status-divider">|</span>
-      <span className="status-value">{uiMessage || status}</span>
+      <span className="status-value">{status}</span>
       {keyClickRunning && (
         <>
           <span className="status-divider">|</span>

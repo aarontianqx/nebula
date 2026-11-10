@@ -2,11 +2,7 @@ import { create } from "zustand";
 
 import { api, isTauri } from "../lib/ipc";
 import type { PermissionStatus } from "../lib/types";
-import { useEngineStore } from "./engineStore";
-
-function log(msg: string): void {
-  useEngineStore.getState().addLog(msg);
-}
+import { log } from "./logStore";
 
 interface PermissionStore extends PermissionStatus {
   /** True once a real probe has run (false means we're showing optimistic defaults). */

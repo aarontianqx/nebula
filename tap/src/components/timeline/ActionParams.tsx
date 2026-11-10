@@ -1,9 +1,10 @@
 import { useContext, useState } from "react";
 
-import { ACTION_GROUPS, ACTION_LABELS, actionKind, defaultActionForKind } from "../../lib/actions";
+import { ACTION_GROUPS, ACTION_META, actionKind, defaultActionForKind } from "../../lib/actions";
 import { isValidIdentifier, uniqueName } from "../../lib/document";
 import type { DslAction, DslActionKind, DslValue } from "../../lib/types";
 import { useDocumentStore } from "../../stores/documentStore";
+import { useLibraryStore } from "../../stores/libraryStore";
 import { ConditionEditor } from "./ConditionEditor";
 import { ButtonRow, KeyRow, NumberRow, OptionalNumberRow, PickPositionRow, ReferencesContext, TextRow, ValueInput, ValueRow } from "./fields";
 
@@ -37,7 +38,7 @@ export function KindSelect(props: {
           <optgroup key={group.label} label={group.label}>
             {group.kinds.map((k) => (
               <option key={k} value={k}>
-                {ACTION_LABELS[k]}
+                {ACTION_META[k].label}
               </option>
             ))}
           </optgroup>
@@ -301,7 +302,7 @@ function CallMacroFields(props: {
   disabled: boolean;
   onChange: (action: DslAction) => void;
 }) {
-  const profiles = useDocumentStore((s) => s.profiles);
+  const profiles = useLibraryStore((s) => s.profiles);
   const ownName = useDocumentStore((s) => s.doc.name);
   const { name } = props.call;
   const args = props.call.args ?? {};

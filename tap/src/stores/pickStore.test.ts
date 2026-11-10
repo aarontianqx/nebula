@@ -12,10 +12,10 @@ async function load() {
   vi.resetModules();
   const { api } = await import("../lib/ipc");
   const { usePickStore } = await import("./pickStore");
-  const { useToolStore } = await import("./toolStore");
-  const { useEngineStore } = await import("./engineStore");
+  const { useSimpleStore } = await import("./simpleStore");
+  const { useLogStore } = await import("./logStore");
   const { routePickedPosition } = await import("../lib/events");
-  return { api: api as unknown as MockApi, usePickStore, useToolStore, useEngineStore, routePickedPosition };
+  return { api: api as unknown as MockApi, usePickStore, useSimpleStore, useLogStore, routePickedPosition };
 }
 
 let stores: Awaited<ReturnType<typeof load>>;
@@ -26,9 +26,9 @@ beforeEach(async () => {
 
 describe("picking a position for a field", () => {
   it("opens the picker and gives the picked position to the field, not to Simple mode", async () => {
-    const { api, usePickStore, useToolStore, routePickedPosition } = stores;
+    const { api, usePickStore, useSimpleStore, routePickedPosition } = stores;
     const picked = vi.fn();
-    const before = { x: useToolStore.getState().clickX, y: useToolStore.getState().clickY };
+    const before = { x: useSimpleStore.getState().clickX, y: useSimpleStore.getState().clickY };
 
     await usePickStore.getState().requestPosition("field-1", picked);
     expect(api.openPicker).toHaveBeenCalledTimes(1);
@@ -38,11 +38,11 @@ describe("picking a position for a field", () => {
 
     expect(picked).toHaveBeenCalledWith(10, 20);
     expect(usePickStore.getState().positionTarget).toBeNull();
-    expect({ x: useToolStore.getState().clickX, y: useToolStore.getState().clickY }).toEqual(before);
+    expect({ x: useSimpleStore.getState().clickX, y: useSimpleStore.getState().clickY }).toEqual(before);
   });
 
   it("answers a request once: the next position belongs to Simple mode again", async () => {
-    const { usePickStore, useToolStore, routePickedPosition } = stores;
+    const { usePickStore, useSimpleStore, routePickedPosition } = stores;
     const picked = vi.fn();
 
     await usePickStore.getState().requestPosition("field-1", picked);
@@ -50,13 +50,13 @@ describe("picking a position for a field", () => {
     routePickedPosition(30, 40);
 
     expect(picked).toHaveBeenCalledTimes(1);
-    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([30, 40]);
+    expect([useSimpleStore.getState().clickX, useSimpleStore.getState().clickY]).toEqual([30, 40]);
   });
 
   it("goes to Simple mode when no field asked", () => {
-    const { useToolStore, routePickedPosition } = stores;
+    const { useSimpleStore, routePickedPosition } = stores;
     routePickedPosition(7, 8);
-    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([7, 8]);
+    expect([useSimpleStore.getState().clickX, useSimpleStore.getState().clickY]).toEqual([7, 8]);
   });
 
   it("serves only the newest request", async () => {
@@ -73,29 +73,29 @@ describe("picking a position for a field", () => {
   });
 
   it("forgets the request when the picker cannot open", async () => {
-    const { api, usePickStore, useToolStore, useEngineStore, routePickedPosition } = stores;
+    const { api, usePickStore, useSimpleStore, useLogStore, routePickedPosition } = stores;
     api.openPicker.mockRejectedValueOnce(new Error("no window"));
     const picked = vi.fn();
 
     await usePickStore.getState().requestPosition("field-1", picked);
 
     expect(usePickStore.getState().positionTarget).toBeNull();
-    expect(useEngineStore.getState().logs.at(-1)?.message).toMatch(/Failed to open picker: Error: no window/);
+    expect(useLogStore.getState().logs.at(-1)?.message).toMatch(/Failed to open picker: Error: no window/);
     routePickedPosition(9, 9);
     expect(picked).not.toHaveBeenCalled();
-    expect(useToolStore.getState().clickX).toBe(9);
+    expect(useSimpleStore.getState().clickX).toBe(9);
   });
 
   it("is dropped when Simple mode opens the picker itself (a picker closed with Esc never reports)", async () => {
-    const { usePickStore, useToolStore, routePickedPosition } = stores;
+    const { usePickStore, useSimpleStore, routePickedPosition } = stores;
     const picked = vi.fn();
 
     await usePickStore.getState().requestPosition("field-1", picked); // ...then Esc, no event
-    await useToolStore.getState().openPicker();
+    await useSimpleStore.getState().openPicker();
     routePickedPosition(11, 12);
 
     expect(picked).not.toHaveBeenCalled();
-    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([11, 12]);
+    expect([useSimpleStore.getState().clickX, useSimpleStore.getState().clickY]).toEqual([11, 12]);
   });
 
   it("is dropped by cancelAll (the field that asked is gone)", async () => {
@@ -134,7 +134,7 @@ describe("picking in a document measured from its target window", () => {
   });
 
   it("sets nothing and says so when the target window was not found", async () => {
-    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    const { usePickStore, useLogStore, routePickedPosition } = stores;
     const picked = vi.fn();
 
     await usePickStore.getState().requestPosition("field-1", picked);
@@ -142,13 +142,13 @@ describe("picking in a document measured from its target window", () => {
 
     expect(picked).not.toHaveBeenCalled();
     expect(usePickStore.getState().positionTarget).toBeNull();
-    expect(useEngineStore.getState().logs.at(-1)?.message).toContain("target window was not found");
+    expect(useLogStore.getState().logs.at(-1)?.message).toContain("target window was not found");
   });
 
   it("leaves Simple mode on screen coordinates", () => {
-    const { useToolStore, routePickedPosition } = stores;
+    const { useSimpleStore, routePickedPosition } = stores;
     routePickedPosition(110, 70, undefined, { window_origin: { x: 100, y: 50 } });
-    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([110, 70]);
+    expect([useSimpleStore.getState().clickX, useSimpleStore.getState().clickY]).toEqual([110, 70]);
   });
 });
 
@@ -177,46 +177,46 @@ describe("picking a position together with its color", () => {
   });
 
   it("still sets the position, and says so, when the color could not be read", async () => {
-    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    const { usePickStore, useLogStore, routePickedPosition } = stores;
     const picked = vi.fn();
 
     await usePickStore.getState().requestPosition("field-1", picked, { color: true });
     routePickedPosition(10, 20, undefined);
 
     expect(picked).toHaveBeenCalledWith(10, 20);
-    expect(useEngineStore.getState().logs.at(-1)?.message).toMatch(/Could not read the color at \(10, 20\)/);
+    expect(useLogStore.getState().logs.at(-1)?.message).toMatch(/Could not read the color at \(10, 20\)/);
   });
 
   it("does not complain about a missing color when none was asked for", async () => {
-    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    const { usePickStore, useLogStore, routePickedPosition } = stores;
     await usePickStore.getState().requestPosition("field-1", vi.fn());
-    const logsBefore = useEngineStore.getState().logs.length;
+    const logsBefore = useLogStore.getState().logs.length;
 
     routePickedPosition(1, 2, undefined);
 
-    expect(useEngineStore.getState().logs).toHaveLength(logsBefore);
+    expect(useLogStore.getState().logs).toHaveLength(logsBefore);
   });
 
   it("is forgotten with the request: the next plain pick does not expect a color", async () => {
-    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    const { usePickStore, useLogStore, routePickedPosition } = stores;
 
     await usePickStore.getState().requestPosition("field-1", vi.fn(), { color: true });
     usePickStore.getState().cancelPosition();
     await usePickStore.getState().requestPosition("field-2", vi.fn());
-    const logsBefore = useEngineStore.getState().logs.length;
+    const logsBefore = useLogStore.getState().logs.length;
     routePickedPosition(5, 6, undefined);
 
-    expect(useEngineStore.getState().logs).toHaveLength(logsBefore);
+    expect(useLogStore.getState().logs).toHaveLength(logsBefore);
   });
 
   it("is ignored by Simple mode, which opens the picker for the position alone", async () => {
-    const { api, useToolStore, routePickedPosition } = stores;
+    const { api, useSimpleStore, routePickedPosition } = stores;
 
-    await useToolStore.getState().openPicker();
+    await useSimpleStore.getState().openPicker();
     expect(api.openPicker).toHaveBeenLastCalledWith();
 
     routePickedPosition(30, 40, orange);
-    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([30, 40]);
+    expect([useSimpleStore.getState().clickX, useSimpleStore.getState().clickY]).toEqual([30, 40]);
   });
 });
 
@@ -259,7 +259,7 @@ describe("capturing a key for a field", () => {
   });
 
   it("logs a failure (timeout, busy engine) and leaves the field alone", async () => {
-    const { api, usePickStore, useEngineStore } = stores;
+    const { api, usePickStore, useLogStore } = stores;
     api.captureKey.mockRejectedValue("Key capture timed out (no key pressed)");
     const captured = vi.fn();
 
@@ -267,7 +267,7 @@ describe("capturing a key for a field", () => {
 
     expect(captured).not.toHaveBeenCalled();
     expect(usePickStore.getState().captureTarget).toBeNull();
-    expect(useEngineStore.getState().logs.at(-1)?.message).toMatch(/Key capture failed: .*timed out/);
+    expect(useLogStore.getState().logs.at(-1)?.message).toMatch(/Key capture failed: .*timed out/);
   });
 
   it("ignores the key when the field that asked is gone, and lets the next capture run", async () => {

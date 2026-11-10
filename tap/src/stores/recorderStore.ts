@@ -3,8 +3,8 @@ import { create } from "zustand";
 import { api } from "../lib/ipc";
 import type { RecorderState, RecordingStatus } from "../lib/types";
 import { useDocumentStore } from "./documentStore";
-import { useEngineStore } from "./engineStore";
 import { useUiStore } from "./uiStore";
+import { log } from "./logStore";
 
 interface RecorderStore {
   recorderState: RecorderState;
@@ -16,10 +16,6 @@ interface RecorderStore {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   stop: () => Promise<void>;
-}
-
-function log(msg: string): void {
-  useEngineStore.getState().addLog(msg);
 }
 
 export const useRecorderStore = create<RecorderStore>((set) => ({

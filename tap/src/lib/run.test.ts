@@ -46,13 +46,13 @@ describe("startTimelineRun", () => {
   });
 
   it("resets run stats and logs the start", async () => {
-    const { useEngineStore, startTimelineRun } = await setup();
+    const { useEngineStore, useLogStore, startTimelineRun } = await setup();
     useEngineStore.setState({ executedCount: 9, iteration: 9 });
 
     await startTimelineRun();
 
     expect(useEngineStore.getState().executedCount).toBe(0);
-    expect(useEngineStore.getState().logs.map((l) => l.message)).toContain("Playing timeline");
+    expect(useLogStore.getState().logs.map((l) => l.message)).toContain("Playing timeline");
   });
 
   it("reports a start failure in the status line", async () => {

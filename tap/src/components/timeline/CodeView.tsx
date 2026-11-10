@@ -2,6 +2,7 @@ import { api } from "../../lib/ipc";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 import { useUiStore } from "../../stores/uiStore";
+import { log } from "../../stores/logStore";
 
 export function CodeView() {
   const isIdle = useEngineStore((s) => s.engineState === "Idle");
@@ -14,14 +15,14 @@ export function CodeView() {
       const errors = await api.validateYaml(yamlContent);
       if (errors && errors.length > 0) {
         ui().setYamlErrors(errors);
-        useEngineStore.getState().addLog(`Validation errors: ${errors.length}`);
+        log(`Validation errors: ${errors.length}`);
         return;
       }
       ui().setYamlErrors([]);
       await useDocumentStore.getState().importYaml(yamlContent);
       ui().setTimelineView("list");
     } catch (err) {
-      useEngineStore.getState().addLog(`Import failed: ${String(err)}`);
+      log(`Import failed: ${String(err)}`);
     }
   }
 
@@ -30,7 +31,7 @@ export function CodeView() {
       ui().setYamlContent(await api.exportYaml());
       ui().setYamlErrors([]);
     } catch (err) {
-      useEngineStore.getState().addLog(`Export failed: ${String(err)}`);
+      log(`Export failed: ${String(err)}`);
     }
   }
 

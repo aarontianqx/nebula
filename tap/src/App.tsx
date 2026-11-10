@@ -12,6 +12,7 @@ import { VariableDialog } from "./components/modals/VariableDialog";
 import { VariablesEditor } from "./components/modals/VariablesEditor";
 import { setupEventListeners } from "./lib/events";
 import { useDocumentStore } from "./stores/documentStore";
+import { useLibraryStore } from "./stores/libraryStore";
 import { usePermissionStore } from "./stores/permissionStore";
 import { useUiStore } from "./stores/uiStore";
 
@@ -26,11 +27,8 @@ export default function App() {
       else cleanup = c;
     });
     // Seed the editor from the backend's canonical document.
-    const doc = useDocumentStore.getState();
-    void doc.loadProfiles();
-    void doc.loadRecents();
-    void doc.loadTemplates();
-    void doc.refreshFromBackend();
+    void useLibraryStore.getState().loadAll();
+    void useDocumentStore.getState().refreshFromBackend();
     // Probe OS permissions now, and again when the window regains focus so
     // grants made in System Settings reflect without a manual re-check.
     void usePermissionStore.getState().refresh();

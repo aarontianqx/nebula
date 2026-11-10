@@ -17,7 +17,8 @@ export async function freshStores() {
   const { api } = await import("../lib/ipc");
   const { useDocumentStore } = await import("../stores/documentStore");
   const { useEngineStore } = await import("../stores/engineStore");
-  return { api: api as unknown as MockApi, useDocumentStore, useEngineStore };
+  const { useLogStore } = await import("../stores/logStore");
+  return { api: api as unknown as MockApi, useDocumentStore, useEngineStore, useLogStore };
 }
 
 export interface Deferred<T> {

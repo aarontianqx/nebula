@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { useDocumentStore } from "../stores/documentStore";
+import { useLibraryStore } from "../stores/libraryStore";
 import { useUiStore } from "../stores/uiStore";
 
 const ONBOARDED_KEY = "tap.onboarded";
@@ -14,7 +14,7 @@ export function OnboardingBanner() {
   }
 
   async function loadSample(): Promise<void> {
-    await useDocumentStore.getState().applyTemplate("simple_click");
+    await useLibraryStore.getState().applyTemplate("simple_click");
     useUiStore.getState().setMode("timeline");
     dismiss();
   }

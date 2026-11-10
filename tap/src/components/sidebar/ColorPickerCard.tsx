@@ -1,16 +1,15 @@
-import { useEngineStore } from "../../stores/engineStore";
-import { useToolStore } from "../../stores/toolStore";
+import { useColorStore } from "../../stores/colorStore";
+import { useCursorStore } from "../../stores/cursorStore";
 
 export function ColorPickerCard() {
-  const mousePos = useEngineStore((s) => s.mousePos);
-  const pickedColor = useToolStore((s) => s.pickedColor);
-  const tool = useToolStore.getState;
+  const hasCursor = useCursorStore((s) => s.pos !== null);
+  const pickedColor = useColorStore((s) => s.picked);
 
   return (
     <>
       <h3>Color Picker</h3>
       <div className="card">
-        <button className="btn btn-block" onClick={() => tool().pickColorAtCursor()} disabled={!mousePos}>
+        <button className="btn btn-block" onClick={() => useColorStore.getState().pickAtCursor()} disabled={!hasCursor}>
           Pick Color at Cursor
         </button>
         {pickedColor && (
