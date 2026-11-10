@@ -76,7 +76,8 @@ fn resolve_text(
     }
 }
 
-fn resolve_condition(dsl: &tap_core::DslCondition) -> Result<Condition, ResolveError> {
+/// Turn a DSL condition into the one the evaluator understands.
+pub(crate) fn resolve_condition(dsl: &tap_core::DslCondition) -> Result<Condition, ResolveError> {
     Condition::try_from(dsl).map_err(|e| ResolveError::Condition(e.to_string()))
 }
 

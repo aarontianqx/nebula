@@ -254,7 +254,7 @@ PR 6、7 落地说明（与上文设计的差异）：
 - 时间线上的所有动作种类都由 Inspector 编辑；“Type / Add”按 输入 / 时序 / 控制流 / 计数器 / 宏 分组。`Conditional` 的 Then / Else 用同一套参数面板递归渲染。条件编辑器覆盖叶子条件，`and` / `or` / `not` 仍在 Code 视图并在界面标注。
 - `ActionInfo`（`ActionStarting` 载荷）无需补全：引擎只对原语动作（及 Drag）发该事件，控制流与计数器动作走 `CounterChanged` / `WaitingForCondition` 等事件。后者的条件文本是 Rust `Debug` 输出，可读性差，留作后续。
 - 新发现并修复（后端）：`call_macro` 的参数此前只把“整串恰为 `{{ 名字 }}`”当变量引用，`"{{ n * 2 }}"` 会被当作名为 `n * 2` 的变量，静默变成 `0`。现在整串恰为一个模板时保留表达式类型，混排文本为字符串，求不出值则报错并跳过该次调用（`tap_core::resolve_typed_value`）。
-- 新发现并修复（后端）：`call_macro` 嵌套在 `conditional` 内时 `resolve_action` 必然报错、使运行中途停止；`validate_profile` 现在在开始 / 保存前就拒绝它，嵌套动作编辑器也不提供它。让条件分支能调用宏是引擎改动，留作后续。
+- 新发现并修复（后端）：`call_macro` 嵌套在 `conditional` 内时 `resolve_action` 必然报错、使运行中途停止；当时 `validate_profile` 在开始 / 保存前拒绝它、嵌套动作编辑器也不提供它；让条件分支能调用宏是引擎改动，**后来已做**：引擎在 `run_step` 里按 DSL 动作决定一步（`call_macro` 展开、`conditional` 选分支），分支里的 `call_macro` 与时间线上的一样运行，校验限制与编辑器限制均已取消。副作用：只解析被选中的分支（此前两个分支都会先解析，未选中分支里算不出的表达式会让整步失败）。
 - 变量面板为独立对话框（工具栏 “Variables”），原“设置运行取值”按钮改名 “Values”；默认值始终与类型一致（后端对类型不符的默认值会静默回落为 `0` / `false` / `""`）。重命名不改写引用。
 - 额外：校验告警按动作内联显示在 Inspector 中；添加动作后自动选中。
 

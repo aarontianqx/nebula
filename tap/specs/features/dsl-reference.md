@@ -307,10 +307,10 @@ action: !wait_until
 
 ### Conditional
 
-`then_action`/`else_action` are themselves actions (a tag, or bare `exit`), but
-never `call_macro`: the engine expands it only as a timeline step, so validation
-rejects a `call_macro` nested in a conditional instead of letting the run fail
-halfway.
+`then_action`/`else_action` are themselves actions (a tag, or bare `exit`),
+including another `conditional` and `call_macro` (the called macro runs, with its
+own scope, only when its branch is taken). Only the branch that is taken is
+resolved, so a `{{ }}` expression in the other one is never evaluated.
 
 ```yaml
 action: !conditional

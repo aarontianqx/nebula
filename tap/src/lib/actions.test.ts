@@ -8,7 +8,6 @@ import {
   defaultActionForKind,
   formatDslAction,
   formatResolvedAction,
-  NESTED_ACTION_GROUPS,
 } from "./actions";
 import type { ActionInfo, DslActionKind } from "./types";
 
@@ -34,14 +33,6 @@ describe("document actions", () => {
     expect([...offered].sort()).toEqual([...ALL_KINDS].sort());
     expect(new Set(offered).size).toBe(offered.length);
     for (const group of ACTION_GROUPS) expect(group.kinds.length, group.label).toBeGreaterThan(0);
-  });
-
-  it("does not offer call_macro inside an if (the engine only expands it as a timeline step)", () => {
-    const nested = NESTED_ACTION_GROUPS.flatMap((g) => g.kinds);
-    expect(nested).not.toContain("call_macro");
-    expect([...nested].sort()).toEqual(ALL_KINDS.filter((k) => k !== "call_macro").sort());
-    // A group that only held call_macro disappears instead of showing up empty.
-    expect(NESTED_ACTION_GROUPS.map((g) => g.label)).not.toContain("Macro");
   });
 
   it("tells unit variants (bare strings) from payload variants", () => {

@@ -27,7 +27,7 @@ const MAX_DRAG_STEPS: u32 = 240;
 use crate::clock::RunClock;
 use crate::coords::{has_position, shift_action, window_binding};
 use crate::humanize::{Humanizer, JitterRng};
-use crate::resolve::resolve_action;
+use crate::resolve::{resolve_action, resolve_condition};
 use crate::storage::load_document;
 use crate::submacro::{
     create_child_variable_store, create_submacro_context, prepare_submacro_args,
@@ -406,56 +406,109 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 }
             }
 
-            // `call_macro` is expanded inline by the engine. Everything else is
-            // resolved against the current scope before being dispatched.
-            if let DslAction::CallMacro { name, args } = &timed_action.action {
+            if !self.run_step(&timed_action.action, index, speed, doc, sub_ctx) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Run one timeline step. Returns false when this macro should end: a stop request, `exit`,
+    /// or a failure that makes going on pointless.
+    ///
+    /// A step is decided here, on the DSL action, because only here is everything a branch may
+    /// need: `call_macro` is expanded by the engine and `conditional` picks a branch, so a
+    /// `call_macro` in a branch runs the same way as one on the timeline. Only the branch that is
+    /// taken is resolved, so an expression in the other one is never evaluated.
+    fn run_step(
+        &self,
+        step: &DslAction,
+        index: usize,
+        speed: f32,
+        doc: &MacroDocument,
+        sub_ctx: &SubMacroContextHandle,
+    ) -> bool {
+        match step {
+            DslAction::CallMacro { name, args } => {
                 if !self.execute_call_macro(name, args, speed, sub_ctx) {
                     return false;
                 }
                 self.emit(EngineEvent::ActionCompleted { index });
-                continue;
+                true
             }
-
-            let action = {
-                let vars = self.variables.lock().unwrap();
-                match resolve_action(&timed_action.action, &vars, &self.expr_engine) {
-                    Ok(action) => action,
+            DslAction::Conditional {
+                condition,
+                then_action,
+                else_action,
+            } => {
+                let condition = match resolve_condition(condition) {
+                    Ok(condition) => condition,
                     Err(e) => {
                         self.emit(EngineEvent::Error {
                             message: format!("Failed to resolve action {}: {}", index, e),
                         });
                         return false;
                     }
-                }
-            };
-
-            match self.execute_action(&action, index, doc) {
-                ActionResult::Completed | ActionResult::Timeout => {
-                    self.consecutive_failures.store(0, Ordering::Relaxed);
-                    self.emit(EngineEvent::ActionCompleted { index });
-                }
-                ActionResult::Failed => {
-                    // The Error was already emitted by execute_action. Keep
-                    // going, but stop the whole run if failures pile up so a
-                    // broken injector cannot spin forever.
-                    let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
-                    if failures >= MAX_CONSECUTIVE_FAILURES {
-                        self.emit(EngineEvent::Error {
-                            message: format!(
-                                "Stopping after {failures} consecutive injection failures"
-                            ),
-                        });
-                        self.transition_state(EngineState::Stopped);
-                        return false;
+                };
+                let branch = if self.evaluate_condition(&condition, doc).is_satisfied() {
+                    Some(then_action.as_ref())
+                } else {
+                    else_action.as_deref()
+                };
+                match branch {
+                    Some(branch) => self.run_step(branch, index, speed, doc, sub_ctx),
+                    None => {
+                        self.consecutive_failures.store(0, Ordering::Relaxed);
+                        self.emit(EngineEvent::ActionCompleted { index });
+                        true
                     }
-                    self.emit(EngineEvent::ActionCompleted { index });
                 }
-                ActionResult::Stopped => return false,
-                ActionResult::Exit => return false, // Exit ends this macro only
+            }
+            // Everything else is resolved against the current scope before being dispatched.
+            _ => {
+                let action = {
+                    let vars = self.variables.lock().unwrap();
+                    match resolve_action(step, &vars, &self.expr_engine) {
+                        Ok(action) => action,
+                        Err(e) => {
+                            self.emit(EngineEvent::Error {
+                                message: format!("Failed to resolve action {}: {}", index, e),
+                            });
+                            return false;
+                        }
+                    }
+                };
+
+                match self.execute_action(&action, index, doc) {
+                    ActionResult::Completed | ActionResult::Timeout => {
+                        self.consecutive_failures.store(0, Ordering::Relaxed);
+                        self.emit(EngineEvent::ActionCompleted { index });
+                        true
+                    }
+                    ActionResult::Failed => {
+                        // The Error was already emitted by execute_action. Keep
+                        // going, but stop the whole run if failures pile up so a
+                        // broken injector cannot spin forever.
+                        let failures =
+                            self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+                        if failures >= MAX_CONSECUTIVE_FAILURES {
+                            self.emit(EngineEvent::Error {
+                                message: format!(
+                                    "Stopping after {failures} consecutive injection failures"
+                                ),
+                            });
+                            self.transition_state(EngineState::Stopped);
+                            return false;
+                        }
+                        self.emit(EngineEvent::ActionCompleted { index });
+                        true
+                    }
+                    ActionResult::Stopped => false,
+                    ActionResult::Exit => false, // Exit ends this macro only
+                }
             }
         }
-
-        true
     }
 
     /// Expand and execute a `call_macro` step with cycle/depth protection.

@@ -54,15 +54,6 @@ export const ACTION_GROUPS: { label: string; kinds: DslActionKind[] }[] = [
   { label: "Macro", kinds: ["call_macro"] },
 ];
 
-/**
- * Groups for an action nested in an `if`. The engine expands `call_macro` only for timeline
- * steps, so it cannot be offered (nor accepted) there.
- */
-export const NESTED_ACTION_GROUPS = ACTION_GROUPS.map((group) => ({
-  ...group,
-  kinds: group.kinds.filter((kind) => kind !== "call_macro"),
-})).filter((group) => group.kinds.length > 0);
-
 /** The variant name of an action (unit variants are bare strings, the rest `{ kind: {...} }`). */
 export function actionKind(action: DslAction): DslActionKind {
   return typeof action === "string" ? action : (Object.keys(action)[0] as DslActionKind);

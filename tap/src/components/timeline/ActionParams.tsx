@@ -1,6 +1,6 @@
 import { useContext, useState } from "react";
 
-import { ACTION_LABELS, actionKind, defaultActionForKind, NESTED_ACTION_GROUPS } from "../../lib/actions";
+import { ACTION_GROUPS, ACTION_LABELS, actionKind, defaultActionForKind } from "../../lib/actions";
 import { isValidIdentifier, uniqueName } from "../../lib/document";
 import type { DslAction, DslActionKind, DslValue } from "../../lib/types";
 import { useDocumentStore } from "../../stores/documentStore";
@@ -24,9 +24,6 @@ export function KindSelect(props: {
   onChange: (action: DslAction) => void;
 }) {
   const kind = actionKind(props.action);
-  // An action the document already holds may not be offered here (a `call_macro` inside an `if`
-  // from a hand-written file): keep showing what it is rather than pretending it is another kind.
-  const listed = props.groups.some((g) => g.kinds.includes(kind));
   return (
     <div className="field">
       <label className="label">{props.label}</label>
@@ -36,7 +33,6 @@ export function KindSelect(props: {
         disabled={props.disabled}
         className="input"
       >
-        {!listed && <option value={kind}>{ACTION_LABELS[kind]} (not allowed here)</option>}
         {props.groups.map((group) => (
           <optgroup key={group.label} label={group.label}>
             {group.kinds.map((k) => (
@@ -289,7 +285,7 @@ function NestedAction(props: ParamsProps & { label: string; onRemove?: () => voi
           </button>
         )}
       </div>
-      <KindSelect action={props.action} groups={NESTED_ACTION_GROUPS} label="Do" disabled={props.disabled} onChange={props.onChange} />
+      <KindSelect action={props.action} groups={ACTION_GROUPS} label="Do" disabled={props.disabled} onChange={props.onChange} />
       <ActionParams action={props.action} disabled={props.disabled} onChange={props.onChange} />
     </div>
   );

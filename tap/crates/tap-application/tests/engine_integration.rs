@@ -556,6 +556,199 @@ fn call_macro_cycle_is_detected_and_does_not_hang() {
     );
 }
 
+// === Tests: call_macro inside an `if` ===
+
+fn call(name: &str) -> DslAction {
+    DslAction::CallMacro {
+        name: name.to_string(),
+        args: HashMap::new(),
+    }
+}
+
+fn when(
+    condition: DslCondition,
+    then_action: DslAction,
+    else_action: Option<DslAction>,
+) -> DslAction {
+    DslAction::Conditional {
+        condition,
+        then_action: Box::new(then_action),
+        else_action: else_action.map(Box::new),
+    }
+}
+
+/// Run `parent` with the given saved macros and return what was injected plus the events.
+fn run_with_macros(
+    parent: MacroDocument,
+    macros: Vec<(&str, MacroDocument)>,
+) -> (Vec<Action>, Vec<EngineEvent>, bool) {
+    let (handle, injected) = spawn_recording(Some(map_loader(macros)));
+    handle.send(EngineCommand::SetDocument(Box::new(parent)));
+    handle.send(EngineCommand::Start);
+    let (completed, events) = pump_until_complete(&handle, Duration::from_secs(5));
+    let actions = injected.lock().unwrap().clone();
+    drop(handle);
+    (actions, events, completed)
+}
+
+#[test]
+fn call_macro_in_the_then_branch_runs_when_the_condition_holds() {
+    let child = document(vec![timed(dsl_click(7, 7))], 1);
+    let parent = document(
+        vec![
+            timed(when(DslCondition::Always, call("child"), None)),
+            timed(dsl_click(2, 2)),
+        ],
+        1,
+    );
+
+    let (actions, _, completed) = run_with_macros(parent, vec![("child", child)]);
+
+    assert!(completed);
+    assert_eq!(actions, vec![click(7, 7), click(2, 2)]);
+}
+
+#[test]
+fn call_macro_in_the_else_branch_runs_when_the_condition_fails() {
+    let then_child = document(vec![timed(dsl_click(7, 7))], 1);
+    let else_child = document(vec![timed(dsl_click(8, 8))], 1);
+    let parent = document(
+        vec![timed(when(
+            DslCondition::Never,
+            call("then_child"),
+            Some(call("else_child")),
+        ))],
+        1,
+    );
+
+    let (actions, _, completed) = run_with_macros(
+        parent,
+        vec![("then_child", then_child), ("else_child", else_child)],
+    );
+
+    assert!(completed);
+    assert_eq!(actions, vec![click(8, 8)], "only the branch taken may run");
+}
+
+#[test]
+fn a_branch_that_is_not_taken_is_not_resolved() {
+    // The untaken branch holds an expression that cannot be evaluated: it must not fail the run.
+    let broken = DslAction::Click {
+        x: DslValue::String("{{ 1 + }}".to_string()),
+        y: DslValue::Int(0),
+        button: DslMouseButton::Left,
+    };
+    let parent = document(
+        vec![timed(when(
+            DslCondition::Always,
+            dsl_click(3, 3),
+            Some(broken),
+        ))],
+        1,
+    );
+
+    let (actions, events, completed) = run_with_macros(parent, vec![]);
+
+    assert!(completed);
+    assert_eq!(actions, vec![click(3, 3)]);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, EngineEvent::Error { .. })),
+        "nothing was wrong with the branch that ran: {events:?}"
+    );
+}
+
+#[test]
+fn call_macro_in_an_if_nested_in_an_if_runs() {
+    let child = document(vec![timed(dsl_click(7, 7))], 1);
+    let inner = when(DslCondition::Always, call("child"), None);
+    let parent = document(vec![timed(when(DslCondition::Always, inner, None))], 1);
+
+    let (actions, _, completed) = run_with_macros(parent, vec![("child", child)]);
+
+    assert!(completed);
+    assert_eq!(actions, vec![click(7, 7)]);
+}
+
+#[test]
+fn a_macro_called_from_a_branch_sees_the_args_and_leaves_the_callers_scope_alone() {
+    let child = document(
+        vec![timed(DslAction::TextInput {
+            text: DslValue::String("{{ who }}".to_string()),
+        })],
+        1,
+    );
+    let mut args = HashMap::new();
+    args.insert("who".to_string(), DslValue::String("world".to_string()));
+    let parent = document(
+        vec![timed(when(
+            DslCondition::Always,
+            DslAction::CallMacro {
+                name: "greet".to_string(),
+                args,
+            },
+            None,
+        ))],
+        1,
+    );
+
+    let (actions, _, completed) = run_with_macros(parent, vec![("greet", child)]);
+
+    assert!(completed);
+    assert_eq!(
+        actions,
+        vec![Action::TextInput {
+            text: "world".into()
+        }]
+    );
+}
+
+#[test]
+fn exit_in_a_macro_called_from_a_branch_only_ends_that_macro() {
+    let child = document(
+        vec![
+            timed(dsl_click(5, 5)),
+            timed(DslAction::Exit),
+            timed(dsl_click(6, 6)),
+        ],
+        1,
+    );
+    let parent = document(
+        vec![
+            timed(when(DslCondition::Always, call("child"), None)),
+            timed(dsl_click(2, 2)),
+        ],
+        1,
+    );
+
+    let (actions, _, completed) = run_with_macros(parent, vec![("child", child)]);
+
+    assert!(completed);
+    assert_eq!(actions, vec![click(5, 5), click(2, 2)]);
+}
+
+#[test]
+fn a_cycle_through_a_branch_is_detected_and_does_not_hang() {
+    // "loop" clicks, then calls itself from inside an `if`.
+    let looping = document(
+        vec![
+            timed(dsl_click(9, 9)),
+            timed(when(DslCondition::Always, call("loop"), None)),
+        ],
+        1,
+    );
+    let parent = document(vec![timed(call("loop"))], 1);
+
+    let (actions, events, completed) = run_with_macros(parent, vec![("loop", looping.clone())]);
+
+    assert!(completed, "a cyclic call must still terminate the run");
+    assert_eq!(actions, vec![click(9, 9)]);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Error { .. })));
+}
+
 // === Tests: emergency stop ===
 
 #[test]
