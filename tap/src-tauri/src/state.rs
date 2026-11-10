@@ -1,20 +1,26 @@
 //! Application state for Tauri backend.
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use crate::key_click::KeyClickHandle;
 use tap_application::{Coordinator, Recorder, RecorderState};
-use tap_platform::{InputHookHandle, MouseTrackerHandle};
+use tap_platform::{EnigoInjector, InputHookHandle, MouseTrackerHandle};
 
 /// Global application state.
 ///
 /// The adapter is intentionally thin: the engine state machine and the canonical
 /// macro document live in the application-layer [`Coordinator`]. `AppState` only
 /// holds the Tauri-side bits the event pump touches directly (recorder, input
-/// hook, mouse tracker, key-click handle).
+/// hook, mouse tracker, key-click handle) and the few resources shared between
+/// commands and background threads.
 pub struct AppState {
     /// Application-layer entry point: owns the player + canonical document.
     pub coordinator: Coordinator,
-    pub executed_count: u64,
-    pub current_action_index: Option<usize>,
+
+    /// Dry-run switch shared with the engine's executor and the key-click runner:
+    /// when set, actions are logged instead of injected.
+    pub dry_run: Arc<AtomicBool>,
 
     // Recording state
     pub recorder: Recorder,
@@ -25,6 +31,8 @@ pub struct AppState {
 
     // Key-to-Click tool mode
     pub key_click_handle: Option<KeyClickHandle>,
+    /// Injector shared by key-click sessions, created on first use.
+    pub key_click_injector: Option<Arc<EnigoInjector>>,
 }
 
 /// Recording status for frontend.

@@ -36,7 +36,7 @@ pub use recorder::{
     BufferedEvent, MouseButtonRaw, RawEventType, Recorder, RecorderConfig, RecorderEvent,
     RecorderState,
 };
-pub use resolve::{document_to_profile_view, resolve_action, ResolveError};
+pub use resolve::{resolve_action, ResolveError};
 pub use session::SessionStore;
 pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,

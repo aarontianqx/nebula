@@ -6,8 +6,8 @@
 //! passes through untouched.
 
 use tap_core::{
-    resolve_expressions, Action, Condition, DslAction, DslValue, ExpressionEngine, MacroDocument,
-    MouseButton, Point, Profile, RunConfig, TargetWindow, TimedAction, Timeline, VariableStore,
+    resolve_expressions, Action, Condition, DslAction, DslValue, ExpressionEngine, MouseButton,
+    Point, VariableStore,
 };
 
 /// Errors raised while resolving a parameterized action into a concrete one.
@@ -175,42 +175,4 @@ pub fn resolve_action(
         DslAction::CallMacro { .. } => return Err(ResolveError::CallMacro),
     };
     Ok(action)
-}
-
-/// Build a *resolved* [`Profile`] projection of a document for display/IPC.
-///
-/// This is a lenient, best-effort view: steps whose parameters cannot be
-/// resolved with the supplied scope (including `call_macro`, which has no
-/// primitive form) are omitted. The canonical [`MacroDocument`] is unaffected
-/// and still carries the original parameterized steps for execution.
-pub fn document_to_profile_view(
-    doc: &MacroDocument,
-    vars: &VariableStore,
-    engine: &ExpressionEngine,
-) -> Profile {
-    let actions = doc
-        .timeline
-        .iter()
-        .filter_map(|ta| {
-            resolve_action(&ta.action, vars, engine)
-                .ok()
-                .map(|action| TimedAction {
-                    at_ms: ta.at_ms,
-                    action,
-                    enabled: ta.enabled,
-                    note: ta.note.clone(),
-                })
-        })
-        .collect();
-
-    Profile {
-        name: doc.name.clone(),
-        timeline: Timeline { actions },
-        run: RunConfig::from(&doc.run),
-        target_window: doc.target_window.as_ref().map(|tw| TargetWindow {
-            title: tw.title.clone(),
-            process: tw.process.clone(),
-            pause_when_unfocused: tw.pause_when_unfocused,
-        }),
-    }
 }

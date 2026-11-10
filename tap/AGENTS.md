@@ -48,7 +48,15 @@ tap (Timed Action Performer) is a cross-platform desktop automation tool built w
 ```
 tap/
 ├── src/                          # React frontend (Vite)
-├── src-tauri/src/                # Tauri backend (IPC commands)
+├── src-tauri/src/                # Tauri backend (thin adapter)
+│   ├── main.rs                   #   builder + command registration only
+│   ├── app.rs                    #   setup (wires engine, recorder, trackers) + emergency stop
+│   ├── ports.rs                  #   engine port implementations (executor, platform provider)
+│   ├── events.rs                 #   event pump: engine/recorder/tracker events -> frontend
+│   ├── state.rs                  #   AppState + event payloads
+│   ├── picker.rs, key_click.rs, templates.rs
+│   └── commands/                 #   #[tauri::command] handlers grouped by concern
+│                                 #   (engine, document, yaml, recording, key_click, system)
 ├── crates/
 │   ├── tap-core/                 # Pure domain: model, DSL, conditions, variables, expression, schema
 │   ├── tap-application/          # Application layer: Coordinator, SessionStore, Player, Recorder, Resolve, storage, ports
@@ -63,7 +71,8 @@ tap/
 ### Key conventions
 
 - **Engine decoupling**: The automation engine lives in `tap-application` and depends only on the pure domain (`tap-core`) plus trait *ports*; it must stay independent of the UI framework and the OS. `src-tauri` is a thin adapter that wires up concrete port implementations (the `tap-platform` injector / window queries) and forwards IPC + events. Swapping UI or platform should not affect engine logic.
-- **Single source of truth**: The canonical macro is the `MacroDocument` held by `SessionStore`; the runtime `Profile` is a resolved projection for display/IPC. Edits and execution always go through the document, never a lossy side copy.
+- **Single source of truth**: The canonical macro is the `MacroDocument` held by `SessionStore`; the resolved `Profile` exists only inside the engine's Resolve stage. The UI edits the document itself over IPC (`get_document` / `update_document`), so there is no lossy projection to write back and a new document field cannot be silently reset by a bridge.
+- **Adapter layout**: `src-tauri/src/main.rs` stays a registration list. A new IPC command goes in the matching `commands/<concern>.rs` (or a new module if it is a new concern), is registered in `main.rs` by its module path, and keeps no logic of its own beyond translating to/from the application layer. Shared mutable resources live in `AppState`, not in module-level statics. Keep modules small (rule of thumb: under ~300 lines).
 - **Serial execution**: Timeline actions execute sequentially within a single macro. No concurrent injection.
 - **Cancellability**: All long-running operations (replay, record) must support immediate cancellation via stop signal.
 - **Global coordinate system**: Mouse coordinates use the OS *injection* space — full-screen **physical pixels on Windows**, **points on macOS** — never WebView-relative coordinates. The picker converts browser CSS pixels via `browser_to_injection_scale()` so recording, playback and picking stay consistent. `get_primary_scale_factor()` reports the display backing scale and is informational only.

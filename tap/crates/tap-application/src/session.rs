@@ -1,24 +1,21 @@
 //! Session state: the canonical [`MacroDocument`] being edited/executed.
 //!
 //! [`SessionStore`] is the single source of truth for the current macro (see the
-//! Phase 6 sync-contract). It owns the lossless [`MacroDocument`] plus the
-//! run-time variable overrides applied before a run, and can project a lenient,
-//! resolved [`Profile`] view for the (pre-M8) Profile-based IPC surface.
+//! sync contract in `AGENTS.md`). It owns the lossless [`MacroDocument`] plus the
+//! run-time variable overrides applied before a run. The UI edits the document
+//! directly, so nothing here projects it into a lossy side copy.
 
 use std::collections::HashMap;
 
 use tap_core::{
-    create_expression_engine, DslTimedAction, ExpressionEngineHandle, MacroDocument, Profile,
-    Timeline, VariableStore, VariableValue,
+    validate_profile, DslTimedAction, MacroDocument, Profile, Timeline, ValidationError,
+    VariableValue,
 };
-
-use crate::resolve::document_to_profile_view;
 
 /// Canonical, in-memory session state for a single macro.
 pub struct SessionStore {
     document: MacroDocument,
     runtime_vars: HashMap<String, VariableValue>,
-    engine: ExpressionEngineHandle,
 }
 
 impl SessionStore {
@@ -32,7 +29,6 @@ impl SessionStore {
         Self {
             document,
             runtime_vars: HashMap::new(),
-            engine: create_expression_engine(),
         }
     }
 
@@ -46,59 +42,26 @@ impl SessionStore {
         self.document = document;
     }
 
+    /// Replace the canonical document with an edit coming from the UI.
+    ///
+    /// Edits are **never rejected**: the UI legitimately passes through states
+    /// that are not yet runnable (an empty timeline, a half-typed variable
+    /// name). The document is stored exactly as given, and the validation
+    /// findings are returned so the UI can show them inline.
+    pub fn update_document(&mut self, document: MacroDocument) -> Vec<ValidationError> {
+        let issues = validate_profile(&document).err().unwrap_or_default();
+        self.document = document;
+        issues
+    }
+
     /// Rename the current document.
     pub fn set_name(&mut self, name: String) {
         self.document.name = name;
     }
 
-    /// Update the document's metadata in place.
-    ///
-    /// Unlike [`Self::apply_profile_edit`], this is lossless: it touches only the
-    /// metadata fields and leaves the timeline, variables and run config intact,
-    /// so it is safe to call even for parameterized macros.
-    pub fn set_metadata(
-        &mut self,
-        description: Option<String>,
-        author: Option<String>,
-        tags: Vec<String>,
-    ) {
-        self.document.description = description;
-        self.document.author = author;
-        self.document.tags = tags;
-    }
-
-    /// Apply an edit coming from the Profile-based UI.
-    ///
-    /// `Profile` cannot carry variables or metadata, so this merges the edited
-    /// timeline/run/target-window/name over the canonical document while
-    /// preserving its variables, description, author, tags and version. This is
-    /// the bridge that keeps parameterization alive across visual edits until
-    /// the front-end speaks `MacroDocument` directly (M8).
-    pub fn apply_profile_edit(&mut self, profile: &Profile) {
-        let mut next = MacroDocument::from(profile);
-        next.description = self.document.description.clone();
-        next.version = self.document.version.clone();
-        next.author = self.document.author.clone();
-        next.tags = self.document.tags.clone();
-        next.variables = self.document.variables.clone();
-        self.document = next;
-    }
-
     /// Replace the document's timeline with a freshly recorded one.
     pub fn set_recorded_timeline(&mut self, timeline: Timeline) {
         self.document.timeline = timeline.actions.iter().map(DslTimedAction::from).collect();
-    }
-
-    /// Build a lenient, resolved [`Profile`] projection for display/IPC.
-    ///
-    /// Variable definitions seed the scope with their defaults so parameterized
-    /// macros still render sensibly; steps that cannot be resolved (including
-    /// `call_macro`) are omitted from the view. The canonical document is
-    /// unchanged and still carries the original parameterized steps.
-    pub fn profile_view(&self) -> Profile {
-        let mut scope = VariableStore::new();
-        scope.init_from_definitions(&self.document.variables);
-        document_to_profile_view(&self.document, &scope, &self.engine)
     }
 
     /// Replace the run-time variable overrides applied on the next run.

@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use tap_core::{MacroDocument, Profile, VariableValue};
+use tap_core::{MacroDocument, ValidationError, VariableValue};
 
 use crate::engine::{EngineCommand, EngineEvent, EngineState, PlayerHandle};
 use crate::session::SessionStore;
@@ -117,24 +117,10 @@ impl Coordinator {
         self.session.set_document(document);
     }
 
-    /// Apply a Profile edit (variable-preserving merge).
-    pub fn apply_profile_edit(&mut self, profile: &Profile) {
-        self.session.apply_profile_edit(profile);
-    }
-
-    /// Update the document's metadata (description / author / tags) losslessly.
-    pub fn set_metadata(
-        &mut self,
-        description: Option<String>,
-        author: Option<String>,
-        tags: Vec<String>,
-    ) {
-        self.session.set_metadata(description, author, tags);
-    }
-
-    /// Lenient resolved Profile projection for display/IPC.
-    pub fn profile_view(&self) -> Profile {
-        self.session.profile_view()
+    /// Replace the canonical document with a UI edit. Never rejected; returns
+    /// the validation findings for the UI to display.
+    pub fn update_document(&mut self, document: MacroDocument) -> Vec<ValidationError> {
+        self.session.update_document(document)
     }
 
     /// Replace the run-time variable overrides applied on the next run.
