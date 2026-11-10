@@ -7,7 +7,7 @@
 //! - Windows/Linux: Uses rdev crate (`rdev_impl.rs`)
 //! - macOS: Uses native Core Graphics API (`macos.rs`)
 
-use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -44,33 +44,15 @@ pub struct MouseTrackerHandle {
 }
 
 impl MouseTrackerHandle {
-    /// Try to receive an event (non-blocking).
-    pub fn try_recv(&self) -> Option<MouseTrackerEvent> {
-        self.event_rx.try_recv().ok()
-    }
-
-    /// Drain all pending events.
-    pub fn drain(&self) -> Vec<MouseTrackerEvent> {
-        let mut events = Vec::new();
-        loop {
-            match self.event_rx.try_recv() {
-                Ok(event) => events.push(event),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
-        }
-        events
+    /// The tracker's events; iterating blocks until the next one.
+    pub fn events(&self) -> &Receiver<MouseTrackerEvent> {
+        &self.event_rx
     }
 
     /// Stop the tracker.
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         let _ = self.cmd_tx.send(MouseTrackerCommand::Stop);
-    }
-
-    /// Check if the tracker is still running.
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
     }
 }
 

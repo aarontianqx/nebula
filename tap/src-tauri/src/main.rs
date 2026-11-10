@@ -2,10 +2,12 @@
 
 mod app;
 mod commands;
-mod events;
+mod dto;
+mod forward;
 mod key_click;
 mod picker;
 mod ports;
+mod recording;
 mod state;
 mod templates;
 

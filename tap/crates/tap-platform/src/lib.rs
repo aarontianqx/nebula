@@ -20,7 +20,9 @@
 //! - `window` - Window detection and management
 //! - `pixel` - Pixel color reading
 //! - `dpi` - DPI scaling utilities
+//! - `cursor` - Current pointer position
 
+mod cursor;
 mod dpi;
 mod error;
 mod events;
@@ -33,6 +35,8 @@ mod window;
 
 // Re-export error types
 pub use error::{PlatformError, PlatformResult};
+
+pub use cursor::cursor_position;
 
 // Re-export DPI utilities
 pub use dpi::{browser_to_injection_scale, set_dpi_aware};

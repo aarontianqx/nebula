@@ -32,7 +32,7 @@ Simple 模式下的“重复点击”常见痛点：鼠标连点疲劳、移动/
 - **A–Z 判定**：以 `tap-platform` 的 `KeyDown/KeyUp { key }` 为准，按键名归一化后判断；只有 A–Z 触发。
 - **多键规则**：任意时刻只允许一个 active trigger key——无 active 时第一个按下的 A–Z 成为 active 并开始连点；已有 active 时其余 A–Z 按下忽略；active 松开则停止连点回到 Armed（等待下一次按下）。
 - **Space 优先级**：`Space` 的 KeyDown 一律最高优先级，即使正在连点也立即停止并退出。
-- **与录制/回放互斥**：仅在 Engine=Idle 且 Recorder=Idle 时可启动，避免多个全局 hook 并存。
+- **与录制/回放互斥**：仅在 Engine=Idle 且 Recorder=Idle 时可启动，避免多个全局 hook 并存（`state::ensure_idle`，录制与按键捕获共用）。
 - **可观测（高风险输入工具必须做到）**：状态栏常驻 `Hold A–Z to click | Space to stop`，配置卡显示实时点击计数；Activity Log 记录启动参数与停止原因（Space / UI Stop / Emergency Stop）。
 
 ## 设计取舍：为什么不是 DSL Action
@@ -50,6 +50,6 @@ DSL 的抽象是“时间线上的动作”，而 Key→Click 由用户实时输
 
 ## 实现落点
 
-- 后端：`tap/src-tauri/src/key_click.rs`（Tool Runner 线程 + 输入订阅 + 注入），命令 `start_key_click` / `stop_key_click`。
+- 后端：何时点击由 `tap-application` 的 `KeyClickMachine`（纯状态机，含单测）决定；`tap/src-tauri/src/key_click.rs` 只负责 I/O（Tool Runner 线程订阅输入、读光标、注入、emit 事件），命令 `start_key_click` / `stop_key_click`。
 - 前端：`toolStore` + `SimpleConfig`（Simple 模式下 Action 增加 Key→Click 项）。
 - 行为与上文一致：触发 A–Z、Space/Stop 终止、与 Engine/Recorder 互斥，配置项含鼠标按键、点击位置、`min_interval_ms`、`hold_delay_ms`、窗口锁定。

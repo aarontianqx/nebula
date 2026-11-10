@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crossbeam_channel::Receiver;
 use tap_core::{MacroDocument, ValidationError, VariableValue};
 
 use crate::playback::{EngineCommand, EngineEvent, EngineState, PlayerHandle};
@@ -81,9 +82,9 @@ impl Coordinator {
         self.player.send(EngineCommand::Stop);
     }
 
-    /// Drain all pending engine events (non-blocking).
-    pub fn drain_events(&self) -> Vec<EngineEvent> {
-        std::iter::from_fn(|| self.player.try_recv()).collect()
+    /// The engine's events. Receivers are interchangeable: each event goes to exactly one.
+    pub fn events(&self) -> Receiver<EngineEvent> {
+        self.player.events()
     }
 
     // === Session / document ===

@@ -3,7 +3,6 @@
 //! `tap-application` depends only on the `ActionExecutor` / `PlatformConditionProvider` traits;
 //! this module wires them to the `tap-platform` injector and window / pixel queries.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tap_application::{ActionExecutor, PlatformConditionProvider};
@@ -13,26 +12,28 @@ use tap_platform::{
 };
 use tracing::debug;
 
+use crate::state::DryRun;
+
 /// Bridges the `tap-platform` injector to the application-layer [`ActionExecutor`]
 /// port, keeping `tap-application` free of any platform dependency.
 pub struct EnigoExecutor {
-    injector: EnigoInjector,
-    dry_run: Arc<AtomicBool>,
+    injector: Arc<EnigoInjector>,
+    dry_run: DryRun,
 }
 
 impl EnigoExecutor {
-    pub fn new(injector: EnigoInjector, dry_run: Arc<AtomicBool>) -> Self {
+    pub fn new(injector: Arc<EnigoInjector>, dry_run: DryRun) -> Self {
         Self { injector, dry_run }
     }
 }
 
 impl ActionExecutor for EnigoExecutor {
     fn execute(&self, action: &Action) -> Result<(), String> {
-        if self.dry_run.load(Ordering::SeqCst) {
+        if self.dry_run.get() {
             debug!(?action, "dry-run: skipping injection");
             return Ok(());
         }
-        InputInjector::inject(&self.injector, action).map_err(|e| e.to_string())
+        self.injector.inject(action).map_err(|e| e.to_string())
     }
 }
 

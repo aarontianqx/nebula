@@ -1,25 +1,22 @@
 //! Engine lifecycle commands: start / pause / resume / stop / emergency stop, plus the dry-run toggle.
 
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
-
 use tap_application::{simple_repeat_document, EngineState};
 use tap_core::{DslAction, DslMouseButton, MouseButton};
 use tauri::State;
 use tracing::{info, warn};
 
 use crate::app::stop_all;
-use crate::state::AppState;
+use crate::key_click::KeyClickState;
+use crate::state::{CoordinatorState, DryRun};
 
 #[tauri::command]
-pub fn get_state(state: State<'_, Mutex<AppState>>) -> EngineState {
-    state.lock().unwrap().coordinator.engine_state()
+pub fn get_state(coordinator: State<'_, CoordinatorState>) -> EngineState {
+    coordinator.lock().unwrap().engine_state()
 }
 
 #[tauri::command]
-pub fn start_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app_state = state.lock().unwrap();
-    app_state.coordinator.start()?;
+pub fn start_execution(coordinator: State<'_, CoordinatorState>) -> Result<(), String> {
+    coordinator.lock().unwrap().start()?;
     info!("Sent start command to player");
     Ok(())
 }
@@ -43,7 +40,7 @@ pub enum SimpleAction {
 /// Runs a throwaway macro: the document in the editor is not replaced.
 #[tauri::command]
 pub fn start_simple_repeat(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     action: SimpleAction,
     interval_ms: u64,
     repeat_count: Option<u32>,
@@ -59,43 +56,40 @@ pub fn start_simple_repeat(
         repeat_count,
         u64::from(countdown_secs) * 1000,
     );
-    state.lock().unwrap().coordinator.start_standalone(document)
+    coordinator.lock().unwrap().start_standalone(document)
 }
 
 #[tauri::command]
-pub fn pause_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    state.lock().unwrap().coordinator.pause()
+pub fn pause_execution(coordinator: State<'_, CoordinatorState>) -> Result<(), String> {
+    coordinator.lock().unwrap().pause()
 }
 
 #[tauri::command]
-pub fn resume_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    state.lock().unwrap().coordinator.resume()
+pub fn resume_execution(coordinator: State<'_, CoordinatorState>) -> Result<(), String> {
+    coordinator.lock().unwrap().resume()
 }
 
 #[tauri::command]
-pub fn stop_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    state.lock().unwrap().coordinator.stop();
-    Ok(())
+pub fn stop_execution(coordinator: State<'_, CoordinatorState>) {
+    coordinator.lock().unwrap().stop();
 }
 
 #[tauri::command]
-pub fn emergency_stop(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
+pub fn emergency_stop(
+    coordinator: State<'_, CoordinatorState>,
+    key_click: State<'_, KeyClickState>,
+) {
     warn!("Emergency stop triggered!");
-    stop_all(&state.lock().unwrap());
-    Ok(())
+    stop_all(&coordinator, &key_click);
 }
 
 #[tauri::command]
-pub fn cmd_set_dry_run(state: State<'_, Mutex<AppState>>, enabled: bool) {
-    state
-        .lock()
-        .unwrap()
-        .dry_run
-        .store(enabled, Ordering::SeqCst);
+pub fn cmd_set_dry_run(dry_run: State<'_, DryRun>, enabled: bool) {
+    dry_run.set(enabled);
     info!(enabled, "Dry-run toggled");
 }
 
 #[tauri::command]
-pub fn cmd_get_dry_run(state: State<'_, Mutex<AppState>>) -> bool {
-    state.lock().unwrap().dry_run.load(Ordering::SeqCst)
+pub fn cmd_get_dry_run(dry_run: State<'_, DryRun>) -> bool {
+    dry_run.get()
 }

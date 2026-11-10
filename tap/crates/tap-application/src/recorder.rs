@@ -151,7 +151,6 @@ pub struct Recorder {
     /// Timestamp of the last recorded mouse-move sample. `None` until the first
     /// move is captured so that the initial position is never throttled away.
     last_move_time_ms: Option<u64>,
-    last_mouse_pos: (i32, i32),
 }
 
 impl Recorder {
@@ -165,7 +164,6 @@ impl Recorder {
             pause_time: None,
             total_paused_ms: 0,
             last_move_time_ms: None,
-            last_mouse_pos: (0, 0),
         }
     }
 
@@ -208,7 +206,6 @@ impl Recorder {
         self.pause_time = None;
         self.total_paused_ms = 0;
         self.last_move_time_ms = None;
-        self.last_mouse_pos = (0, 0);
 
         info!("Recording started");
         Some(RecorderEvent::StateChanged {
@@ -292,7 +289,7 @@ impl Recorder {
         let adjusted_ts = timestamp_ms.saturating_sub(self.total_paused_ms);
 
         // Apply noise reduction for mouse move
-        if let RawEventType::MouseMove { x, y } = &event {
+        if matches!(event, RawEventType::MouseMove { .. }) {
             if !self.config.record_mouse_move {
                 return None;
             }
@@ -300,13 +297,10 @@ impl Recorder {
             // cursor position is captured, then throttle subsequent samples.
             if let Some(last) = self.last_move_time_ms {
                 if adjusted_ts < last + self.config.move_sample_interval_ms {
-                    // Still update last known position for button events.
-                    self.last_mouse_pos = (*x, *y);
                     return None;
                 }
             }
             self.last_move_time_ms = Some(adjusted_ts);
-            self.last_mouse_pos = (*x, *y);
         }
 
         // Skip scroll if disabled
@@ -327,17 +321,6 @@ impl Recorder {
         })
     }
 
-    /// Resolve an event position, falling back to the last known cursor
-    /// position when the platform reported `(0, 0)` (some backends omit the
-    /// coordinate on button events).
-    fn resolve_pos(&self, x: i32, y: i32) -> (i32, i32) {
-        if x == 0 && y == 0 {
-            self.last_mouse_pos
-        } else {
-            (x, y)
-        }
-    }
-
     /// The macro steps for the buffered events: synthesis folds raw transitions into gestures, then
     /// the move merge drops intermediate samples of straight paths. Both are optional.
     fn generate_steps(&self) -> Vec<DslTimedAction> {
@@ -346,7 +329,7 @@ impl Recorder {
         } else {
             self.events
                 .iter()
-                .map(|b| (b.timestamp_ms, self.raw_action(&b.event)))
+                .map(|b| (b.timestamp_ms, raw_action(&b.event)))
                 .collect()
         };
 
@@ -360,24 +343,6 @@ impl Recorder {
             .collect()
     }
 
-    /// One raw event as the action that replays it as is.
-    fn raw_action(&self, event: &RawEventType) -> DslAction {
-        match event {
-            RawEventType::MouseMove { x, y } => DslAction::mouse_move(*x, *y),
-            RawEventType::MouseDown { x, y, button } => {
-                let (px, py) = self.resolve_pos(*x, *y);
-                DslAction::mouse_down(px, py, (*button).into())
-            }
-            RawEventType::MouseUp { x, y, button } => {
-                let (px, py) = self.resolve_pos(*x, *y);
-                DslAction::mouse_up(px, py, (*button).into())
-            }
-            RawEventType::Scroll { delta_x, delta_y } => DslAction::scroll(*delta_x, *delta_y),
-            RawEventType::KeyDown { key } => DslAction::KeyDown { key: key.clone() },
-            RawEventType::KeyUp { key } => DslAction::KeyUp { key: key.clone() },
-        }
-    }
-
     /// Fold raw button/key transitions into high-level actions.
     fn synthesize_actions(&self) -> Vec<(u64, DslAction)> {
         let events = &self.events;
@@ -389,13 +354,13 @@ impl Recorder {
             match &buffered.event {
                 RawEventType::MouseDown { x, y, button } => {
                     let down_ts = buffered.timestamp_ms;
-                    let down_pos = self.resolve_pos(*x, *y);
+                    let down_pos = (*x, *y);
 
                     if let Some((up_idx, only_moves)) = find_matching_up(events, i, *button) {
                         if only_moves {
                             let up = &events[up_idx];
                             let up_pos = match &up.event {
-                                RawEventType::MouseUp { x, y, .. } => self.resolve_pos(*x, *y),
+                                RawEventType::MouseUp { x, y, .. } => (*x, *y),
                                 _ => down_pos,
                             };
                             let dt = up.timestamp_ms.saturating_sub(down_ts);
@@ -416,7 +381,7 @@ impl Recorder {
                         }
                     }
 
-                    out.push((down_ts, self.raw_action(&buffered.event)));
+                    out.push((down_ts, raw_action(&buffered.event)));
                     i += 1;
                 }
 
@@ -436,12 +401,12 @@ impl Recorder {
                             }
                         }
                     }
-                    out.push((buffered.timestamp_ms, self.raw_action(&buffered.event)));
+                    out.push((buffered.timestamp_ms, raw_action(&buffered.event)));
                     i += 1;
                 }
 
                 _ => {
-                    out.push((buffered.timestamp_ms, self.raw_action(&buffered.event)));
+                    out.push((buffered.timestamp_ms, raw_action(&buffered.event)));
                     i += 1;
                 }
             }
@@ -456,6 +421,18 @@ fn distance(a: (i32, i32), b: (i32, i32)) -> f64 {
     let dx = (a.0 - b.0) as f64;
     let dy = (a.1 - b.1) as f64;
     (dx * dx + dy * dy).sqrt()
+}
+
+/// One raw event as the action that replays it as is.
+fn raw_action(event: &RawEventType) -> DslAction {
+    match event {
+        RawEventType::MouseMove { x, y } => DslAction::mouse_move(*x, *y),
+        RawEventType::MouseDown { x, y, button } => DslAction::mouse_down(*x, *y, (*button).into()),
+        RawEventType::MouseUp { x, y, button } => DslAction::mouse_up(*x, *y, (*button).into()),
+        RawEventType::Scroll { delta_x, delta_y } => DslAction::scroll(*delta_x, *delta_y),
+        RawEventType::KeyDown { key } => DslAction::KeyDown { key: key.clone() },
+        RawEventType::KeyUp { key } => DslAction::KeyUp { key: key.clone() },
+    }
 }
 
 /// Find the next `MouseUp` for `button` after `down_idx`.

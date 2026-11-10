@@ -1,19 +1,17 @@
 //! The canonical document: edits, persistence, metadata, templates and native file import / export.
 
-use std::sync::Mutex;
-
 use tap_application::MacroLibrary;
-use tap_core::{document_to_yaml, parse_yaml, MacroDocument};
+use tap_core::{document_to_yaml, parse_yaml, MacroDocument, ValidationError};
 use tauri::State;
 
-use super::yaml::{ensure_valid, ValidationErrorResponse};
-use crate::state::AppState;
+use super::yaml::ensure_valid;
+use crate::state::CoordinatorState;
 use crate::templates;
 
 /// The canonical document, exactly as the engine will run it.
 #[tauri::command]
-pub fn get_document(state: State<'_, Mutex<AppState>>) -> MacroDocument {
-    state.lock().unwrap().coordinator.document().clone()
+pub fn get_document(coordinator: State<'_, CoordinatorState>) -> MacroDocument {
+    coordinator.lock().unwrap().document().clone()
 }
 
 /// Replace the canonical document with an edit from the UI.
@@ -22,32 +20,25 @@ pub fn get_document(state: State<'_, Mutex<AppState>>) -> MacroDocument {
 /// as warnings for the UI to show inline.
 #[tauri::command]
 pub fn update_document(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     document: MacroDocument,
-) -> Vec<ValidationErrorResponse> {
-    state
-        .lock()
-        .unwrap()
-        .coordinator
-        .update_document(document)
-        .into_iter()
-        .map(ValidationErrorResponse::from)
-        .collect()
+) -> Vec<ValidationError> {
+    coordinator.lock().unwrap().update_document(document)
 }
 
 #[tauri::command]
 pub fn cmd_save_profile(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     library: State<'_, MacroLibrary>,
     name: Option<String>,
 ) -> Result<String, String> {
-    let mut app_state = state.lock().unwrap();
+    let mut coordinator = coordinator.lock().unwrap();
 
     if let Some(n) = name {
-        app_state.coordinator.session_mut().set_name(n);
+        coordinator.session_mut().set_name(n);
     }
 
-    let document = app_state.coordinator.document();
+    let document = coordinator.document();
     let path = library.save(document).map_err(|e| e.to_string())?;
     library.remember(&document.name);
 
@@ -56,14 +47,13 @@ pub fn cmd_save_profile(
 
 #[tauri::command]
 pub fn cmd_load_profile(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     library: State<'_, MacroLibrary>,
     name: String,
 ) -> Result<MacroDocument, String> {
     let document = library.load(&name).map_err(|e| e.to_string())?;
 
-    let mut app_state = state.lock().unwrap();
-    app_state.coordinator.set_document(document.clone());
+    coordinator.lock().unwrap().set_document(document.clone());
     library.remember(&name);
 
     Ok(document)
@@ -96,40 +86,36 @@ pub fn cmd_list_templates() -> Vec<templates::TemplateInfo> {
 
 #[tauri::command]
 pub fn cmd_apply_template(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     id: String,
 ) -> Result<MacroDocument, String> {
     let yaml = templates::template_yaml(&id).ok_or_else(|| format!("Unknown template: {id}"))?;
     let document = parse_yaml(yaml).map_err(|e| e.to_string())?;
     ensure_valid(&document)?;
 
-    let mut app_state = state.lock().unwrap();
-    app_state.coordinator.set_document(document.clone());
+    coordinator.lock().unwrap().set_document(document.clone());
     Ok(document)
 }
 
 #[tauri::command]
 pub fn cmd_export_yaml_to_path(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     path: String,
 ) -> Result<(), String> {
-    let yaml = {
-        let app_state = state.lock().unwrap();
-        document_to_yaml(app_state.coordinator.document()).map_err(|e| e.to_string())?
-    };
+    let yaml =
+        document_to_yaml(coordinator.lock().unwrap().document()).map_err(|e| e.to_string())?;
     std::fs::write(&path, yaml).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn cmd_import_yaml_from_path(
-    state: State<'_, Mutex<AppState>>,
+    coordinator: State<'_, CoordinatorState>,
     path: String,
 ) -> Result<MacroDocument, String> {
     let yaml = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let document = parse_yaml(&yaml).map_err(|e| e.to_string())?;
     ensure_valid(&document)?;
 
-    let mut app_state = state.lock().unwrap();
-    app_state.coordinator.set_document(document.clone());
+    coordinator.lock().unwrap().set_document(document.clone());
     Ok(document)
 }

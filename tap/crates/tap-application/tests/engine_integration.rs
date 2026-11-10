@@ -787,14 +787,14 @@ fn a_standalone_run_plays_its_own_macro_and_leaves_the_session_alone() {
         .start_standalone(document(vec![timed(dsl_click(9, 9))], 1))
         .unwrap();
 
+    let events = coordinator.events();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut completed = false;
-    while !completed && Instant::now() < deadline {
-        completed = coordinator
-            .drain_events()
-            .iter()
-            .any(|event| matches!(event, EngineEvent::Completed));
-        std::thread::sleep(Duration::from_millis(2));
+    while !completed {
+        let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        completed = matches!(events.recv_timeout(wait), Ok(EngineEvent::Completed));
     }
 
     assert!(completed);
@@ -802,7 +802,7 @@ fn a_standalone_run_plays_its_own_macro_and_leaves_the_session_alone() {
     assert_eq!(coordinator.document(), &edited);
 }
 
-// === Tests: emergency stop ===
+// === Tests: stop ===
 
 #[test]
 fn emergency_stop_halts_a_forever_loop() {

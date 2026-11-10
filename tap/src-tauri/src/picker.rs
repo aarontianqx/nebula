@@ -9,8 +9,8 @@ use tap_core::Point;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tracing::{info, warn};
 
-use crate::commands::system::ColorResponse;
-use crate::state::{AppState, PositionPickedEvent};
+use crate::dto::{ColorResponse, PositionPickedEvent};
+use crate::state::CoordinatorState;
 
 /// What a pick should report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
@@ -146,10 +146,9 @@ pub async fn picker_position_selected(
     // screen position into a window-relative one. The editor does the subtraction (it also knows
     // which field asked); Simple mode keeps the screen position.
     let binding = {
-        let app_state: State<'_, Mutex<AppState>> = app.state();
-        let app_state = app_state.lock().map_err(|e| e.to_string())?;
-        window_binding(app_state.coordinator.document())
-            .map(|t| (t.title.clone(), t.process.clone()))
+        let coordinator = app.state::<CoordinatorState>();
+        let coordinator = coordinator.lock().map_err(|e| e.to_string())?;
+        window_binding(coordinator.document()).map(|t| (t.title.clone(), t.process.clone()))
     };
     let window_origin = binding.as_ref().and_then(|(title, process)| {
         tap_platform::window_origin(title.as_deref(), process.as_deref())

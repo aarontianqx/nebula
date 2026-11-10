@@ -1,26 +1,30 @@
-//! Key-to-Click tool mode.
+//! Key->Click runner: turns the input hook's key events into clicks. When a click is due is
+//! decided by `tap_application::KeyClickMachine`; this is the I/O around it.
 //!
-//! An event-driven "hold a key to keep clicking" tool, separate from the
-//! timeline engine. Behavior:
-//! - On KeyDown (A-Z): click once immediately, then arm a repeat timer.
-//! - If the key is held past `hold_delay_ms`: repeat clicks every `min_interval_ms`.
-//! - On KeyUp: stop repeating (return to the armed state, ready for the next key).
-//! - On Space KeyDown: stop the whole mode immediately.
-//!
-//! Clicks use the configured mouse button at either the live cursor position or
-//! a fixed point, and can be gated to a single window so alt-tabbing away never
-//! leaks clicks into the wrong app.
+//! Clicks can be gated to one window, so alt-tabbing away never leaks clicks into another app.
 
-use crossbeam_channel::{bounded, Receiver, Sender};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
-use tap_core::{Action, MouseButton};
-use tap_platform::{EnigoInjector, InputEventType, InputHookHandle, InputInjector};
+
+use crossbeam_channel::RecvTimeoutError;
+use tap_application::{ClickLocation, KeyClickConfig, KeyClickMachine, KeyDownOutcome};
+use tap_core::Action;
+use tap_platform::{
+    cursor_position, get_foreground_window, is_window_focused, EnigoInjector, InputEventType,
+    InputHookHandle, InputInjector,
+};
+use tauri::AppHandle;
 use tracing::{debug, info, warn};
 
-/// Reports whether clicks are currently allowed (e.g. the target window is focused).
+use crate::forward::emit_to_frontend;
+use crate::state::DryRun;
+
+/// Longest the runner waits on the hook before checking whether it was asked to stop.
+const STOP_CHECK_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Whether clicks are currently allowed (the target window is focused).
 pub type FocusGate = Box<dyn Fn() -> bool + Send>;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -30,304 +34,172 @@ pub enum KeyClickEvent {
     Stopped { total_clicks: u64, reason: String },
 }
 
-/// Mouse button choice, deserialized from the frontend (`"left"`/`"right"`/`"middle"`).
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KeyClickButton {
-    Left,
-    Right,
-    Middle,
-}
-
-impl From<KeyClickButton> for MouseButton {
-    fn from(b: KeyClickButton) -> Self {
-        match b {
-            KeyClickButton::Left => MouseButton::Left,
-            KeyClickButton::Right => MouseButton::Right,
-            KeyClickButton::Middle => MouseButton::Middle,
+/// Gate clicks to the window that is in the foreground right now, matched by process name (stable
+/// across title changes) or, when the process is unknown, by title.
+pub fn gate_to_foreground_window() -> Option<FocusGate> {
+    let Some(window) = get_foreground_window() else {
+        warn!("no foreground window to gate Key->Click to; clicking is not gated");
+        return None;
+    };
+    info!(process = %window.process_name, title = %window.title, "Key->Click gated to the active window");
+    Some(Box::new(move || {
+        if window.process_name.is_empty() {
+            is_window_focused(Some(&window.title), None)
+        } else {
+            is_window_focused(None, Some(&window.process_name))
         }
-    }
+    }))
 }
 
-/// Where each click lands.
-#[derive(Debug, Clone, Copy)]
-pub enum ClickLocation {
-    /// The live cursor position at click time.
-    Cursor,
-    /// A fixed point in injection-space coordinates.
-    Fixed { x: i32, y: i32 },
-}
-
-/// Raw Key->Click request from the frontend; [`to_config`](Self::to_config) clamps and resolves it.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyClickRequest {
-    pub min_interval_ms: u64,
-    pub hold_delay_ms: u64,
-    pub button: KeyClickButton,
-    /// `"cursor"` (default) or `"fixed"`.
-    pub location_mode: String,
-    pub fixed_x: i32,
-    pub fixed_y: i32,
-    /// When true, lock clicks to the window focused at start time.
-    pub only_target_focused: bool,
-}
-
-impl KeyClickRequest {
-    pub fn to_config(&self) -> KeyClickConfig {
-        KeyClickConfig {
-            min_interval_ms: self.min_interval_ms.clamp(10, 1000),
-            hold_delay_ms: self.hold_delay_ms.min(5000),
-            button: self.button.into(),
-            location: if self.location_mode == "fixed" {
-                ClickLocation::Fixed {
-                    x: self.fixed_x,
-                    y: self.fixed_y,
-                }
-            } else {
-                ClickLocation::Cursor
-            },
-        }
-    }
-}
-
-pub struct KeyClickHandle {
+struct Running {
     stop_requested: Arc<AtomicBool>,
-    event_rx: Receiver<KeyClickEvent>,
     running: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
 }
 
-impl KeyClickHandle {
-    pub fn is_running(&self) -> bool {
+impl Running {
+    fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
-    pub fn drain(&self) -> Vec<KeyClickEvent> {
-        let mut events = Vec::new();
-        while let Ok(event) = self.event_rx.try_recv() {
-            events.push(event);
-        }
-        events
-    }
-
-    pub fn stop(&self) {
+    fn stop(&self) {
         self.stop_requested.store(true, Ordering::SeqCst);
     }
 }
 
-impl Drop for KeyClickHandle {
-    fn drop(&mut self) {
-        self.stop();
-        // Don't join the thread - let it exit on its own.
-        // Joining here can cause issues if the thread is still processing.
-        let _ = self.thread.take();
+#[derive(Default)]
+pub struct KeyClickState(Mutex<Option<Running>>);
+
+impl KeyClickState {
+    pub fn is_running(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(Running::is_running)
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-pub struct KeyClickConfig {
-    pub min_interval_ms: u64,
-    pub hold_delay_ms: u64,
-    pub button: MouseButton,
-    pub location: ClickLocation,
-}
-
-impl Default for KeyClickConfig {
-    fn default() -> Self {
-        Self {
-            min_interval_ms: 40,
-            hold_delay_ms: 150,
-            button: MouseButton::Left,
-            location: ClickLocation::Cursor,
+    /// Ask the runner to stop; it ends on its own a moment later.
+    pub fn stop(&self) {
+        if let Some(runner) = self.0.lock().unwrap().as_ref() {
+            runner.stop();
         }
     }
-}
 
-fn is_az_key(key: &str) -> bool {
-    key.len() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-}
-
-pub fn start_key_click_runner(
-    config: KeyClickConfig,
-    input_hook: InputHookHandle,
-    injector: Arc<EnigoInjector>,
-    get_mouse_position: impl Fn() -> (i32, i32) + Send + 'static,
-    focus_gate: Option<FocusGate>,
-    dry_run: Arc<AtomicBool>,
-) -> KeyClickHandle {
-    let (event_tx, event_rx) = bounded::<KeyClickEvent>(256);
-
-    let stop_requested = Arc::new(AtomicBool::new(false));
-    let running = Arc::new(AtomicBool::new(true));
-
-    let stop_clone = stop_requested.clone();
-    let running_clone = running.clone();
-
-    let thread = thread::spawn(move || {
-        run_loop(
-            config,
-            input_hook,
-            injector,
-            get_mouse_position,
-            focus_gate,
-            dry_run,
-            stop_clone,
-            event_tx,
-            running_clone,
-        );
-    });
-
-    KeyClickHandle {
-        stop_requested,
-        event_rx,
-        running,
-        thread: Some(thread),
-    }
-}
-
-struct ActiveKey {
-    key: String,
-    repeating: bool,
-    next_repeat_at: Instant,
-}
-
-#[allow(clippy::too_many_arguments)] // internal worker: shares the runner's handles directly.
-fn run_loop(
-    config: KeyClickConfig,
-    input_hook: InputHookHandle,
-    injector: Arc<EnigoInjector>,
-    get_mouse_position: impl Fn() -> (i32, i32),
-    focus_gate: Option<FocusGate>,
-    dry_run: Arc<AtomicBool>,
-    stop_requested: Arc<AtomicBool>,
-    event_tx: Sender<KeyClickEvent>,
-    running: Arc<AtomicBool>,
-) {
-    info!(
-        min_interval_ms = config.min_interval_ms,
-        hold_delay_ms = config.hold_delay_ms,
-        button = ?config.button,
-        "Key-click started"
-    );
-    let _ = event_tx.send(KeyClickEvent::Started);
-    let click_count = AtomicU64::new(0);
-
-    let hold_delay = Duration::from_millis(config.hold_delay_ms);
-    let repeat_interval = Duration::from_millis(config.min_interval_ms);
-    let mut active: Option<ActiveKey> = None;
-
-    // Fire one click, respecting the focus gate and resolving the target point.
-    // In dry-run we still count and emit (so the live counter previews intent)
-    // but never inject.
-    let click_once = |click_count: &AtomicU64, event_tx: &Sender<KeyClickEvent>| {
-        if let Some(ref gate) = focus_gate {
-            if !gate() {
-                return; // target window not focused; skip silently
-            }
+    pub fn start(&self, run: KeyClickRun) -> Result<(), String> {
+        let mut slot = self.0.lock().unwrap();
+        if slot.as_ref().is_some_and(Running::is_running) {
+            return Err("Key-click mode is already running".into());
         }
-        let (x, y) = match config.location {
-            ClickLocation::Cursor => get_mouse_position(),
-            ClickLocation::Fixed { x, y } => (x, y),
+        let runner = Running {
+            stop_requested: Arc::new(AtomicBool::new(false)),
+            running: Arc::new(AtomicBool::new(true)),
         };
-        if dry_run.load(Ordering::SeqCst) {
-            let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
-            let _ = event_tx.send(KeyClickEvent::Click { count, x, y });
-        } else {
-            do_click(&injector, config.button, x, y, click_count, event_tx);
-        }
-    };
+        let (stop, running) = (runner.stop_requested.clone(), runner.running.clone());
+        thread::spawn(move || run.run(&stop, &running));
+        *slot = Some(runner);
+        Ok(())
+    }
+}
 
-    loop {
-        if stop_requested.load(Ordering::SeqCst) {
-            info!("Key-click received stop signal");
-            break;
-        }
+pub struct KeyClickRun {
+    pub app: AppHandle,
+    pub config: KeyClickConfig,
+    pub hook: InputHookHandle,
+    pub injector: Arc<EnigoInjector>,
+    pub dry_run: DryRun,
+    pub focus_gate: Option<FocusGate>,
+}
 
-        for raw_event in input_hook.drain() {
-            match &raw_event.event {
-                InputEventType::KeyDown { key } => {
-                    debug!(key, "KeyDown received");
+impl KeyClickRun {
+    fn run(self, stop_requested: &AtomicBool, running: &AtomicBool) {
+        let Self {
+            app,
+            config,
+            hook,
+            injector,
+            dry_run,
+            focus_gate,
+        } = self;
+        let emit = |event: KeyClickEvent| emit_to_frontend(&app, "key-click-event", event);
+        info!(
+            min_interval_ms = config.min_interval_ms(),
+            hold_delay_ms = config.hold_delay_ms(),
+            button = ?config.button,
+            "Key-click started"
+        );
+        emit(KeyClickEvent::Started);
 
-                    // Space stops immediately.
-                    if key == "Space" {
-                        info!("Key-click stopped by Space");
-                        cleanup(&running, &click_count, &event_tx, &input_hook, "space");
-                        return;
-                    }
-
-                    // A-Z triggers a click (only if no key is already active).
-                    if is_az_key(key) && active.is_none() {
-                        click_once(&click_count, &event_tx);
-                        active = Some(ActiveKey {
-                            key: key.clone(),
-                            repeating: false,
-                            next_repeat_at: Instant::now() + hold_delay,
-                        });
-                    }
+        let mut machine = KeyClickMachine::new(&config);
+        let mut total_clicks = 0u64;
+        let mut click = || {
+            if focus_gate.as_ref().is_some_and(|gate| !gate()) {
+                return;
+            }
+            let point = match config.location {
+                ClickLocation::Fixed { x, y } => Some((x, y)),
+                ClickLocation::Cursor => cursor_position(),
+            };
+            let Some((x, y)) = point else {
+                warn!("cannot read the cursor position; click skipped");
+                return;
+            };
+            // In dry-run the click is only counted and reported, so the live counter shows what
+            // would have happened.
+            if !dry_run.get() {
+                let action = Action::Click {
+                    x,
+                    y,
+                    button: config.button,
+                };
+                if let Err(e) = injector.inject(&action) {
+                    warn!(error = %e, "click failed");
+                    return;
                 }
-                InputEventType::KeyUp { key } => {
-                    debug!(key, "KeyUp received");
-                    if let Some(ref state) = active {
-                        if state.key.eq_ignore_ascii_case(key) {
-                            debug!(key, "Key released");
-                            active = None;
+            }
+            total_clicks += 1;
+            emit(KeyClickEvent::Click {
+                count: total_clicks,
+                x,
+                y,
+            });
+        };
+
+        let reason = loop {
+            if stop_requested.load(Ordering::SeqCst) {
+                break "external";
+            }
+            let wait = machine.next_repeat_at().map_or(STOP_CHECK_INTERVAL, |due| {
+                due.saturating_duration_since(Instant::now())
+                    .min(STOP_CHECK_INTERVAL)
+            });
+            match hook.recv_timeout(wait) {
+                Ok(raw) => match raw.event {
+                    InputEventType::KeyDown { key } => {
+                        debug!(key, "key down");
+                        match machine.key_down(&key, Instant::now()) {
+                            KeyDownOutcome::Click => click(),
+                            KeyDownOutcome::Stop => break "space",
+                            KeyDownOutcome::Ignored => {}
                         }
                     }
-                }
-                _ => {}
+                    InputEventType::KeyUp { key } => machine.key_up(&key),
+                    _ => {}
+                },
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break "input hook ended",
             }
-        }
-
-        if let Some(ref mut state) = active {
-            let now = Instant::now();
-            if now >= state.next_repeat_at {
-                if !state.repeating {
-                    state.repeating = true;
-                    debug!("Entering repeat mode");
-                }
-                click_once(&click_count, &event_tx);
-                state.next_repeat_at = now + repeat_interval;
+            if machine.repeat_due(Instant::now()) {
+                click();
             }
-        }
+        };
 
-        thread::sleep(Duration::from_millis(5));
+        hook.stop();
+        // Before the event: a frontend that starts again on `Stopped` must find the runner free.
+        running.store(false, Ordering::SeqCst);
+        info!(reason, total_clicks, "Key-click exited");
+        emit(KeyClickEvent::Stopped {
+            total_clicks,
+            reason: reason.to_string(),
+        });
     }
-
-    cleanup(&running, &click_count, &event_tx, &input_hook, "external");
-}
-
-fn do_click(
-    injector: &EnigoInjector,
-    button: MouseButton,
-    x: i32,
-    y: i32,
-    click_count: &AtomicU64,
-    event_tx: &Sender<KeyClickEvent>,
-) {
-    let action = Action::Click { x, y, button };
-    match injector.inject(&action) {
-        Ok(()) => {
-            let count = click_count.fetch_add(1, Ordering::SeqCst) + 1;
-            let _ = event_tx.send(KeyClickEvent::Click { count, x, y });
-        }
-        Err(e) => warn!(?e, "Click failed"),
-    }
-}
-
-fn cleanup(
-    running: &AtomicBool,
-    click_count: &AtomicU64,
-    event_tx: &Sender<KeyClickEvent>,
-    input_hook: &InputHookHandle,
-    reason: &str,
-) {
-    running.store(false, Ordering::SeqCst);
-    let total = click_count.load(Ordering::SeqCst);
-    let _ = event_tx.send(KeyClickEvent::Stopped {
-        total_clicks: total,
-        reason: reason.to_string(),
-    });
-    input_hook.stop();
-    info!(reason, total_clicks = total, "Key-click exited");
 }

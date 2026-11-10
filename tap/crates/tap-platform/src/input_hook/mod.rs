@@ -7,8 +7,9 @@
 //! - macOS: Uses native Core Graphics API (`macos.rs`)
 //! - Linux: Uses rdev crate (`rdev_impl.rs`)
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 mod windows_native;
@@ -70,28 +71,14 @@ pub struct InputHookHandle {
 }
 
 impl InputHookHandle {
-    /// Try to receive an event (non-blocking).
-    pub fn try_recv(&self) -> Option<RawInputEvent> {
-        self.event_rx.try_recv().ok()
-    }
-
-    /// Receive all pending events.
-    pub fn drain(&self) -> Vec<RawInputEvent> {
-        let mut events = Vec::new();
-        while let Ok(event) = self.event_rx.try_recv() {
-            events.push(event);
-        }
-        events
+    /// Wait up to `timeout` for the next event. `Disconnected` means the hook has ended.
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<RawInputEvent, RecvTimeoutError> {
+        self.event_rx.recv_timeout(timeout)
     }
 
     /// Signal the hook to stop.
     pub fn stop(&self) {
         let _ = self.stop_tx.send(());
-    }
-
-    /// Check if the hook thread is still running.
-    pub fn is_running(&self) -> bool {
-        self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
 }
 

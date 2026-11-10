@@ -3697,7 +3697,6 @@ dependencies = [
 name = "tap-tauri"
 version = "0.1.0"
 dependencies = [
- "core-graphics 0.24.0",
  "crossbeam-channel",
  "serde",
  "serde_json",
@@ -3710,7 +3709,6 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tracing",
  "tracing-subscriber",
- "windows 0.61.3",
 ]
 
 [[package]]

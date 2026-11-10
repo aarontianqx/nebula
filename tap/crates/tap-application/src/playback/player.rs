@@ -59,6 +59,11 @@ impl PlayerHandle {
         self.event_rx.try_recv().ok()
     }
 
+    /// A receiver for the player's events, for a thread that forwards them as they arrive.
+    pub fn events(&self) -> Receiver<EngineEvent> {
+        self.event_rx.clone()
+    }
+
     pub fn state(&self) -> EngineState {
         *self.state.lock().unwrap()
     }
