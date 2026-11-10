@@ -32,6 +32,9 @@ export const useRecorderStore = create<RecorderStore>((set) => ({
 
   start: async () => {
     try {
+      // Whether positions are recorded relative to the target window is decided by the backend's
+      // document: make sure it has seen the latest edits (the toggle included).
+      await useDocumentStore.getState().flush();
       await api.startRecording();
       set({ recorderState: "Recording", eventCount: 0, durationMs: 0 });
       log("Recording started");

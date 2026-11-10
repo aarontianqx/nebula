@@ -241,9 +241,11 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
         return;
       }
       try {
-        await get().flush();
         const path = await pickSavePath(`${get().doc.name || "macro"}.yaml`);
         if (!path) return;
+        // After the dialog, not before: the export writes what the backend holds, which must
+        // include anything edited while the dialog was open.
+        await get().flush();
         await api.exportYamlToPath(path);
         log(`Exported to ${path}`);
       } catch (err) {

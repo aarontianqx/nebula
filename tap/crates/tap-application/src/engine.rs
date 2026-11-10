@@ -941,8 +941,9 @@ enum ActionResult {
 
 /// Number of interpolation steps for a drag of the given duration.
 fn drag_steps(duration_ms: u64) -> u32 {
-    let by_time = (duration_ms / DRAG_STEP_MS) as u32;
-    by_time.clamp(1, MAX_DRAG_STEPS)
+    // Clamp before narrowing: a huge duration must not wrap around into a small step count.
+    let by_time = (duration_ms / DRAG_STEP_MS).min(u64::from(MAX_DRAG_STEPS)) as u32;
+    by_time.max(1)
 }
 
 /// Linearly interpolate the cursor position at step `k` of `steps` from
@@ -986,5 +987,25 @@ impl<'a, P: PlatformConditionProvider> ConditionEvaluator for RuntimeConditionEv
 
     fn get_counter(&self, key: &str) -> i32 {
         self.variables.lock().unwrap().get_counter(key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drag_has_at_least_one_step_and_at_most_the_cap() {
+        assert_eq!(drag_steps(0), 1);
+        assert_eq!(drag_steps(DRAG_STEP_MS - 1), 1);
+        assert_eq!(drag_steps(DRAG_STEP_MS * 10), 10);
+        assert_eq!(drag_steps(u64::MAX), MAX_DRAG_STEPS);
+    }
+
+    #[test]
+    fn a_huge_drag_duration_does_not_wrap_into_a_tiny_step_count() {
+        // Just past what a u32 step count can hold: casting before clamping wraps to 0 -> 1.
+        let duration_ms = (u64::from(u32::MAX) + 1) * DRAG_STEP_MS;
+        assert_eq!(drag_steps(duration_ms), MAX_DRAG_STEPS);
     }
 }
