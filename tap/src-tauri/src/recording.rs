@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crossbeam_channel::RecvTimeoutError;
@@ -10,7 +10,9 @@ use tap_application::{
     MouseButtonRaw, RawEventType, RecorderState, RecordingSession, RecordingStatus,
 };
 use tap_core::{DslTimedAction, MacroDocument};
-use tap_platform::{start_input_hook, InputEventType, InputHookHandle, MouseButtonType};
+use tap_platform::{
+    start_input_hook, InputEventType, InputHookHandle, MouseButtonType, RawInputEvent,
+};
 use tauri::AppHandle;
 
 use crate::forward::emit_to_frontend;
@@ -20,8 +22,13 @@ const STOP_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct RecordingState {
     session: Arc<Mutex<RecordingSession>>,
-    /// Ends the thread forwarding the current recording's events.
-    forwarder_stop: Mutex<Option<Arc<AtomicBool>>>,
+    /// The thread forwarding the current recording's events.
+    forwarder: Mutex<Option<Forwarder>>,
+}
+
+struct Forwarder {
+    stop: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
 }
 
 impl Default for RecordingState {
@@ -31,7 +38,7 @@ impl Default for RecordingState {
         });
         Self {
             session: Arc::new(Mutex::new(RecordingSession::new(locate))),
-            forwarder_stop: Mutex::new(None),
+            forwarder: Mutex::new(None),
         }
     }
 }
@@ -50,14 +57,14 @@ impl RecordingState {
         session.start(document)?;
 
         let stop = Arc::new(AtomicBool::new(false));
-        *self.forwarder_stop.lock().unwrap() = Some(stop.clone());
-        let forwarder = InputForwarder {
+        let input = InputForwarder {
             app: app.clone(),
             session: self.session.clone(),
             hook: start_input_hook(),
-            stop,
+            stop: stop.clone(),
         };
-        thread::spawn(move || forwarder.run());
+        let thread = thread::spawn(move || input.run());
+        *self.forwarder.lock().unwrap() = Some(Forwarder { stop, thread });
         Ok(())
     }
 
@@ -70,8 +77,12 @@ impl RecordingState {
     }
 
     pub fn stop(&self) -> Option<Vec<DslTimedAction>> {
-        if let Some(stop) = self.forwarder_stop.lock().unwrap().take() {
+        let forwarder = self.forwarder.lock().unwrap().take();
+        if let Some(Forwarder { stop, thread }) = forwarder {
             stop.store(true, Ordering::SeqCst);
+            // Wait for it to hand over what the hook had already queued: the session must not
+            // end before those events are in it.
+            let _ = thread.join();
         }
         self.session.lock().unwrap().stop()
     }
@@ -90,19 +101,24 @@ impl InputForwarder {
     fn run(self) {
         while !self.stop.load(Ordering::SeqCst) {
             match self.hook.recv_timeout(STOP_CHECK_INTERVAL) {
-                Ok(raw) => {
-                    let status = self
-                        .session
-                        .lock()
-                        .unwrap()
-                        .push(raw.timestamp_ms, convert(raw.event));
-                    if let Some(status) = status {
-                        emit_to_frontend(&self.app, "recording-status", status);
-                    }
-                }
+                Ok(raw) => self.relay(raw),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
+        }
+        while let Ok(raw) = self.hook.recv_timeout(Duration::ZERO) {
+            self.relay(raw);
+        }
+    }
+
+    fn relay(&self, raw: RawInputEvent) {
+        let status = self
+            .session
+            .lock()
+            .unwrap()
+            .push(raw.timestamp_ms, convert(raw.event));
+        if let Some(status) = status {
+            emit_to_frontend(&self.app, "recording-status", status);
         }
     }
 }
