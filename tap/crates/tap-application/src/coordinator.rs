@@ -47,17 +47,32 @@ impl Coordinator {
         self.engine_state = state;
     }
 
-    /// Push the canonical document + run-time overrides and start a run.
+    /// Run the session's macro with the session's run-time overrides.
     pub fn start(&self) -> Result<(), String> {
+        self.begin_run(
+            self.session.document().clone(),
+            self.session.runtime_vars().clone(),
+        )
+    }
+
+    /// Run a macro that is not the session's (the simple-repeat tool), leaving the session's
+    /// document and overrides alone so the editor and the engine never disagree about it.
+    pub fn start_standalone(&self, document: MacroDocument) -> Result<(), String> {
+        self.begin_run(document, HashMap::new())
+    }
+
+    fn begin_run(
+        &self,
+        document: MacroDocument,
+        runtime_vars: HashMap<String, VariableValue>,
+    ) -> Result<(), String> {
         if self.engine_state != EngineState::Idle {
             return Err("Cannot start: not in idle state".into());
         }
-        self.player.send(EngineCommand::SetDocument(Box::new(
-            self.session.document().clone(),
-        )));
-        self.player.send(EngineCommand::SetRuntimeVars(
-            self.session.runtime_vars().clone(),
-        ));
+        self.player
+            .send(EngineCommand::SetDocument(Box::new(document)));
+        self.player
+            .send(EngineCommand::SetRuntimeVars(runtime_vars));
         self.player.send(EngineCommand::Start);
         Ok(())
     }

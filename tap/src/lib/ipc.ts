@@ -92,16 +92,12 @@ export const api = {
   openPermissionSettings: (which: "accessibility" | "screen_recording") =>
     invoke<void>("cmd_open_permission_settings", { which }),
 
-  setSimpleRepeat: (args: {
-    actionType: string;
-    x: number | null;
-    y: number | null;
-    key: string | null;
-    button: string | null;
+  startSimpleRepeat: (args: {
+    action: { type: "click"; x: number; y: number; button: string } | { type: "key"; key: string };
     intervalMs: number;
     repeatCount: number | null;
     countdownSecs: number;
-  }) => invoke<void>("set_simple_repeat", args),
+  }) => invoke<void>("start_simple_repeat", args),
 
   // === Recording ===
   startRecording: () => invoke<void>("start_recording"),

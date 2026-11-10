@@ -60,6 +60,7 @@ fn main() {
             // Engine lifecycle
             commands::engine::get_state,
             commands::engine::start_execution,
+            commands::engine::start_simple_repeat,
             commands::engine::pause_execution,
             commands::engine::resume_execution,
             commands::engine::stop_execution,
@@ -69,7 +70,6 @@ fn main() {
             // Document: edit, persistence, metadata, templates, file import / export
             commands::document::get_document,
             commands::document::update_document,
-            commands::document::set_simple_repeat,
             commands::document::cmd_save_profile,
             commands::document::cmd_load_profile,
             commands::document::cmd_delete_profile,

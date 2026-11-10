@@ -135,18 +135,16 @@ export const useToolStore = create<ToolStore>((set, get) => ({
   startSimple: async () => {
     const s = get();
     try {
-      await api.setSimpleRepeat({
-        actionType: s.actionType,
-        x: s.actionType === "click" ? s.clickX : null,
-        y: s.actionType === "click" ? s.clickY : null,
-        key: s.actionType === "key" ? s.keyName : null,
-        button: s.actionType === "click" ? s.clickButton.toLowerCase() : null,
+      useEngineStore.getState().resetRunStats();
+      await api.startSimpleRepeat({
+        action:
+          s.actionType === "click"
+            ? { type: "click", x: s.clickX, y: s.clickY, button: s.clickButton.toLowerCase() }
+            : { type: "key", key: s.keyName },
         intervalMs: s.intervalMs,
         repeatCount: s.repeatText ? parseInt(s.repeatText, 10) : null,
         countdownSecs: s.countdownSecs,
       });
-      useEngineStore.getState().resetRunStats();
-      await api.startExecution();
       log("Started");
     } catch (err) {
       useEngineStore.getState().setStatus(`Failed: ${String(err)}`);

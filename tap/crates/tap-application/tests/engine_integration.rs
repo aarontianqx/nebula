@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tap_application::{
-    ActionExecutor, EngineCommand, EngineEvent, EngineState, PlatformConditionProvider, Player,
-    PlayerHandle, SubMacroLoader,
+    ActionExecutor, Coordinator, EngineCommand, EngineEvent, EngineState,
+    PlatformConditionProvider, Player, PlayerHandle, SessionStore, SubMacroLoader,
 };
 use tap_core::{
     Action, DslAction, DslCondition, DslMouseButton, DslRunConfig, DslTimedAction, DslValue,
@@ -94,12 +94,7 @@ fn dsl_key(k: &str) -> DslAction {
 }
 
 fn timed(action: DslAction) -> DslTimedAction {
-    DslTimedAction {
-        at_ms: 0,
-        action,
-        enabled: true,
-        note: None,
-    }
+    DslTimedAction::new(0, action)
 }
 
 /// Build a document whose actions all fire immediately (at_ms = 0) with no
@@ -160,10 +155,7 @@ fn pump_until_complete(handle: &PlayerHandle, timeout: Duration) -> (bool, Vec<E
 /// Run a document to completion with no run-time overrides and the default
 /// (disk) sub-macro loader. Returns `(injected_actions, completed)`.
 ///
-/// NOTE: we intentionally drop the handle rather than calling `shutdown()`. The
-/// player loops back to `recv()` after a Stop, so `shutdown()` (which sends Stop
-/// then joins while still holding the sender) would block forever. Dropping
-/// closes the command channel and lets the thread exit.
+/// Dropping the handle closes the command channel, which is what lets the player thread exit.
 fn run_until_complete(doc: MacroDocument, timeout: Duration) -> (Vec<Action>, bool) {
     let (handle, injected) = spawn_recording(None);
     handle.send(EngineCommand::SetDocument(Box::new(doc)));
@@ -746,6 +738,34 @@ fn a_cycle_through_a_branch_is_detected_and_does_not_hang() {
     assert!(events
         .iter()
         .any(|e| matches!(e, EngineEvent::Error { .. })));
+}
+
+// === Tests: standalone runs ===
+
+#[test]
+fn a_standalone_run_plays_its_own_macro_and_leaves_the_session_alone() {
+    let (handle, injected) = spawn_recording(None);
+    let edited = document(vec![timed(dsl_click(1, 1))], 1);
+    let coordinator =
+        Coordinator::with_session(handle, SessionStore::with_document(edited.clone()));
+
+    coordinator
+        .start_standalone(document(vec![timed(dsl_click(9, 9))], 1))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut completed = false;
+    while !completed && Instant::now() < deadline {
+        completed = coordinator
+            .drain_events()
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Completed));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert!(completed);
+    assert_eq!(*injected.lock().unwrap(), vec![click(9, 9)]);
+    assert_eq!(coordinator.document(), &edited);
 }
 
 // === Tests: emergency stop ===

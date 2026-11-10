@@ -4,11 +4,10 @@ use std::sync::Mutex;
 
 use tap_application::{
     delete_profile, list_profiles, load_document, load_last_used, load_recent, save_document,
-    save_last_used, save_recent, simple_repeat_document,
+    save_last_used, save_recent,
 };
-use tap_core::{document_to_yaml, parse_yaml, DslAction, MacroDocument};
+use tap_core::{document_to_yaml, parse_yaml, MacroDocument};
 use tauri::State;
-use tracing::info;
 
 use super::yaml::{ensure_valid, ValidationErrorResponse};
 use crate::state::AppState;
@@ -37,52 +36,6 @@ pub fn update_document(
         .into_iter()
         .map(ValidationErrorResponse::from)
         .collect()
-}
-
-/// Parse a frontend mouse-button string (`left`/`right`/`middle`), defaulting to Left.
-pub fn parse_mouse_button(s: Option<&str>) -> tap_core::MouseButton {
-    match s.map(|v| v.to_lowercase()).as_deref() {
-        Some("right") => tap_core::MouseButton::Right,
-        Some("middle") => tap_core::MouseButton::Middle,
-        _ => tap_core::MouseButton::Left,
-    }
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)] // Tauri command: arguments mirror the UI form fields.
-pub fn set_simple_repeat(
-    state: State<'_, Mutex<AppState>>,
-    action_type: String,
-    x: Option<i32>,
-    y: Option<i32>,
-    key: Option<String>,
-    button: Option<String>,
-    interval_ms: u64,
-    repeat_count: Option<u32>,
-    countdown_secs: u32,
-) -> Result<(), String> {
-    let action = match action_type.as_str() {
-        "click" => DslAction::click(
-            x.unwrap_or(0),
-            y.unwrap_or(0),
-            parse_mouse_button(button.as_deref()),
-        ),
-        "key" => DslAction::KeyTap {
-            key: key.unwrap_or_else(|| "Space".into()),
-        },
-        _ => return Err(format!("Unknown action type: {}", action_type)),
-    };
-
-    let document = simple_repeat_document(
-        action,
-        interval_ms,
-        repeat_count,
-        u64::from(countdown_secs) * 1000,
-    );
-    info!(?document, "Updated document for simple repeat");
-    state.lock().unwrap().coordinator.set_document(document);
-
-    Ok(())
 }
 
 #[tauri::command]
