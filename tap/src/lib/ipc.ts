@@ -13,6 +13,7 @@ import type {
   KeyClickRequest,
   MacroDocument,
   PermissionStatus,
+  PickMode,
   RecordingStatus,
   TemplateInfo,
   Timeline,
@@ -116,7 +117,7 @@ export const api = {
   getPixelColor: (x: number, y: number) => invoke<ColorResponse | null>("cmd_get_pixel_color", { x, y }),
 
   // === Picker ===
-  openPicker: () => invoke<void>("open_picker_window"),
+  openPicker: (mode?: PickMode) => invoke<void>("open_picker_window", { mode }),
 
   // === YAML / run-time variables ===
   exportYaml: () => invoke<string>("cmd_export_yaml"),

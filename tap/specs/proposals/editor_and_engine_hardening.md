@@ -241,7 +241,7 @@ flowchart LR
 
 PR 1、2、3、4 互不依赖，可并行。每个 PR 独立可发布、可回滚。
 
-进度：PR 1–8、10 已实现；PR 9 起待启动。
+进度：PR 1–10 已实现；PR 11 起待启动。
 
 PR 5 落地说明（与上文设计的差异）：
 - WS0 的临时止血层（`edit_support`、`apply_profile_edit` 的拒绝逻辑、`get_edit_support`、前端 `editable`）与 `profile_view` / `document_to_profile_view` 已整体删除；不变量测试迁移为 `tests/document_sync.rs`（文档按原样存储、改名不丢步骤、编辑中间态不被拒绝）。
@@ -263,6 +263,12 @@ PR 8 落地说明（与上文设计的差异）：
 - 请求与捕获随发起它的字段卸载而取消；捕获回调经 ref 应用到“此刻”的步骤（捕获最长等 10 秒，其间可能继续编辑），避免用点击时的旧状态覆盖。
 - 主线程问题按 tauri-macros 2.5.2 源码核实：普通同步命令在主线程，`#[tauri::command(async)]` 把同步函数放到线程池。`cmd_capture_key` 只需加 `(async)`，不必再套 `spawn_blocking`。
 - 坐标任一方为表达式（含裸变量名）时 Pick 禁用并提示；空值不算表达式。
+
+PR 9 落地说明（与上文设计的差异）：
+- 拾取模式（`PickMode`：`position` / `position_color`）放在后端托管状态 `PickerState`，每次 `open_picker_window` 都重置（覆盖窗口已存在时也重置），点击总是回答最近一次请求；没有通过 URL 查询参数传给覆盖窗口，因为窗口复用时 URL 会过期。
+- 采样在 `spawn_blocking` 中进行：等覆盖窗口从窗口管理器中消失（最长 500 ms），再等 80 ms 让合成器重绘，然后在注入坐标系读取。80 ms 是按显示刷新间隔留的余量，只能在真机上确认；若实测仍偏色，调大 `REPAINT_DELAY` 即可。
+- 事件载荷的 `color` 只在请求了颜色时出现；读不到（如缺少屏幕录制权限）时省略，前端据请求方记下的“是否要颜色”判断并写日志，位置仍会填入。Simple 模式始终按 `position` 打开拾取器，忽略颜色。
+- 覆盖窗口本身未改（没有按模式换提示文字），保持范围最小；`ColorPickerCard` 的“取光标处颜色”原样保留。
 
 PR 10 落地说明（与上文设计的差异）：
 - 在这台 macOS 上用 `examples/foreground_probe.rs` 复现并验证：旧实现取屏上窗口列表的第一个 layer-0 窗口，实测会得到 Cursor 的 1920×32 细条窗口（应用对、窗口错）、Chrome 的 1920×41 / 1920×81 无标题细条窗口，窗口列表里前台应用之前还可能排着别的应用的窗口（最初观测到 Cursor 在前台却返回 Chrome）。

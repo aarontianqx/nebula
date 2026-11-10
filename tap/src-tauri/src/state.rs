@@ -3,6 +3,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use crate::commands::system::ColorResponse;
 use crate::key_click::KeyClickHandle;
 use tap_application::{Coordinator, Recorder, RecorderState};
 use tap_platform::{EnigoInjector, InputHookHandle, MouseTrackerHandle};
@@ -55,4 +56,8 @@ pub struct MousePositionUpdate {
 pub struct PositionPickedEvent {
     pub x: i32,
     pub y: i32,
+    /// The color under the click, only when the picker was opened to read one. `None` there means
+    /// the color could not be read (for example, missing Screen Recording permission).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorResponse>,
 }

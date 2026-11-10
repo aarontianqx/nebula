@@ -107,7 +107,7 @@ Idle → Arming → Running → Paused
 由此带来的 UI 约束：
 
 1. **实时鼠标位置显示**：即使鼠标移出窗口也要显示全屏坐标——经后端全局事件获取，前端不依赖 DOM `mousemove`。
-2. **坐标拾取器**：点击 “Pick” 后可点击屏幕任意位置（含窗口外）。实现为全屏透明覆盖窗口（半透明遮罩 + 十字准星 + 实时坐标），点击不穿透、ESC 取消。Simple 模式与时间线 Inspector 共用它：谁发起请求，结果就交给谁（Inspector 的 Pick 不会改动 Simple 模式的坐标）；Inspector 另提供 Capture 录入下一次按下的键（最长等待 10 秒）。
+2. **坐标拾取器**：点击 “Pick” 后可点击屏幕任意位置（含窗口外）。实现为全屏透明覆盖窗口（半透明遮罩 + 十字准星 + 实时坐标），点击不穿透、ESC 取消。Simple 模式与时间线 Inspector 共用它：谁发起请求，结果就交给谁（Inspector 的 Pick 不会改动 Simple 模式的坐标）；Inspector 另提供 Capture 录入下一次按下的键（最长等待 10 秒）。`pixel_color` 条件的“Pick position and color”用同一个覆盖窗口，点击后先关闭覆盖窗口、等一次重绘再取色（遮罩是半透明的，可见时取色会偏色），拾取过程中不做实时取色预览。
 3. **高 DPI**：进程启动设置 Per-Monitor V2 DPI Awareness；录制与回放使用同一物理像素坐标系。
 
 **为什么不能用 DOM 事件**：WebView 的 `mousemove` / `click` 只能捕获窗口内部事件；鼠标移出或点击窗口外时收不到/打到别的应用。

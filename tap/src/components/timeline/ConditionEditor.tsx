@@ -12,7 +12,7 @@ import {
 } from "../../lib/conditions";
 import type { LeafConditionKind } from "../../lib/conditions";
 import type { DslCondition } from "../../lib/types";
-import { NumberRow, ReferencesContext, SelectRow, TextRow } from "./fields";
+import { NumberRow, PickPositionRow, ReferencesContext, SelectRow, TextRow } from "./fields";
 
 interface Props {
   condition: DslCondition;
@@ -112,6 +112,15 @@ function LeafFields({ condition, disabled, onChange }: Props) {
       <>
         <NumberRow label="X" value={p.x} disabled={disabled} onChange={(x) => patch({ x })} />
         <NumberRow label="Y" value={p.y} disabled={disabled} onChange={(y) => patch({ y })} />
+        <PickPositionRow
+          label=""
+          buttonLabel="Pick position and color"
+          x={p.x}
+          y={p.y}
+          withColor
+          disabled={disabled}
+          onPicked={(x, y, color) => patch(color ? { x, y, color: color.hex } : { x, y })}
+        />
         <div className="field">
           <label className="label">Color</label>
           <div className="value-input">

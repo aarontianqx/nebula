@@ -4,7 +4,7 @@ import { capitalize, MOUSE_BUTTONS } from "../../lib/actions";
 import type { References } from "../../lib/document";
 import { checkValueText, isDynamicValue, parseValueText, valueToText, withReference } from "../../lib/expression";
 import type { ValueMode } from "../../lib/expression";
-import type { DslMouseButton, DslValue } from "../../lib/types";
+import type { ColorResponse, DslMouseButton, DslValue } from "../../lib/types";
 import { usePickStore } from "../../stores/pickStore";
 
 const NO_REFERENCES: References = { variables: [], counters: [] };
@@ -112,8 +112,10 @@ export function KeyRow(props: RowProps & { value: string; onChange: (value: stri
 }
 
 /**
- * A "pick on screen" button for a pair of coordinates. A coordinate computed by an expression is
- * not overwritten: the button is off, with the reason shown, until both are plain numbers.
+ * A "pick on screen" button for a pair of coordinates, optionally with the color under the click
+ * (`withColor`; `color` is then missing if it could not be read). A coordinate computed by an
+ * expression is not overwritten: the button is off, with the reason shown, until both are plain
+ * numbers.
  */
 export function PickPositionRow(props: {
   label: string;
@@ -121,7 +123,8 @@ export function PickPositionRow(props: {
   x: DslValue;
   y: DslValue;
   disabled: boolean;
-  onPicked: (x: number, y: number) => void;
+  withColor?: boolean;
+  onPicked: (x: number, y: number, color?: ColorResponse) => void;
 }) {
   const id = useId();
   const picking = usePickStore((s) => s.positionTarget === id);
@@ -142,9 +145,13 @@ export function PickPositionRow(props: {
       <div className="value-cell">
         <button
           className={`btn btn-pick ${picking ? "picking" : ""}`}
-          onClick={() => void usePickStore.getState().requestPosition(id, (x, y) => onPicked.current(x, y))}
+          onClick={() =>
+            void usePickStore
+              .getState()
+              .requestPosition(id, (x, y, color) => onPicked.current(x, y, color), { color: props.withColor })
+          }
           disabled={props.disabled || blocked}
-          title="Click anywhere on the screen to take its position (Esc cancels)"
+          title={`Click anywhere on the screen to take its position${props.withColor ? " and color" : ""} (Esc cancels)`}
         >
           {picking ? "Click on the screen…" : props.buttonLabel}
         </button>

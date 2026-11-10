@@ -1,12 +1,49 @@
-//! Position picker: a fullscreen transparent overlay window that reports the clicked screen position.
+//! Position picker: a fullscreen transparent overlay window that reports the clicked screen position,
+//! and optionally the color under it.
 
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use tracing::info;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tracing::{info, warn};
+
+use crate::commands::system::ColorResponse;
 use crate::state::PositionPickedEvent;
 
+/// What a pick should report.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PickMode {
+    /// Just the position.
+    #[default]
+    Position,
+    /// The position and the color under it.
+    PositionColor,
+}
+
+/// The mode of the picker that is (or is about to be) open.
+///
+/// Every `open_picker_window` call sets it, also when the overlay already exists, so a click is
+/// always answered for the most recent request.
+#[derive(Default)]
+pub struct PickerState {
+    mode: Mutex<PickMode>,
+}
+
+/// How long to wait for the overlay to disappear from the screen before sampling it anyway.
+const OVERLAY_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
+/// After the overlay is gone the compositor still needs a few frames to repaint what was under
+/// it (the overlay is a translucent shade, so sampling earlier reads a tinted color).
+const REPAINT_DELAY: Duration = Duration::from_millis(80);
+
 #[tauri::command]
-pub async fn open_picker_window(app: AppHandle) -> Result<(), String> {
+pub async fn open_picker_window(
+    app: AppHandle,
+    state: State<'_, PickerState>,
+    mode: Option<PickMode>,
+) -> Result<(), String> {
+    *state.mode.lock().map_err(|e| e.to_string())? = mode.unwrap_or_default();
+
     // Check if picker window already exists
     if app.get_webview_window("picker").is_some() {
         info!("Picker window already open");
@@ -45,8 +82,29 @@ pub async fn close_picker_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Read the color at an injection-space position once the overlay is off the screen.
+///
+/// The overlay is a translucent shade, so the color must not be read while it is visible: wait
+/// for the window to be gone, then one repaint, then sample. Blocking, so run it off the async
+/// runtime's threads.
+fn sample_color_without_overlay(app: &AppHandle, x: i32, y: i32) -> Option<ColorResponse> {
+    let deadline = Instant::now() + OVERLAY_CLOSE_TIMEOUT;
+    while app.get_webview_window("picker").is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(REPAINT_DELAY);
+    tap_platform::get_pixel_color(x, y).map(ColorResponse::from)
+}
+
 #[tauri::command]
-pub async fn picker_position_selected(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+pub async fn picker_position_selected(
+    app: AppHandle,
+    state: State<'_, PickerState>,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    let mode = *state.mode.lock().map_err(|e| e.to_string())?;
+
     // Close the picker window
     if let Some(window) = app.get_webview_window("picker") {
         let _ = window.close();
@@ -66,15 +124,74 @@ pub async fn picker_position_selected(app: AppHandle, x: i32, y: i32) -> Result<
         x, y, inject_x, inject_y, scale
     );
 
-    // Emit the injection-space coordinates to the main window
+    let color = match mode {
+        PickMode::Position => None,
+        PickMode::PositionColor => {
+            let sampler_app = app.clone();
+            let sampled = tauri::async_runtime::spawn_blocking(move || {
+                sample_color_without_overlay(&sampler_app, inject_x, inject_y)
+            })
+            .await
+            .map_err(|e| format!("Color sampling failed: {}", e))?;
+            if sampled.is_none() {
+                warn!("Could not read the color at ({}, {})", inject_x, inject_y);
+            }
+            sampled
+        }
+    };
+
+    // Emit the injection-space coordinates (and color, if asked for) to the main window
     app.emit(
         "position-picked",
         PositionPickedEvent {
             x: inject_x,
             y: inject_y,
+            color,
         },
     )
     .map_err(|e| format!("Failed to emit position-picked: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mode_names_are_the_ones_the_frontend_sends() {
+        assert_eq!(
+            serde_json::from_str::<PickMode>("\"position\"").unwrap(),
+            PickMode::Position
+        );
+        assert_eq!(
+            serde_json::from_str::<PickMode>("\"position_color\"").unwrap(),
+            PickMode::PositionColor
+        );
+        assert_eq!(PickMode::default(), PickMode::Position);
+    }
+
+    #[test]
+    fn the_color_is_left_out_of_the_event_unless_it_was_asked_for() {
+        let plain = serde_json::to_value(PositionPickedEvent {
+            x: 1,
+            y: 2,
+            color: None,
+        })
+        .unwrap();
+        assert_eq!(plain, serde_json::json!({ "x": 1, "y": 2 }));
+
+        let with_color = serde_json::to_value(PositionPickedEvent {
+            x: 1,
+            y: 2,
+            color: Some(ColorResponse {
+                r: 255,
+                g: 136,
+                b: 0,
+                hex: "#FF8800".into(),
+            }),
+        })
+        .unwrap();
+        assert_eq!(with_color["color"]["hex"], "#FF8800");
+    }
 }

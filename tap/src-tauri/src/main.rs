@@ -44,6 +44,7 @@ fn main() {
                 })
                 .build(),
         )
+        .manage(picker::PickerState::default())
         .setup(move |app| {
             // Register the shortcut
             if let Err(e) = app.global_shortcut().register(emergency_shortcut) {

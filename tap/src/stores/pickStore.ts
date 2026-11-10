@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { api } from "../lib/ipc";
+import type { ColorResponse } from "../lib/types";
 import { useEngineStore } from "./engineStore";
 
 // Picking a position and capturing a key are one-shot requests made by a field of the editor.
@@ -8,11 +9,13 @@ import { useEngineStore } from "./engineStore";
 // position goes to that field first and only otherwise to Simple mode (which owns the same
 // event). Without this, an Inspector pick would overwrite Simple mode's click position.
 
-type PositionConsumer = (x: number, y: number) => void;
+type PositionConsumer = (x: number, y: number, color?: ColorResponse) => void;
 type KeyConsumer = (key: string) => void;
 
 // Callbacks are not state: nothing renders from them.
 let positionConsumer: PositionConsumer | null = null;
+/** Whether the pending position request also asked for the color under the click. */
+let positionWantsColor = false;
 /** Bumped to abandon a capture in flight: its result is then ignored. */
 let captureGeneration = 0;
 
@@ -26,12 +29,15 @@ interface PickStore {
   /** Identifies the field waiting for a key press. */
   captureTarget: string | null;
 
-  /** Open the picker; its result goes to `onPicked` instead of Simple mode. */
-  requestPosition: (target: string, onPicked: PositionConsumer) => Promise<void>;
+  /**
+   * Open the picker; its result goes to `onPicked` instead of Simple mode. With `color`, the
+   * color under the click is read as well (and passed on when it could be read).
+   */
+  requestPosition: (target: string, onPicked: PositionConsumer, options?: { color?: boolean }) => Promise<void>;
   /** Forget a pending request (the next picked position then belongs to Simple mode). */
   cancelPosition: () => void;
   /** Give a picked position to whoever asked for it; `false` if nobody did. */
-  deliverPosition: (x: number, y: number) => boolean;
+  deliverPosition: (x: number, y: number, color?: ColorResponse) => boolean;
 
   /** Wait for the next physical key press and hand its normalized name to `onCaptured`. */
   captureKey: (target: string, onCaptured: KeyConsumer) => Promise<void>;
@@ -45,11 +51,12 @@ export const usePickStore = create<PickStore>((set, get) => ({
   positionTarget: null,
   captureTarget: null,
 
-  requestPosition: async (target, onPicked) => {
+  requestPosition: async (target, onPicked, options) => {
     positionConsumer = onPicked;
+    positionWantsColor = options?.color === true;
     set({ positionTarget: target });
     try {
-      await api.openPicker();
+      await api.openPicker(positionWantsColor ? "position_color" : "position");
     } catch (err) {
       get().cancelPosition();
       log(`Failed to open picker: ${String(err)}`);
@@ -58,14 +65,21 @@ export const usePickStore = create<PickStore>((set, get) => ({
 
   cancelPosition: () => {
     positionConsumer = null;
+    positionWantsColor = false;
     set({ positionTarget: null });
   },
 
-  deliverPosition: (x, y) => {
+  deliverPosition: (x, y, color) => {
     const consumer = positionConsumer;
     if (!consumer) return false;
+    const wantedColor = positionWantsColor;
     get().cancelPosition();
-    consumer(x, y);
+    if (wantedColor && !color) {
+      log(`Could not read the color at (${x}, ${y}); only the position was set. Screen Recording permission may be missing.`);
+    }
+    // Without a color the call keeps its two-argument shape.
+    if (color) consumer(x, y, color);
+    else consumer(x, y);
     return true;
   },
 

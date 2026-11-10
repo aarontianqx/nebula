@@ -14,6 +14,14 @@ export interface Point {
   y: number;
 }
 
+/** What a screen pick reports: where, and the color there when the pick asked for it. */
+export type PickMode = "position" | "position_color";
+
+export interface PickedPosition extends Point {
+  /** Present only for `position_color` picks, and absent if the color could not be read. */
+  color?: ColorResponse;
+}
+
 // === Resolved actions ===
 //
 // `tap_core::Action` with every value concrete. These are what the *engine* reports

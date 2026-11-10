@@ -110,6 +110,74 @@ describe("picking a position for a field", () => {
   });
 });
 
+describe("picking a position together with its color", () => {
+  const orange = { r: 255, g: 136, b: 0, hex: "#FF8800" };
+
+  it("asks the picker for the color and hands it to the field", async () => {
+    const { api, usePickStore, routePickedPosition } = stores;
+    const picked = vi.fn();
+
+    await usePickStore.getState().requestPosition("field-1", picked, { color: true });
+    expect(api.openPicker).toHaveBeenCalledWith("position_color");
+
+    routePickedPosition(10, 20, orange);
+    expect(picked).toHaveBeenCalledWith(10, 20, orange);
+  });
+
+  it("asks for the position alone unless a color is wanted", async () => {
+    const { api, usePickStore } = stores;
+
+    await usePickStore.getState().requestPosition("field-1", vi.fn());
+    expect(api.openPicker).toHaveBeenLastCalledWith("position");
+
+    await usePickStore.getState().requestPosition("field-1", vi.fn(), { color: false });
+    expect(api.openPicker).toHaveBeenLastCalledWith("position");
+  });
+
+  it("still sets the position, and says so, when the color could not be read", async () => {
+    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    const picked = vi.fn();
+
+    await usePickStore.getState().requestPosition("field-1", picked, { color: true });
+    routePickedPosition(10, 20, undefined);
+
+    expect(picked).toHaveBeenCalledWith(10, 20);
+    expect(useEngineStore.getState().logs.at(-1)?.message).toMatch(/Could not read the color at \(10, 20\)/);
+  });
+
+  it("does not complain about a missing color when none was asked for", async () => {
+    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    await usePickStore.getState().requestPosition("field-1", vi.fn());
+    const logsBefore = useEngineStore.getState().logs.length;
+
+    routePickedPosition(1, 2, undefined);
+
+    expect(useEngineStore.getState().logs).toHaveLength(logsBefore);
+  });
+
+  it("is forgotten with the request: the next plain pick does not expect a color", async () => {
+    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+
+    await usePickStore.getState().requestPosition("field-1", vi.fn(), { color: true });
+    usePickStore.getState().cancelPosition();
+    await usePickStore.getState().requestPosition("field-2", vi.fn());
+    const logsBefore = useEngineStore.getState().logs.length;
+    routePickedPosition(5, 6, undefined);
+
+    expect(useEngineStore.getState().logs).toHaveLength(logsBefore);
+  });
+
+  it("is ignored by Simple mode, which opens the picker for the position alone", async () => {
+    const { api, useToolStore, routePickedPosition } = stores;
+
+    await useToolStore.getState().openPicker();
+    expect(api.openPicker).toHaveBeenLastCalledWith();
+
+    routePickedPosition(30, 40, orange);
+    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([30, 40]);
+  });
+});
+
 describe("capturing a key for a field", () => {
   it("hands the captured key to the field and clears its waiting state", async () => {
     const { api, usePickStore } = stores;
