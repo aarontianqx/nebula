@@ -24,6 +24,10 @@ export function emptyDocument(): MacroDocument {
   };
 }
 
+/** The largest variation the backend accepts (`tap_core::MAX_HUMANIZE_*`). */
+export const MAX_HUMANIZE_POSITION_PX = 100;
+export const MAX_HUMANIZE_DELAY_MS = 10_000;
+
 /** A step is enabled unless it says otherwise. */
 export function isEnabled(step: DslTimedAction): boolean {
   return step.enabled !== false;

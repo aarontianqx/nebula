@@ -26,6 +26,7 @@ const MAX_DRAG_STEPS: u32 = 240;
 
 use crate::clock::RunClock;
 use crate::coords::{has_position, shift_action, window_binding};
+use crate::humanize::{Humanizer, JitterRng};
 use crate::resolve::resolve_action;
 use crate::storage::load_document;
 use crate::submacro::{
@@ -180,6 +181,8 @@ pub struct Player<E: ActionExecutor, P: PlatformConditionProvider> {
     /// Consecutive injection failures in the current run (reset on success and
     /// at the start of each run); drives the auto-stop safety net.
     consecutive_failures: AtomicU32,
+    /// Random position / timing variation (`run.humanize`), restarted with every run.
+    humanizer: Mutex<Humanizer>,
     cmd_rx: Receiver<EngineCommand>,
     event_tx: Sender<EngineEvent>,
 }
@@ -192,8 +195,20 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         Self::spawn_with_loader(executor, platform, loader)
     }
 
+    /// Create a new player (sub-macros loaded from disk) whose `run.humanize` variation is drawn
+    /// from `seed`, so a run can be reproduced exactly (used by tests).
+    pub fn spawn_with_seed(executor: E, platform: P, seed: u64) -> PlayerHandle {
+        let loader: SubMacroLoader =
+            Arc::new(|name: &str| load_document(name).map_err(|e| e.to_string()));
+        Self::spawn_inner(executor, platform, loader, seed)
+    }
+
     /// Create a new player with a custom sub-macro loader (used by tests).
     pub fn spawn_with_loader(executor: E, platform: P, loader: SubMacroLoader) -> PlayerHandle {
+        Self::spawn_inner(executor, platform, loader, JitterRng::entropy_seed())
+    }
+
+    fn spawn_inner(executor: E, platform: P, loader: SubMacroLoader, seed: u64) -> PlayerHandle {
         let (cmd_tx, cmd_rx) = bounded(32);
         let (event_tx, event_rx) = bounded(256);
         let state = Arc::new(Mutex::new(EngineState::Idle));
@@ -209,6 +224,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             loader,
             clock: RunClock::new(),
             consecutive_failures: AtomicU32::new(0),
+            humanizer: Mutex::new(Humanizer::new(seed)),
             cmd_rx,
             event_tx,
         };
@@ -307,6 +323,12 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         // Fresh failure budget for this run.
         self.consecutive_failures.store(0, Ordering::Relaxed);
 
+        // The variation settings of the document being run (sub-macros follow the main macro).
+        self.humanizer
+            .lock()
+            .unwrap()
+            .begin_run(document.run.humanize);
+
         // Start running
         self.transition_state(EngineState::Running);
 
@@ -374,6 +396,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
 
             // Wait until the scheduled time
             let target_ms = (timed_action.at_ms as f32 / speed) as u64;
+            let target_ms = self.humanizer.lock().unwrap().jitter_start(target_ms);
             let elapsed = self.clock.active_elapsed_ms(origin);
             if target_ms > elapsed {
                 let wait_ms = target_ms - elapsed;
@@ -652,6 +675,16 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
     /// action passes through (also the ones nested in an `if`). `ActionStarting` reports the
     /// screen position, i.e. what is injected.
     fn execute_action(&self, action: &Action, index: usize, doc: &MacroDocument) -> ActionResult {
+        // Humanize first, in the document's own coordinates: the window shift below then moves
+        // the already varied position, so both settings combine without caring about the order.
+        let humanized;
+        let action = if has_position(action) {
+            humanized = self.humanizer.lock().unwrap().jitter_action(action);
+            &humanized
+        } else {
+            action
+        };
+
         let on_screen;
         let action = match window_binding(doc).filter(|_| has_position(action)) {
             Some(target) => {

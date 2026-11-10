@@ -437,7 +437,29 @@ run:
   repeat: 1            # number of times (0 = forever)
   start_delay_ms: 3000 # countdown before the first action
   speed: 1.0           # speed multiplier (0.5 = half, 2.0 = double)
+  humanize:            # optional; both default to 0 and are then left out
+    position_px: 3     # clicks / moves / drag ends land up to ±3 px off, per axis
+    delay_ms: 40       # steps start up to ±40 ms earlier or later
 ```
+
+### Humanize
+
+Random variation so repeated runs are not pixel- and millisecond-identical. It
+is applied on the way to the injector; the document is never changed.
+
+- `position_px` (0–100) moves `click`, `double_click`, `mouse_move` and both
+  ends of a `drag`. A `mouse_down` draws an offset and the next `mouse_up` of
+  the same button reuses it, so a recorded click stays a click and a recorded
+  drag stays one gesture. With window-relative coordinates the variation is
+  applied before the window's origin is added, so the two combine.
+- `delay_ms` (0–10000) moves when each step *starts* (its `at_ms`), earlier or
+  later, never before the run began. Each step varies around its own scheduled
+  time, so a run does not drift; steps still execute in order, and a step whose
+  moved time has already passed starts at once. Explicit `wait` durations,
+  `wait_until` polling and `drag` durations are exact.
+- Conditions are never varied: `pixel_color` reads exactly the position given.
+- The main macro's setting applies to the whole run, including `call_macro`
+  children. Values above the limits are a validation error.
 
 ## Complete example
 

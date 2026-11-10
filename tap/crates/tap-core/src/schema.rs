@@ -4,7 +4,8 @@
 //! before converting them to internal Profile format.
 
 use crate::dsl::{
-    CoordinateSpace, DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue, MacroDocument,
+    CoordinateSpace, DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue,
+    MacroDocument, MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX,
 };
 use serde::{Deserialize, Serialize};
 
@@ -341,6 +342,20 @@ fn validate_run_config(rc: &DslRunConfig, path: &str, errors: &mut Vec<Validatio
             line: None,
         });
     }
+    if rc.humanize.position_px > MAX_HUMANIZE_POSITION_PX {
+        errors.push(ValidationError {
+            path: format!("{}.humanize.position_px", path),
+            message: format!("Position jitter cannot exceed {MAX_HUMANIZE_POSITION_PX} px"),
+            line: None,
+        });
+    }
+    if rc.humanize.delay_ms > MAX_HUMANIZE_DELAY_MS {
+        errors.push(ValidationError {
+            path: format!("{}.humanize.delay_ms", path),
+            message: format!("Delay jitter cannot exceed {MAX_HUMANIZE_DELAY_MS} ms"),
+            line: None,
+        });
+    }
 }
 
 fn validate_coordinate(value: &DslValue, path: &str, errors: &mut Vec<ValidationError>) {
@@ -539,6 +554,23 @@ mod tests {
         let mut profile = minimal_profile();
         profile.target_window = Some(window_target(None, None, CoordinateSpace::Screen));
         assert!(validate_profile(&profile).is_ok());
+    }
+
+    #[test]
+    fn humanize_is_limited_to_what_still_hits_the_target() {
+        let mut profile = minimal_profile();
+        profile.run.humanize.position_px = MAX_HUMANIZE_POSITION_PX;
+        profile.run.humanize.delay_ms = MAX_HUMANIZE_DELAY_MS;
+        assert!(validate_profile(&profile).is_ok());
+
+        profile.run.humanize.position_px = MAX_HUMANIZE_POSITION_PX + 1;
+        let errors = validate_profile(&profile).unwrap_err();
+        assert!(errors.iter().any(|e| e.path == "run.humanize.position_px"));
+
+        profile.run.humanize.position_px = 0;
+        profile.run.humanize.delay_ms = MAX_HUMANIZE_DELAY_MS + 1;
+        let errors = validate_profile(&profile).unwrap_err();
+        assert!(errors.iter().any(|e| e.path == "run.humanize.delay_ms"));
     }
 
     #[test]

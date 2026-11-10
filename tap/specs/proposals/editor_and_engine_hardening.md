@@ -241,7 +241,7 @@ flowchart LR
 
 PR 1、2、3、4 互不依赖，可并行。每个 PR 独立可发布、可回滚。
 
-进度：PR 1–11 已实现；PR 12 起待启动。
+进度：PR 1–12 已实现；PR 13 待启动（按触发条件）。
 
 PR 5 落地说明（与上文设计的差异）：
 - WS0 的临时止血层（`edit_support`、`apply_profile_edit` 的拒绝逻辑、`get_edit_support`、前端 `editable`）与 `profile_view` / `document_to_profile_view` 已整体删除；不变量测试迁移为 `tests/document_sync.rs`（文档按原样存储、改名不丢步骤、编辑中间态不被拒绝）。
@@ -284,6 +284,14 @@ PR 11 落地说明（与上文设计的差异）：
 - 拾取器事件新增 `window_origin`（文档窗口相对且找到窗口时）与 `window_missing`；换算在前端 `pickStore.deliverPosition` 中做（它知道是哪个字段在请求），Simple 模式始终拿屏幕坐标；窗口找不到时不填字段并写日志。
 - Windows 矩形改用 `DWMWA_EXTENDED_FRAME_BOUNDS`（无则回退 `GetWindowRect`）；已在 macOS 上用 `cargo check/clippy --target x86_64-pc-windows-msvc` 验证能编译，**尚未在 Windows 真机上验证数值**。
 - 局限：切换开关不会改写已有坐标（UI 有提示）；仅平移不缩放；录制中途窗口被关闭后，后续位置事件沿用最后已知原点；多显示器 / 混合 DPI 未实机验证。
+
+PR 12 落地说明（与上文设计的差异）：
+- 随机数没有引入依赖，用 `humanize.rs` 里的 SplitMix64（单字状态）；种子在 `Player::spawn_with_seed` 注入，默认取系统时间与进程号。位置抖动是 `Humanizer::jitter_action` 的纯函数式接口（带“按下的按键 → 偏移”记忆），延迟抖动是 `jitter_start`。
+- 位置抖动放在 `execute_action` 的入口，所有注入的动作（含嵌套在 `if` 里的）都经过这里；先抖动、再做窗口相对平移，两者相加与顺序无关。`ActionStarting` 报告的是最终注入的位置。
+- 与设计的差异：`MouseDown` / `MouseUp` 按按键配对（每个按键记住自己的偏移），没有配对的 `MouseUp` 自己抽一个偏移；`pixel_color` 条件不抖动（读取位置必须精确）。
+- 延迟抖动作用于每步自己的计划时间（`at_ms / speed`）而不是累加，所以不会漂移；负偏移不会早于 0；步骤顺序由顺序执行本身保证，已过期的步骤立即执行。
+- 上限：位置 ≤ 100 px、延迟 ≤ 10 000 ms（校验错误）；引擎在运行开始时再夹一次，防止未经校验的文档要求过大偏移。设置取主宏的 `run.humanize`，子宏沿用。
+- 分布是均匀的方形范围（每轴独立），不是圆形或高斯；若要更像真人的轨迹（曲线、速度变化）是另一件事，不在此做。
 
 ## 6. 风险
 

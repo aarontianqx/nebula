@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tap_core::{
     CoordinateSpace, DslAction, DslCondition, DslMouseButton, DslRunConfig, DslTargetWindow,
-    DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType,
+    DslTimedAction, DslValue, Humanize, MacroDocument, VariableDefinition, VariableType,
 };
 
 fn fixture_path() -> PathBuf {
@@ -288,6 +288,10 @@ fn kitchen_sink() -> MacroDocument {
             repeat: 3,
             start_delay_ms: 2000,
             speed: 1.5,
+            humanize: Humanize {
+                position_px: 3,
+                delay_ms: 25,
+            },
         },
     }
 }

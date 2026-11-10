@@ -305,7 +305,8 @@ describe("lossless editing", () => {
     const sent = pushed(stores);
     expect(sent.timeline).toEqual(sink.timeline);
     expect(sent.variables).toEqual(sink.variables);
-    expect(sent.run).toEqual({ repeat: 0, start_delay_ms: 5000, speed: 2 });
+    // Editing the run settings keeps the ones the editor does not touch (the fixture has jitter).
+    expect(sent.run).toEqual({ repeat: 0, start_delay_ms: 5000, speed: 2, humanize: { position_px: 3, delay_ms: 25 } });
     expect(sent.author).toBe("someone else");
     // The fixture is window-relative; switching windows must not silently turn that off.
     expect(sent.target_window).toEqual({
@@ -394,6 +395,28 @@ describe("document-level fields", () => {
     store.setRepeatText("");
     store.setCountdownSecs(-4);
     expect(doc(stores).run).toEqual({ repeat: 0, start_delay_ms: 0, speed: 0.5 });
+  });
+
+  it("setHumanize sets each variation on its own, clamps it, and removes it when both are zero", async () => {
+    const stores = await setup();
+    const store = stores.useDocumentStore.getState();
+    expect(doc(stores).run).not.toHaveProperty("humanize");
+
+    store.setHumanize({ position_px: 4 });
+    expect(doc(stores).run.humanize).toEqual({ position_px: 4, delay_ms: 0 });
+
+    store.setHumanize({ delay_ms: 25.6 });
+    expect(doc(stores).run.humanize).toEqual({ position_px: 4, delay_ms: 26 });
+
+    // Out of range or not a number: held to what the backend accepts.
+    store.setHumanize({ position_px: 5000, delay_ms: -3 });
+    expect(doc(stores).run.humanize).toEqual({ position_px: 100, delay_ms: 0 });
+    store.setHumanize({ position_px: Number.NaN });
+    expect(doc(stores).run.humanize).toBeUndefined();
+    expect(doc(stores).run).not.toHaveProperty("humanize");
+
+    // The other run settings are left alone.
+    expect(doc(stores).run.speed).toBe(1);
   });
 });
 

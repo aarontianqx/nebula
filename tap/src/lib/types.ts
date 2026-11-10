@@ -134,6 +134,16 @@ export interface DslRunConfig {
   repeat: number;
   start_delay_ms: number;
   speed: number;
+  /** Random variation of positions and step timing. Absent means none. */
+  humanize?: Humanize;
+}
+
+/** `run.humanize`: how far (at most) playback strays from the recorded positions and times. */
+export interface Humanize {
+  /** Pixels, per axis. */
+  position_px: number;
+  /** Milliseconds, earlier or later. */
+  delay_ms: number;
 }
 
 /** What a document's coordinates are measured from. */

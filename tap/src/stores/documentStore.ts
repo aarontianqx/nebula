@@ -1,11 +1,12 @@
 import { create } from "zustand";
 
-import { emptyDocument, parseRepeat } from "../lib/document";
+import { emptyDocument, MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX, parseRepeat } from "../lib/document";
 import { api, isTauri, pickOpenPath, pickSavePath } from "../lib/ipc";
 import type {
   CoordinateSpace,
   DslAction,
   DslTimedAction,
+  Humanize,
   MacroDocument,
   TemplateInfo,
   ValidationErrorResponse,
@@ -63,6 +64,8 @@ interface DocumentStore {
   setSpeed: (speed: number) => void;
   setRepeatText: (text: string) => void;
   setCountdownSecs: (secs: number) => void;
+  /** Change the playback variation; both at zero removes it from the document, as the backend does. */
+  setHumanize: (patch: Partial<Humanize>) => void;
   setTargetTitle: (title: string, process: string) => void;
   setPauseWhenUnfocused: (value: boolean) => void;
   /** Measure positions from the target window (`"window"`) or from the screen (the default). */
@@ -285,6 +288,16 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
     setSpeed: (speed) => mutateRun({ speed }),
     setRepeatText: (text) => mutateRun({ repeat: parseRepeat(text) }),
     setCountdownSecs: (secs) => mutateRun({ start_delay_ms: Math.max(0, secs) * 1000 }),
+
+    setHumanize: (patch) =>
+      mutate((d) => {
+        const clamp = (value: number | undefined, max: number, current: number) =>
+          value === undefined ? current : Math.min(max, Math.max(0, Math.round(value) || 0));
+        const position_px = clamp(patch.position_px, MAX_HUMANIZE_POSITION_PX, d.run.humanize?.position_px ?? 0);
+        const delay_ms = clamp(patch.delay_ms, MAX_HUMANIZE_DELAY_MS, d.run.humanize?.delay_ms ?? 0);
+        const { humanize: _previous, ...run } = d.run;
+        return { ...d, run: position_px === 0 && delay_ms === 0 ? run : { ...run, humanize: { position_px, delay_ms } } };
+      }),
 
     setTargetTitle: (title, process) =>
       mutate((d) => {

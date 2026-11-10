@@ -119,6 +119,7 @@ fn document(timeline: Vec<DslTimedAction>, repeat: u32) -> MacroDocument {
             repeat,
             start_delay_ms: 0,
             speed: 1.0,
+            humanize: Default::default(),
         },
     }
 }
@@ -1262,4 +1263,193 @@ fn a_pixel_condition_without_its_window_never_reads_another_place_on_the_screen(
     assert!(!events
         .iter()
         .any(|e| matches!(e, EngineEvent::ConditionSatisfied { .. })));
+}
+
+// === Tests: humanize ===
+
+fn with_humanize(mut doc: MacroDocument, position_px: u32, delay_ms: u32) -> MacroDocument {
+    doc.run.humanize = tap_core::Humanize {
+        position_px,
+        delay_ms,
+    };
+    doc
+}
+
+/// Run `doc` on a player whose variation is drawn from `seed`.
+fn run_seeded(doc: MacroDocument, seed: u64) -> Vec<Action> {
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn_with_seed(
+        RecordingExecutor {
+            injected: injected.clone(),
+        },
+        MockPlatform,
+        seed,
+    );
+    handle.send(EngineCommand::SetDocument(Box::new(doc)));
+    handle.send(EngineCommand::Start);
+    let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
+    assert!(completed);
+    let actions = injected.lock().unwrap().clone();
+    actions
+}
+
+fn clicks_at(x: i64, y: i64, count: usize) -> Vec<DslTimedAction> {
+    (0..count).map(|_| timed(dsl_click(x, y))).collect()
+}
+
+fn click_position(action: &Action) -> (i32, i32) {
+    match action {
+        Action::Click { x, y, .. }
+        | Action::MouseDown { x, y, .. }
+        | Action::MouseUp { x, y, .. } => (*x, *y),
+        other => panic!("not a positioned action: {other:?}"),
+    }
+}
+
+#[test]
+fn humanize_moves_clicks_a_few_pixels_but_never_further_than_asked() {
+    let doc = with_humanize(document(clicks_at(500, 300, 40), 1), 6, 0);
+
+    let injected = run_seeded(doc, 11);
+
+    assert_eq!(injected.len(), 40);
+    let positions: std::collections::HashSet<_> = injected.iter().map(click_position).collect();
+    assert!(
+        positions
+            .iter()
+            .all(|(x, y)| (494..=506).contains(x) && (294..=306).contains(y)),
+        "every click stays within ±6 px: {positions:?}"
+    );
+    assert!(
+        positions.len() > 10,
+        "the clicks are spread out, not all in one place"
+    );
+}
+
+#[test]
+fn the_same_seed_replays_the_same_variation() {
+    let build = || with_humanize(document(clicks_at(100, 100, 12), 1), 8, 0);
+
+    let first = run_seeded(build(), 5);
+    assert_eq!(first, run_seeded(build(), 5));
+    assert_ne!(first, run_seeded(build(), 6));
+}
+
+#[test]
+fn without_humanize_every_click_is_exact() {
+    let injected = run_seeded(document(clicks_at(7, 8, 5), 1), 1);
+    assert_eq!(injected, vec![click(7, 8); 5]);
+}
+
+#[test]
+fn a_pressed_button_is_released_where_it_was_pressed() {
+    let mut timeline = Vec::new();
+    for _ in 0..25 {
+        timeline.push(timed(DslAction::MouseDown {
+            x: DslValue::Int(400),
+            y: DslValue::Int(400),
+            button: DslMouseButton::Left,
+        }));
+        timeline.push(timed(DslAction::MouseUp {
+            x: DslValue::Int(400),
+            y: DslValue::Int(400),
+            button: DslMouseButton::Left,
+        }));
+    }
+    let doc = with_humanize(document(timeline, 1), 10, 0);
+
+    let injected = run_seeded(doc, 3);
+
+    assert_eq!(injected.len(), 50);
+    let mut distinct = std::collections::HashSet::new();
+    for pair in injected.chunks(2) {
+        assert_eq!(
+            click_position(&pair[0]),
+            click_position(&pair[1]),
+            "a click must not turn into a tiny drag"
+        );
+        distinct.insert(click_position(&pair[0]));
+    }
+    assert!(
+        distinct.len() > 5,
+        "each press still varies from the others"
+    );
+}
+
+#[test]
+fn humanize_applies_inside_a_window_relative_document_before_the_window_shift() {
+    let origin: SharedOrigin = Arc::new(Mutex::new(Some((100, 50))));
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn_with_seed(
+        WindowMovingExecutor {
+            injected: injected.clone(),
+            origin: origin.clone(),
+            move_after_each: false,
+        },
+        MovableWindowPlatform {
+            origin,
+            pixels: Arc::new(Mutex::new(HashMap::new())),
+        },
+        9,
+    );
+    let doc = relative(with_humanize(document(clicks_at(10, 20, 30), 1), 3, 0));
+    handle.send(EngineCommand::SetDocument(Box::new(doc)));
+    handle.send(EngineCommand::Start);
+    let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
+
+    assert!(completed);
+    let injected = injected.lock().unwrap();
+    assert_eq!(injected.len(), 30);
+    let positions: std::collections::HashSet<_> = injected.iter().map(click_position).collect();
+    assert!(
+        positions
+            .iter()
+            .all(|(x, y)| (107..=113).contains(x) && (67..=73).contains(y)),
+        "the click varies around (110, 70) on the screen: {positions:?}"
+    );
+    assert!(positions.len() > 3);
+}
+
+#[test]
+fn delay_jitter_keeps_steps_in_order_and_never_starts_one_before_its_earliest_time() {
+    const GAP_MS: u64 = 60;
+    const JITTER_MS: u32 = 50;
+    let timeline: Vec<DslTimedAction> = (0..6)
+        .map(|i| DslTimedAction {
+            at_ms: i * GAP_MS,
+            action: dsl_click(i as i64, 0),
+            enabled: true,
+            note: None,
+        })
+        .collect();
+    let doc = with_humanize(document(timeline, 1), 0, JITTER_MS);
+
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn_with_seed(
+        TimestampedExecutor {
+            injected: injected.clone(),
+        },
+        MockPlatform,
+        21,
+    );
+    let began = Instant::now();
+    handle.send(EngineCommand::SetDocument(Box::new(doc)));
+    handle.send(EngineCommand::Start);
+    let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
+
+    assert!(completed);
+    let injected = injected.lock().unwrap();
+    let xs: Vec<i32> = injected.iter().map(|(_, a)| click_position(a).0).collect();
+    assert_eq!(
+        xs,
+        vec![0, 1, 2, 3, 4, 5],
+        "steps run in their timeline order"
+    );
+    for (i, (at, _)) in injected.iter().enumerate() {
+        let earliest = (i as u64 * GAP_MS).saturating_sub(u64::from(JITTER_MS));
+        assert!(
+            at.duration_since(began) >= Duration::from_millis(earliest),
+            "step {i} started before {earliest} ms"
+        );
+    }
 }

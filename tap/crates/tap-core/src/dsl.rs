@@ -375,6 +375,38 @@ pub struct DslRunConfig {
     /// Speed multiplier (1.0 = normal speed).
     #[serde(default = "default_speed")]
     pub speed: f32,
+    /// Random variation applied to positions and step timing (off by default).
+    #[serde(default, skip_serializing_if = "Humanize::is_off")]
+    pub humanize: Humanize,
+}
+
+/// The largest position jitter `run.humanize.position_px` may ask for. Beyond this a click no
+/// longer lands on what was recorded, which is a mistake rather than a humanizing effect.
+pub const MAX_HUMANIZE_POSITION_PX: u32 = 100;
+/// The largest step-timing jitter `run.humanize.delay_ms` may ask for.
+pub const MAX_HUMANIZE_DELAY_MS: u32 = 10_000;
+
+/// Random variation for playback, so repeated runs do not land on exactly the same pixels at
+/// exactly the same milliseconds.
+///
+/// - `position_px`: every click, double click, mouse move and drag end point lands up to this many
+///   pixels off on each axis. A press and its release share one offset, so a click is never
+///   turned into a tiny drag.
+/// - `delay_ms`: when a step starts is moved by up to this many milliseconds, earlier or later.
+///   Steps still run in order and explicit `wait` actions are exact.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Humanize {
+    #[serde(default)]
+    pub position_px: u32,
+    #[serde(default)]
+    pub delay_ms: u32,
+}
+
+impl Humanize {
+    /// Whether no variation is configured (the default, and what is left out of the document).
+    pub fn is_off(&self) -> bool {
+        self.position_px == 0 && self.delay_ms == 0
+    }
 }
 
 fn default_repeat() -> u32 {
@@ -391,6 +423,7 @@ impl Default for DslRunConfig {
             repeat: 1,
             start_delay_ms: 0,
             speed: 1.0,
+            humanize: Humanize::default(),
         }
     }
 }
@@ -585,6 +618,7 @@ impl From<&RunConfig> for DslRunConfig {
             },
             start_delay_ms: rc.start_delay_ms,
             speed: rc.speed,
+            humanize: Humanize::default(),
         }
     }
 }
@@ -1017,6 +1051,10 @@ mod tests {
                 repeat: 0,
                 start_delay_ms: 250,
                 speed: 1.5,
+                humanize: Humanize {
+                    position_px: 4,
+                    delay_ms: 30,
+                },
             },
         };
 
@@ -1134,5 +1172,39 @@ mod tests {
         assert_eq!(json["target_window"]["coordinates"], "window");
         let from_json: MacroDocument = serde_json::from_value(json).unwrap();
         assert_eq!(from_json, doc);
+    }
+
+    #[test]
+    fn humanize_is_off_by_default_and_only_written_when_on() {
+        let doc =
+            parse_yaml("name: m\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n").unwrap();
+        assert!(doc.run.humanize.is_off());
+        assert!(
+            !document_to_yaml(&doc).unwrap().contains("humanize"),
+            "the default is not serialized, so existing macros are unchanged"
+        );
+        assert!(!serde_json::to_string(&doc).unwrap().contains("humanize"));
+    }
+
+    #[test]
+    fn humanize_fields_default_independently_and_roundtrip() {
+        let yaml = "name: m\nrun:\n  humanize:\n    position_px: 3\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n";
+        let doc = parse_yaml(yaml).unwrap();
+        assert_eq!(
+            doc.run.humanize,
+            Humanize {
+                position_px: 3,
+                delay_ms: 0
+            }
+        );
+
+        let again = parse_yaml(&document_to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(again, doc);
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert_eq!(
+            json["run"]["humanize"],
+            serde_json::json!({ "position_px": 3, "delay_ms": 0 })
+        );
     }
 }

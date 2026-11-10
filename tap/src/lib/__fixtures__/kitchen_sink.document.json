@@ -3,6 +3,10 @@
   "description": "every action and condition",
   "name": "kitchen sink",
   "run": {
+    "humanize": {
+      "delay_ms": 25,
+      "position_px": 3
+    },
     "repeat": 3,
     "speed": 1.5,
     "start_delay_ms": 2000

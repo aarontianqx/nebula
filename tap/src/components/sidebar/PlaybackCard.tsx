@@ -1,4 +1,4 @@
-import { repeatText as formatRepeat } from "../../lib/document";
+import { MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX, repeatText as formatRepeat } from "../../lib/document";
 import { useDocumentStore } from "../../stores/documentStore";
 import { useEngineStore } from "../../stores/engineStore";
 
@@ -53,6 +53,40 @@ export function PlaybackCard() {
             />
             <span>sec</span>
           </div>
+        </div>
+        <div className="field">
+          <label className="label">Position jitter</label>
+          <div className="input-suffix">
+            <span>±</span>
+            <input
+              type="number"
+              value={run.humanize?.position_px ?? 0}
+              onChange={(e) => doc().setHumanize({ position_px: parseInt(e.target.value, 10) || 0 })}
+              disabled={disabled}
+              className="input"
+              min={0}
+              max={MAX_HUMANIZE_POSITION_PX}
+            />
+            <span>px</span>
+          </div>
+        </div>
+        <div className="field">
+          <label className="label">Delay jitter</label>
+          <div className="input-suffix">
+            <span>±</span>
+            <input
+              type="number"
+              value={run.humanize?.delay_ms ?? 0}
+              onChange={(e) => doc().setHumanize({ delay_ms: parseInt(e.target.value, 10) || 0 })}
+              disabled={disabled}
+              className="input"
+              min={0}
+              max={MAX_HUMANIZE_DELAY_MS}
+              step={10}
+            />
+            <span>ms</span>
+          </div>
+          <div className="hint">Varies where clicks land and when steps start, so runs are not identical. 0 = exact.</div>
         </div>
       </div>
     </>

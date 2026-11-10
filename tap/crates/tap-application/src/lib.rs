@@ -11,6 +11,7 @@
 //!   windows do not count as elapsed timeline time).
 //! - `coords` — window-relative coordinates: moving a position in the target window to the
 //!   screen.
+//! - `humanize` — `run.humanize`: random variation of positions and step start times.
 //! - `resolve` — the Resolve stage: parameterized `DslAction` → concrete `Action`.
 //! - `recorder` — captures raw input events into a [`Timeline`](tap_core::Timeline).
 //! - `storage` — canonical YAML persistence for macro documents (+ legacy JSON).
@@ -24,6 +25,7 @@ mod clock;
 mod coordinator;
 mod coords;
 mod engine;
+mod humanize;
 mod recorder;
 mod resolve;
 mod session;
