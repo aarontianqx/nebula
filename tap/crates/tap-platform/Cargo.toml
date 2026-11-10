@@ -29,3 +29,6 @@ windows-sys = { version = "0.59", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
 core-foundation = "0.10"
+# `NSWorkspace.frontmostApplication`: which application has focus. Already in the dependency
+# tree through Tauri, so this adds no new version.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication"] }

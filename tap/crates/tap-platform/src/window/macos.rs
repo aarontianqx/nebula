@@ -24,6 +24,7 @@ use core_graphics::window::{
     kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly, kCGWindowName,
     kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
 };
+use objc2_app_kit::NSWorkspace;
 use std::ffi::c_void;
 
 extern "C" {
@@ -128,12 +129,22 @@ fn on_screen_windows() -> Vec<WindowInfo> {
     out
 }
 
+/// The process id of the application that receives keyboard input.
+fn frontmost_pid() -> Option<u32> {
+    let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    u32::try_from(app.processIdentifier()).ok()
+}
+
 /// Get the currently focused foreground window.
 ///
-/// The window server keeps the on-screen list in front-to-back order, so the
-/// first normal window is the frontmost (focused) one.
+/// The first window of the on-screen list is *not* the focused one: other applications keep
+/// layer-0 windows above the active one, and the active application's own thin helper windows
+/// come before its real window (both observed). So ask the OS which application is frontmost,
+/// then pick that application's main window ([`super::main_window_of`]). `None` when the
+/// frontmost application has no normal window (e.g. a menu-bar-only app).
 pub fn get_foreground_window() -> Option<WindowInfo> {
-    on_screen_windows().into_iter().next()
+    let pid = frontmost_pid()?;
+    super::main_window_of(on_screen_windows(), pid)
 }
 
 /// List all visible windows.

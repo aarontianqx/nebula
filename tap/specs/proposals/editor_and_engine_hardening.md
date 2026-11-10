@@ -234,14 +234,14 @@ flowchart LR
 | 7 | `call_macro` / 表达式 / 变量面板（WS3c） | M | `feat(tap)` |
 | 8 | Inspector Pick / Capture（WS5a） | S | `feat(tap)` |
 | 9 | `pixel_color` 取色器（WS5b） | S | `feat(tap)` |
-| 10 | 前台窗口判定修复（macOS / Windows） | S | `fix(tap)` |
+| 10 | 前台窗口判定修复（macOS；Windows 矩形并入 PR 11） | S | `fix(tap)` |
 | 11 | 窗口相对坐标（WS6a） | L | `feat(tap)` |
 | 12 | 随机抖动（WS6b） | M | `feat(tap)` |
 | 13 | ScreenCaptureKit spike（WS6c） | S | `chore(tap)` |
 
 PR 1、2、3、4 互不依赖，可并行。每个 PR 独立可发布、可回滚。
 
-进度：PR 1–8 已实现；PR 9 起待启动。
+进度：PR 1–8、10 已实现；PR 9 起待启动。
 
 PR 5 落地说明（与上文设计的差异）：
 - WS0 的临时止血层（`edit_support`、`apply_profile_edit` 的拒绝逻辑、`get_edit_support`、前端 `editable`）与 `profile_view` / `document_to_profile_view` 已整体删除；不变量测试迁移为 `tests/document_sync.rs`（文档按原样存储、改名不丢步骤、编辑中间态不被拒绝）。
@@ -263,6 +263,12 @@ PR 8 落地说明（与上文设计的差异）：
 - 请求与捕获随发起它的字段卸载而取消；捕获回调经 ref 应用到“此刻”的步骤（捕获最长等 10 秒，其间可能继续编辑），避免用点击时的旧状态覆盖。
 - 主线程问题按 tauri-macros 2.5.2 源码核实：普通同步命令在主线程，`#[tauri::command(async)]` 把同步函数放到线程池。`cmd_capture_key` 只需加 `(async)`，不必再套 `spawn_blocking`。
 - 坐标任一方为表达式（含裸变量名）时 Pick 禁用并提示；空值不算表达式。
+
+PR 10 落地说明（与上文设计的差异）：
+- 在这台 macOS 上用 `examples/foreground_probe.rs` 复现并验证：旧实现取屏上窗口列表的第一个 layer-0 窗口，实测会得到 Cursor 的 1920×32 细条窗口（应用对、窗口错）、Chrome 的 1920×41 / 1920×81 无标题细条窗口，窗口列表里前台应用之前还可能排着别的应用的窗口（最初观测到 Cursor 在前台却返回 Chrome）。
+- 现在先用 `NSWorkspace.frontmostApplication` 取前台应用的 pid，再用 `main_window_of` 选主窗口：以该应用最大窗口的面积为基准忽略小于一半的窗口，其余候选里取最上面的**有标题**窗口（飞书这类 Electron 应用在带标题窗口上方叠着同尺寸的无标题辅助窗口），都没有标题时取最上面的。该函数是纯函数，放在跨平台的 `window/mod.rs` 并在所有 OS 的 CI 上单测。前台应用没有普通窗口时返回 `None`。
+- 与设计的差异：Windows 的 `DWMWA_EXTENDED_FRAME_BOUNDS` 未在本 PR 做。Windows 的前台判定本来就用 `GetForegroundWindow`，是对的；矩形的 7px 不可见边框目前只用于界面显示，没有逻辑依赖它，改到真正使用矩形的 PR 11 时一并做并实机验证。
+- 局限：多个同样大小且都有标题的窗口之间按 z 序取最上面的，和系统的键盘焦点窗口通常一致但不保证；要精确需走辅助功能 API（`AXFocusedWindow`），依赖额外权限，暂不做。`frontmostApplication` 依赖主线程 run loop 更新，在 Tauri 应用内成立；脱离 run loop 的命令行进程只能读到启动时刻的值。
 
 ## 6. 风险
 

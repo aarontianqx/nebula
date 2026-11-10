@@ -108,7 +108,7 @@ The React UI is **store-driven**; components stay thin and read/write Zustand st
 | `events/`        | Global event listener (singleton) | N/A       | CGEventTap + subscriptions |
 | `input_hook/`    | Global input hook (recording)| rdev           | Subscribes to events singleton |
 | `mouse_tracker/` | Global mouse position        | rdev           | Subscribes to events singleton |
-| `window/`        | Window API                   | Win32 API      | Quartz `CGWindowList`   |
+| `window/`        | Window API                   | Win32 API      | Quartz `CGWindowList` + `NSWorkspace` (frontmost app) |
 | `pixel/`         | Pixel color reading          | GDI            | `CGWindowListCreateImage` |
 | `dpi/`           | High DPI handling            | SetProcessDpiAwareness | backing scale via `CGDisplayMode` |
 
