@@ -63,13 +63,11 @@ export const useRecorderStore = create<RecorderStore>((set) => ({
 
   stop: async () => {
     try {
-      const timeline = await api.stopRecording();
+      const doc = await api.stopRecording();
       set({ recorderState: "Idle" });
-      // The backend already replaced its canonical timeline; mirror the document so edits and
-      // replay operate on the recorded macro.
-      await useDocumentStore.getState().refreshFromBackend();
+      useDocumentStore.getState().applyDocument(doc);
       useUiStore.getState().setMode("timeline");
-      log(`Recording stopped: ${timeline.actions.length} actions`);
+      log(`Recording stopped: ${doc.timeline.length} actions`);
     } catch (err) {
       log(`Failed to stop recording: ${String(err)}`);
     }

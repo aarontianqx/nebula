@@ -3,7 +3,7 @@
 //! Provides validation logic to ensure imported YAML profiles are valid
 //! before converting them to internal Profile format.
 
-use crate::dsl::{
+use crate::{
     CoordinateSpace, DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue,
     MacroDocument, MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX,
 };
@@ -456,7 +456,7 @@ fn is_valid_compare_op(op: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{DslMouseButton, DslRunConfig, DslTimedAction, DslValue, MacroDocument};
+    use crate::{DslMouseButton, DslRunConfig, DslTimedAction, DslValue, MacroDocument};
 
     fn minimal_profile() -> MacroDocument {
         MacroDocument {
@@ -501,8 +501,8 @@ mod tests {
         title: Option<&str>,
         process: Option<&str>,
         coordinates: CoordinateSpace,
-    ) -> crate::dsl::DslTargetWindow {
-        crate::dsl::DslTargetWindow {
+    ) -> crate::DslTargetWindow {
+        crate::DslTargetWindow {
             title: title.map(String::from),
             process: process.map(String::from),
             pause_when_unfocused: true,

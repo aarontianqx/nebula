@@ -26,7 +26,7 @@ tap 不追求成为企业级 RPA，而是提供**轻量、低门槛、可持续�
 |------|------|
 | **Action（动作）** | 最小执行单元：click / double-click、mouse down/up/move/drag/scroll、key tap/down/up、text input、wait、条件与计数器动作、`call_macro`、`exit`。 |
 | **Timeline（时间线）** | 带相对时间（`at_ms`）的动作序列。tap 的核心是“把手的操作转换为可编辑的时间线，再由引擎稳定执行”。 |
-| **Macro / Profile** | 一个宏：元数据（名称/描述/作者/标签）+ 变量 + 目标窗口绑定 + 时间线 + 执行策略。规范形态是 `MacroDocument`（无损），运行时解析为 `Profile`（坐标等解析为具体值）。 |
+| **Macro** | 一个宏：元数据（名称/描述/作者/标签）+ 变量 + 目标窗口绑定 + 时间线 + 执行策略。唯一形态是 `MacroDocument`（无损）；引擎在每步执行前把模板解析为具体的 `Action`。 |
 | **Variable（变量）** | `{{ name }}` 参数化占位；运行前由表单填入，或被表达式引用。 |
 | **Condition（条件）** | 窗口聚焦/存在、像素颜色、计数器比较，以及 and/or/not 组合；用于 `wait_until` 与 `conditional` 分支。 |
 | **Tool Mode（工具模式）** | 由实时全局输入驱动、不在时间线上的能力（如 Key→Click）。**不属于 DSL**，不能用 YAML 表达。 |
@@ -111,7 +111,7 @@ tap 不追求成为企业级 RPA，而是提供**轻量、低门槛、可持续�
 1. **坐标系 = 注入空间**：所有鼠标坐标基于 OS 注入空间——**Windows 全屏物理像素**、**macOS point**，绝不使用 WebView 相对坐标。拾取器经 `browser_to_injection_scale()` 把浏览器 CSS 像素换算到注入空间，使录制 / 回放 / 拾取三者一致。**因此宏不跨机移植**，换机需重新拾取坐标。
 2. **按键名归一化**：录制 / 捕获得到的平台按键名（`ControlLeft` / `ShiftLeft` / `MetaLeft` / `AltGr` / `Return` / `Kp5` …）在入库与注入前统一归一化为规范名（`Ctrl` / `Shift` / `Meta` / `Enter` / `5` …），避免修饰键被误当字母键注入，并保证同一宏可在 Win/mac 间移植回放。
 3. **工具模式 vs DSL**：事件驱动的工具模式（Key→Click）由实时输入驱动、时长不定，刻意不塞进时间线 DSL，避免引擎复杂化。它属于 Application/Tauri 层的 Tool Runner。
-4. **单一数据源**：规范宏是 `SessionStore` 持有的 `MacroDocument`；运行时 `Profile` 只是用于展示/IPC 的解析投影。编辑与执行始终经由文档，绝不走有损副本。
+4. **单一数据源**：规范宏是 `SessionStore` 持有的 `MacroDocument`；模板在执行前才逐步解析为具体 `Action`，不产生第二份宏模型。编辑与执行始终经由文档，绝不走有损副本。
 5. **串行执行**：单个宏内动作顺序执行，无并发注入。
 6. **可取消**：所有长耗时操作（回放、录制、拖拽插值）必须支持经停止信号立即取消。
 

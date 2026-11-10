@@ -16,7 +16,6 @@ import type {
   PickMode,
   RecordingStatus,
   TemplateInfo,
-  Timeline,
   ValidationErrorResponse,
   WindowInfoResponse,
 } from "./types";
@@ -108,7 +107,7 @@ export const api = {
   startRecording: () => invoke<void>("start_recording"),
   pauseRecording: () => invoke<void>("pause_recording"),
   resumeRecording: () => invoke<void>("resume_recording"),
-  stopRecording: () => invoke<Timeline>("stop_recording"),
+  stopRecording: () => invoke<MacroDocument>("stop_recording"),
   getRecordingStatus: () => invoke<RecordingStatus>("get_recording_status"),
 
   // === Windows / pixels ===

@@ -29,6 +29,7 @@ mod humanize;
 mod recorder;
 mod resolve;
 mod session;
+mod simple;
 mod storage;
 mod submacro;
 
@@ -44,6 +45,7 @@ pub use recorder::{
 };
 pub use resolve::{resolve_action, ResolveError};
 pub use session::SessionStore;
+pub use simple::simple_repeat_document;
 pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
     load_document, load_last_used, load_recent, save_document, save_last_used, save_recent,

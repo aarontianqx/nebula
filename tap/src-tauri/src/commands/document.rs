@@ -4,12 +4,9 @@ use std::sync::Mutex;
 
 use tap_application::{
     delete_profile, list_profiles, load_document, load_last_used, load_recent, save_document,
-    save_last_used, save_recent,
+    save_last_used, save_recent, simple_repeat_document,
 };
-use tap_core::{
-    document_to_yaml, parse_yaml, Action, MacroDocument, Profile, Repeat, RunConfig, TimedAction,
-    Timeline,
-};
+use tap_core::{document_to_yaml, parse_yaml, DslAction, MacroDocument};
 use tauri::State;
 use tracing::info;
 
@@ -64,52 +61,26 @@ pub fn set_simple_repeat(
     repeat_count: Option<u32>,
     countdown_secs: u32,
 ) -> Result<(), String> {
-    let mut app_state = state.lock().unwrap();
-
     let action = match action_type.as_str() {
-        "click" => Action::Click {
-            x: x.unwrap_or(0),
-            y: y.unwrap_or(0),
-            button: parse_mouse_button(button.as_deref()),
-        },
-        "key" => Action::KeyTap {
+        "click" => DslAction::click(
+            x.unwrap_or(0),
+            y.unwrap_or(0),
+            parse_mouse_button(button.as_deref()),
+        ),
+        "key" => DslAction::KeyTap {
             key: key.unwrap_or_else(|| "Space".into()),
         },
         _ => return Err(format!("Unknown action type: {}", action_type)),
     };
 
-    // Simple repeat: one action followed by a wait
-    // The wait is the interval between iterations
-    let timeline = Timeline {
-        actions: vec![
-            TimedAction::after_ms(0, action),
-            TimedAction::after_ms(0, Action::Wait { ms: interval_ms }),
-        ],
-    };
-
-    let repeat = match repeat_count {
-        Some(n) => Repeat::Times(n),
-        None => Repeat::Forever,
-    };
-
-    let profile = Profile {
-        name: "Simple Repeat".into(),
-        timeline,
-        run: RunConfig {
-            start_delay_ms: countdown_secs as u64 * 1000,
-            speed: 1.0,
-            repeat,
-        },
-        target_window: None,
-    };
-
-    // Simple Repeat is a brand-new macro (no variables), so replace the
-    // canonical document outright rather than merging over the current one.
-    app_state
-        .coordinator
-        .set_document(MacroDocument::from(&profile));
-
-    info!(?profile, "Updated document for simple repeat");
+    let document = simple_repeat_document(
+        action,
+        interval_ms,
+        repeat_count,
+        u64::from(countdown_secs) * 1000,
+    );
+    info!(?document, "Updated document for simple repeat");
+    state.lock().unwrap().coordinator.set_document(document);
 
     Ok(())
 }

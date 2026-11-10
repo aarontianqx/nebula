@@ -1,152 +1,18 @@
-//! DSL (Domain Specific Language) module for YAML-based macro definitions.
+//! The macro vocabulary a document stores: actions, values and conditions, plus how a condition
+//! becomes its runtime form.
 //!
-//! This module provides:
-//! - YAML serialization/deserialization for profiles
-//! - DSL schema types with metadata (version, author, description)
-//! - Conversion between DSL and internal Profile types
+//! Strings in conditions (colors, comparison operators) are parsed only when the condition is
+//! resolved, so a half-typed edit is stored as typed and surfaces as a validation finding rather
+//! than being rejected.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{
-    Action, CompareOp, Condition, ConditionColor, MouseButton, Point, Profile, Repeat, RunConfig,
-    TargetWindow, TimedAction, Timeline,
-};
+use serde::{Deserialize, Serialize};
 
-/// DSL schema version.
-pub const DSL_VERSION: &str = "1.0";
+use crate::{CompareOp, Condition, ConditionColor, MouseButton};
 
-/// Canonical macro document.
-///
-/// This is the single source of truth for a macro: the user-facing YAML format
-/// carrying metadata, parameterized variables, target-window binding, and the
-/// action timeline. It is lossless across save/load and is the type persisted to
-/// disk. The runtime [`crate::Profile`] is a *resolved* projection used by the
-/// execution engine (coordinates resolved to concrete integers).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MacroDocument {
-    /// Name of the macro.
-    pub name: String,
-    /// Optional description.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// DSL schema version.
-    #[serde(default = "default_version")]
-    pub version: String,
-    /// Author name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author: Option<String>,
-    /// Free-form tags for organization and filtering.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
-
-    /// Parameterized variables (filled in before execution).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub variables: HashMap<String, VariableDefinition>,
-
-    /// Target window binding (optional).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_window: Option<DslTargetWindow>,
-
-    /// Action timeline.
-    pub timeline: Vec<DslTimedAction>,
-
-    /// Execution configuration.
-    #[serde(default)]
-    pub run: DslRunConfig,
-}
-
-fn default_version() -> String {
-    DSL_VERSION.to_string()
-}
-
-/// Variable definition for parameterized macros.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VariableDefinition {
-    /// Variable type: "string", "number", "boolean".
-    #[serde(rename = "type")]
-    pub var_type: VariableType,
-    /// Default value (as string, will be parsed according to type).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<serde_json::Value>,
-    /// Human-readable description.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-/// Supported variable types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum VariableType {
-    String,
-    Number,
-    Boolean,
-}
-
-/// What the coordinates of a document are measured from.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CoordinateSpace {
-    /// The screen: coordinates are positions in the OS injection space.
-    #[default]
-    Screen,
-    /// The target window's top-left corner: the window can be moved or the display changed
-    /// without re-capturing. Applies to every action with a position and to `pixel_color`.
-    Window,
-}
-
-impl CoordinateSpace {
-    /// For `skip_serializing_if`: only a non-default choice is written out.
-    pub fn is_screen(&self) -> bool {
-        *self == CoordinateSpace::Screen
-    }
-}
-
-/// Target window binding in DSL format.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct DslTargetWindow {
-    /// Window title pattern (partial match).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Process name pattern (partial match).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process: Option<String>,
-    /// Whether to pause when target window is not focused.
-    #[serde(default = "default_pause")]
-    pub pause_when_unfocused: bool,
-    /// What this document's coordinates are relative to (the screen unless set).
-    #[serde(default, skip_serializing_if = "CoordinateSpace::is_screen")]
-    pub coordinates: CoordinateSpace,
-}
-
-fn default_pause() -> bool {
-    true
-}
-
-/// Timed action in DSL format.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DslTimedAction {
-    /// Milliseconds since the start of the timeline.
-    pub at_ms: u64,
-    /// The action to perform.
-    pub action: DslAction,
-    /// Whether this action is enabled.
-    #[serde(default = "default_enabled", skip_serializing_if = "is_true")]
-    pub enabled: bool,
-    /// Optional note/comment.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn is_true(b: &bool) -> bool {
-    *b
-}
-
-/// Action in DSL format (more human-readable than internal format).
+/// An action as the document stores it: values may be `{{ }}` templates, resolved just before
+/// the action runs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DslAction {
@@ -206,7 +72,6 @@ pub enum DslAction {
     /// Wait/delay.
     Wait { ms: u64 },
 
-    // === Conditional actions ===
     /// Wait until condition is satisfied.
     WaitUntil {
         condition: DslCondition,
@@ -223,7 +88,6 @@ pub enum DslAction {
         else_action: Option<Box<DslAction>>,
     },
 
-    // === Counter actions ===
     /// Set counter value.
     SetCounter { key: String, value: DslValue },
     /// Increment counter.
@@ -253,7 +117,7 @@ fn default_poll_interval() -> u64 {
     100
 }
 
-/// A value that can be either a literal or a variable reference.
+/// A literal, or a string holding a `{{ }}` template.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DslValue {
@@ -261,7 +125,7 @@ pub enum DslValue {
     Int(i64),
     /// Float literal.
     Float(f64),
-    /// String literal or variable reference (e.g., "{{ var_name }}").
+    /// A string literal, or a template such as `{{ var_name }}`.
     String(String),
     /// Boolean literal.
     Bool(bool),
@@ -274,7 +138,6 @@ impl Default for DslValue {
 }
 
 impl DslValue {
-    /// Check if this value contains a variable reference.
     pub fn is_variable_ref(&self) -> bool {
         match self {
             DslValue::String(s) => s.contains("{{") && s.contains("}}"),
@@ -282,7 +145,6 @@ impl DslValue {
         }
     }
 
-    /// Try to convert to i32.
     pub fn as_i32(&self) -> Option<i32> {
         match self {
             DslValue::Int(n) => Some(*n as i32),
@@ -292,7 +154,6 @@ impl DslValue {
         }
     }
 
-    /// Try to convert to string.
     pub fn as_string(&self) -> String {
         match self {
             DslValue::Int(n) => n.to_string(),
@@ -362,190 +223,67 @@ fn default_tolerance() -> u8 {
     10
 }
 
-/// Run configuration in DSL format.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DslRunConfig {
-    /// Number of times to repeat (0 = forever).
-    #[serde(default = "default_repeat")]
-    pub repeat: u32,
-    /// Delay before first action in milliseconds.
-    #[serde(default)]
-    pub start_delay_ms: u64,
-    /// Speed multiplier (1.0 = normal speed).
-    #[serde(default = "default_speed")]
-    pub speed: f32,
-    /// Random variation applied to positions and step timing (off by default).
-    #[serde(default, skip_serializing_if = "Humanize::is_off")]
-    pub humanize: Humanize,
-}
-
-/// The largest position jitter `run.humanize.position_px` may ask for. Beyond this a click no
-/// longer lands on what was recorded, which is a mistake rather than a humanizing effect.
-pub const MAX_HUMANIZE_POSITION_PX: u32 = 100;
-/// The largest step-timing jitter `run.humanize.delay_ms` may ask for.
-pub const MAX_HUMANIZE_DELAY_MS: u32 = 10_000;
-
-/// Random variation for playback, so repeated runs do not land on exactly the same pixels at
-/// exactly the same milliseconds.
-///
-/// - `position_px`: every click, double click, mouse move and drag end point lands up to this many
-///   pixels off on each axis. A press and its release share one offset, so a click is never
-///   turned into a tiny drag.
-/// - `delay_ms`: when a step starts is moved by up to this many milliseconds, earlier or later.
-///   Steps still run in order and explicit `wait` actions are exact.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Humanize {
-    #[serde(default)]
-    pub position_px: u32,
-    #[serde(default)]
-    pub delay_ms: u32,
-}
-
-impl Humanize {
-    /// Whether no variation is configured (the default, and what is left out of the document).
-    pub fn is_off(&self) -> bool {
-        self.position_px == 0 && self.delay_ms == 0
+impl DslAction {
+    pub fn click(x: i32, y: i32, button: MouseButton) -> Self {
+        DslAction::Click {
+            x: x.into(),
+            y: y.into(),
+            button: button.into(),
+        }
     }
-}
 
-fn default_repeat() -> u32 {
-    1
-}
+    pub fn double_click(x: i32, y: i32, button: MouseButton) -> Self {
+        DslAction::DoubleClick {
+            x: x.into(),
+            y: y.into(),
+            button: button.into(),
+        }
+    }
 
-fn default_speed() -> f32 {
-    1.0
-}
+    pub fn mouse_down(x: i32, y: i32, button: MouseButton) -> Self {
+        DslAction::MouseDown {
+            x: x.into(),
+            y: y.into(),
+            button: button.into(),
+        }
+    }
 
-impl Default for DslRunConfig {
-    fn default() -> Self {
-        Self {
-            repeat: 1,
-            start_delay_ms: 0,
-            speed: 1.0,
-            humanize: Humanize::default(),
+    pub fn mouse_up(x: i32, y: i32, button: MouseButton) -> Self {
+        DslAction::MouseUp {
+            x: x.into(),
+            y: y.into(),
+            button: button.into(),
+        }
+    }
+
+    pub fn mouse_move(x: i32, y: i32) -> Self {
+        DslAction::MouseMove {
+            x: x.into(),
+            y: y.into(),
+        }
+    }
+
+    pub fn drag(from: (i32, i32), to: (i32, i32), duration_ms: u64) -> Self {
+        DslAction::Drag {
+            from_x: from.0.into(),
+            from_y: from.1.into(),
+            to_x: to.0.into(),
+            to_y: to.1.into(),
+            duration_ms,
+        }
+    }
+
+    pub fn scroll(delta_x: i32, delta_y: i32) -> Self {
+        DslAction::Scroll {
+            delta_x: delta_x.into(),
+            delta_y: delta_y.into(),
         }
     }
 }
 
-// ============================================================================
-// Conversion: Profile -> MacroDocument (Export)
-// ============================================================================
-
-impl From<&Profile> for MacroDocument {
-    fn from(profile: &Profile) -> Self {
-        MacroDocument {
-            name: profile.name.clone(),
-            description: None,
-            version: DSL_VERSION.to_string(),
-            author: None,
-            tags: Vec::new(),
-            variables: HashMap::new(),
-            target_window: profile.target_window.as_ref().map(|tw| DslTargetWindow {
-                title: tw.title.clone(),
-                process: tw.process.clone(),
-                pause_when_unfocused: tw.pause_when_unfocused,
-                coordinates: CoordinateSpace::Screen,
-            }),
-            timeline: profile
-                .timeline
-                .actions
-                .iter()
-                .map(DslTimedAction::from)
-                .collect(),
-            run: DslRunConfig::from(&profile.run),
-        }
-    }
-}
-
-impl From<&TimedAction> for DslTimedAction {
-    fn from(ta: &TimedAction) -> Self {
-        DslTimedAction {
-            at_ms: ta.at_ms,
-            action: DslAction::from(&ta.action),
-            enabled: ta.enabled,
-            note: ta.note.clone(),
-        }
-    }
-}
-
-impl From<&Action> for DslAction {
-    fn from(action: &Action) -> Self {
-        match action {
-            Action::Click { x, y, button } => DslAction::Click {
-                x: DslValue::Int(*x as i64),
-                y: DslValue::Int(*y as i64),
-                button: DslMouseButton::from(*button),
-            },
-            Action::DoubleClick { x, y, button } => DslAction::DoubleClick {
-                x: DslValue::Int(*x as i64),
-                y: DslValue::Int(*y as i64),
-                button: DslMouseButton::from(*button),
-            },
-            Action::MouseDown { x, y, button } => DslAction::MouseDown {
-                x: DslValue::Int(*x as i64),
-                y: DslValue::Int(*y as i64),
-                button: DslMouseButton::from(*button),
-            },
-            Action::MouseUp { x, y, button } => DslAction::MouseUp {
-                x: DslValue::Int(*x as i64),
-                y: DslValue::Int(*y as i64),
-                button: DslMouseButton::from(*button),
-            },
-            Action::MouseMove { x, y } => DslAction::MouseMove {
-                x: DslValue::Int(*x as i64),
-                y: DslValue::Int(*y as i64),
-            },
-            Action::Drag {
-                from,
-                to,
-                duration_ms,
-            } => DslAction::Drag {
-                from_x: DslValue::Int(from.x as i64),
-                from_y: DslValue::Int(from.y as i64),
-                to_x: DslValue::Int(to.x as i64),
-                to_y: DslValue::Int(to.y as i64),
-                duration_ms: *duration_ms,
-            },
-            Action::Scroll { delta_x, delta_y } => DslAction::Scroll {
-                delta_x: DslValue::Int(*delta_x as i64),
-                delta_y: DslValue::Int(*delta_y as i64),
-            },
-            Action::KeyTap { key } => DslAction::KeyTap { key: key.clone() },
-            Action::KeyDown { key } => DslAction::KeyDown { key: key.clone() },
-            Action::KeyUp { key } => DslAction::KeyUp { key: key.clone() },
-            Action::TextInput { text } => DslAction::TextInput {
-                text: DslValue::String(text.clone()),
-            },
-            Action::Wait { ms } => DslAction::Wait { ms: *ms },
-            Action::WaitUntil {
-                condition,
-                timeout_ms,
-                poll_interval_ms,
-            } => DslAction::WaitUntil {
-                condition: DslCondition::from(condition),
-                timeout_ms: *timeout_ms,
-                poll_interval_ms: *poll_interval_ms,
-            },
-            Action::Conditional {
-                condition,
-                then_action,
-                else_action,
-            } => DslAction::Conditional {
-                condition: DslCondition::from(condition),
-                then_action: Box::new(DslAction::from(then_action.as_ref())),
-                else_action: else_action
-                    .as_ref()
-                    .map(|a| Box::new(DslAction::from(a.as_ref()))),
-            },
-            Action::SetCounter { key, value } => DslAction::SetCounter {
-                key: key.clone(),
-                value: DslValue::Int(*value as i64),
-            },
-            Action::IncrCounter { key } => DslAction::IncrCounter { key: key.clone() },
-            Action::DecrCounter { key } => DslAction::DecrCounter { key: key.clone() },
-            Action::ResetCounter { key } => DslAction::ResetCounter { key: key.clone() },
-            Action::Exit => DslAction::Exit,
-        }
+impl From<i32> for DslValue {
+    fn from(n: i32) -> Self {
+        DslValue::Int(n.into())
     }
 }
 
@@ -555,288 +293,6 @@ impl From<MouseButton> for DslMouseButton {
             MouseButton::Left => DslMouseButton::Left,
             MouseButton::Right => DslMouseButton::Right,
             MouseButton::Middle => DslMouseButton::Middle,
-        }
-    }
-}
-
-impl From<&Condition> for DslCondition {
-    fn from(cond: &Condition) -> Self {
-        match cond {
-            Condition::WindowFocused { title, process } => DslCondition::WindowFocused {
-                title: title.clone(),
-                process: process.clone(),
-            },
-            Condition::WindowExists { title, process } => DslCondition::WindowExists {
-                title: title.clone(),
-                process: process.clone(),
-            },
-            Condition::PixelColor {
-                x,
-                y,
-                color,
-                tolerance,
-            } => DslCondition::PixelColor {
-                x: *x,
-                y: *y,
-                color: format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b),
-                tolerance: *tolerance,
-            },
-            Condition::Counter { key, op, value } => DslCondition::Counter {
-                key: key.clone(),
-                op: match op {
-                    crate::CompareOp::Eq => "==".to_string(),
-                    crate::CompareOp::Ne => "!=".to_string(),
-                    crate::CompareOp::Gt => ">".to_string(),
-                    crate::CompareOp::Lt => "<".to_string(),
-                    crate::CompareOp::Gte => ">=".to_string(),
-                    crate::CompareOp::Lte => "<=".to_string(),
-                },
-                value: *value,
-            },
-            Condition::Always => DslCondition::Always,
-            Condition::Never => DslCondition::Never,
-            Condition::And(conditions) => {
-                DslCondition::And(conditions.iter().map(DslCondition::from).collect())
-            }
-            Condition::Or(conditions) => {
-                DslCondition::Or(conditions.iter().map(DslCondition::from).collect())
-            }
-            Condition::Not(c) => DslCondition::Not {
-                condition: Box::new(DslCondition::from(c.as_ref())),
-            },
-        }
-    }
-}
-
-impl From<&RunConfig> for DslRunConfig {
-    fn from(rc: &RunConfig) -> Self {
-        DslRunConfig {
-            repeat: match rc.repeat {
-                Repeat::Times(n) => n,
-                Repeat::Forever => 0,
-            },
-            start_delay_ms: rc.start_delay_ms,
-            speed: rc.speed,
-            humanize: Humanize::default(),
-        }
-    }
-}
-
-// ============================================================================
-// Export to YAML
-// ============================================================================
-
-/// Serialize a [`MacroDocument`] to its canonical YAML representation.
-pub fn document_to_yaml(doc: &MacroDocument) -> Result<String, DslError> {
-    serde_yaml::to_string(doc).map_err(|e| DslError::SerializationError(e.to_string()))
-}
-
-/// Export a Profile to YAML string.
-pub fn export_to_yaml(profile: &Profile) -> Result<String, DslError> {
-    document_to_yaml(&MacroDocument::from(profile))
-}
-
-/// Export a Profile to YAML with additional metadata.
-pub fn export_to_yaml_with_metadata(
-    profile: &Profile,
-    description: Option<String>,
-    author: Option<String>,
-) -> Result<String, DslError> {
-    let mut document = MacroDocument::from(profile);
-    document.description = description;
-    document.author = author;
-    document_to_yaml(&document)
-}
-
-// ============================================================================
-// Import from YAML
-// ============================================================================
-
-/// Parse a YAML string into a [`MacroDocument`].
-pub fn parse_yaml(yaml: &str) -> Result<MacroDocument, DslError> {
-    serde_yaml::from_str(yaml).map_err(|e| DslError::ParseError(e.to_string()))
-}
-
-/// Import YAML string to Profile (with validation).
-pub fn import_from_yaml(yaml: &str) -> Result<Profile, DslError> {
-    let document = parse_yaml(yaml)?;
-    // Note: Full validation is done by schema.rs
-    Profile::try_from(&document)
-}
-
-// ============================================================================
-// Conversion: MacroDocument -> Profile (Import / resolve)
-// ============================================================================
-
-impl TryFrom<&MacroDocument> for Profile {
-    type Error = DslError;
-
-    fn try_from(dsl: &MacroDocument) -> Result<Self, Self::Error> {
-        let timeline = Timeline {
-            actions: dsl
-                .timeline
-                .iter()
-                .map(TimedAction::try_from)
-                .collect::<Result<Vec<_>, _>>()?,
-        };
-
-        let target_window = dsl.target_window.as_ref().map(|tw| TargetWindow {
-            title: tw.title.clone(),
-            process: tw.process.clone(),
-            pause_when_unfocused: tw.pause_when_unfocused,
-        });
-
-        let run = RunConfig::from(&dsl.run);
-
-        Ok(Profile {
-            name: dsl.name.clone(),
-            timeline,
-            run,
-            target_window,
-        })
-    }
-}
-
-impl TryFrom<&DslTimedAction> for TimedAction {
-    type Error = DslError;
-
-    fn try_from(dsl: &DslTimedAction) -> Result<Self, Self::Error> {
-        Ok(TimedAction {
-            at_ms: dsl.at_ms,
-            action: Action::try_from(&dsl.action)?,
-            enabled: dsl.enabled,
-            note: dsl.note.clone(),
-        })
-    }
-}
-
-impl TryFrom<&DslAction> for Action {
-    type Error = DslError;
-
-    fn try_from(dsl: &DslAction) -> Result<Self, Self::Error> {
-        match dsl {
-            DslAction::Click { x, y, button } => Ok(Action::Click {
-                x: x.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("Click x must be a number".to_string())
-                })?,
-                y: y.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("Click y must be a number".to_string())
-                })?,
-                button: MouseButton::from(*button),
-            }),
-            DslAction::DoubleClick { x, y, button } => Ok(Action::DoubleClick {
-                x: x.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("DoubleClick x must be a number".to_string())
-                })?,
-                y: y.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("DoubleClick y must be a number".to_string())
-                })?,
-                button: MouseButton::from(*button),
-            }),
-            DslAction::MouseDown { x, y, button } => Ok(Action::MouseDown {
-                x: x.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("MouseDown x must be a number".to_string())
-                })?,
-                y: y.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("MouseDown y must be a number".to_string())
-                })?,
-                button: MouseButton::from(*button),
-            }),
-            DslAction::MouseUp { x, y, button } => Ok(Action::MouseUp {
-                x: x.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("MouseUp x must be a number".to_string())
-                })?,
-                y: y.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("MouseUp y must be a number".to_string())
-                })?,
-                button: MouseButton::from(*button),
-            }),
-            DslAction::MouseMove { x, y } => Ok(Action::MouseMove {
-                x: x.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("MouseMove x must be a number".to_string())
-                })?,
-                y: y.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("MouseMove y must be a number".to_string())
-                })?,
-            }),
-            DslAction::Drag {
-                from_x,
-                from_y,
-                to_x,
-                to_y,
-                duration_ms,
-            } => Ok(Action::Drag {
-                from: Point {
-                    x: from_x.as_i32().ok_or_else(|| {
-                        DslError::ValidationError("Drag from_x must be a number".to_string())
-                    })?,
-                    y: from_y.as_i32().ok_or_else(|| {
-                        DslError::ValidationError("Drag from_y must be a number".to_string())
-                    })?,
-                },
-                to: Point {
-                    x: to_x.as_i32().ok_or_else(|| {
-                        DslError::ValidationError("Drag to_x must be a number".to_string())
-                    })?,
-                    y: to_y.as_i32().ok_or_else(|| {
-                        DslError::ValidationError("Drag to_y must be a number".to_string())
-                    })?,
-                },
-                duration_ms: *duration_ms,
-            }),
-            DslAction::Scroll { delta_x, delta_y } => Ok(Action::Scroll {
-                delta_x: delta_x.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("Scroll delta_x must be a number".to_string())
-                })?,
-                delta_y: delta_y.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("Scroll delta_y must be a number".to_string())
-                })?,
-            }),
-            DslAction::KeyTap { key } => Ok(Action::KeyTap { key: key.clone() }),
-            DslAction::KeyDown { key } => Ok(Action::KeyDown { key: key.clone() }),
-            DslAction::KeyUp { key } => Ok(Action::KeyUp { key: key.clone() }),
-            DslAction::TextInput { text } => Ok(Action::TextInput {
-                text: text.as_string(),
-            }),
-            DslAction::Wait { ms } => Ok(Action::Wait { ms: *ms }),
-            DslAction::WaitUntil {
-                condition,
-                timeout_ms,
-                poll_interval_ms,
-            } => Ok(Action::WaitUntil {
-                condition: Condition::try_from(condition)?,
-                timeout_ms: *timeout_ms,
-                poll_interval_ms: *poll_interval_ms,
-            }),
-            DslAction::Conditional {
-                condition,
-                then_action,
-                else_action,
-            } => Ok(Action::Conditional {
-                condition: Condition::try_from(condition)?,
-                then_action: Box::new(Action::try_from(then_action.as_ref())?),
-                else_action: else_action
-                    .as_ref()
-                    .map(|a| Action::try_from(a.as_ref()))
-                    .transpose()?
-                    .map(Box::new),
-            }),
-            DslAction::SetCounter { key, value } => Ok(Action::SetCounter {
-                key: key.clone(),
-                value: value.as_i32().ok_or_else(|| {
-                    DslError::ValidationError("SetCounter value must be a number".to_string())
-                })?,
-            }),
-            DslAction::IncrCounter { key } => Ok(Action::IncrCounter { key: key.clone() }),
-            DslAction::DecrCounter { key } => Ok(Action::DecrCounter { key: key.clone() }),
-            DslAction::ResetCounter { key } => Ok(Action::ResetCounter { key: key.clone() }),
-            DslAction::Exit => Ok(Action::Exit),
-            DslAction::CallMacro { name: _, args: _ } => {
-                // CallMacro is handled at runtime, not converted to a base Action
-                Err(DslError::ValidationError(
-                    "CallMacro actions are handled at runtime".to_string(),
-                ))
-            }
         }
     }
 }
@@ -852,7 +308,7 @@ impl From<DslMouseButton> for MouseButton {
 }
 
 impl TryFrom<&DslCondition> for Condition {
-    type Error = DslError;
+    type Error = InvalidCondition;
 
     fn try_from(dsl: &DslCondition) -> Result<Self, Self::Error> {
         match dsl {
@@ -904,39 +360,30 @@ impl TryFrom<&DslCondition> for Condition {
     }
 }
 
-impl From<&DslRunConfig> for RunConfig {
-    fn from(dsl: &DslRunConfig) -> Self {
-        RunConfig {
-            repeat: if dsl.repeat == 0 {
-                Repeat::Forever
-            } else {
-                Repeat::Times(dsl.repeat)
-            },
-            start_delay_ms: dsl.start_delay_ms,
-            speed: dsl.speed,
-        }
-    }
-}
+/// A condition whose strings cannot be turned into a runtime [`Condition`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidCondition(String);
 
 /// Parse hex color string (#RRGGBB) to ConditionColor.
-fn parse_hex_color(s: &str) -> Result<ConditionColor, DslError> {
+fn parse_hex_color(s: &str) -> Result<ConditionColor, InvalidCondition> {
     if !s.starts_with('#') || s.len() != 7 {
-        return Err(DslError::ValidationError(format!(
+        return Err(InvalidCondition(format!(
             "Invalid color format '{}'. Expected #RRGGBB",
             s
         )));
     }
     let r = u8::from_str_radix(&s[1..3], 16)
-        .map_err(|_| DslError::ValidationError(format!("Invalid red component in '{}'", s)))?;
+        .map_err(|_| InvalidCondition(format!("Invalid red component in '{}'", s)))?;
     let g = u8::from_str_radix(&s[3..5], 16)
-        .map_err(|_| DslError::ValidationError(format!("Invalid green component in '{}'", s)))?;
+        .map_err(|_| InvalidCondition(format!("Invalid green component in '{}'", s)))?;
     let b = u8::from_str_radix(&s[5..7], 16)
-        .map_err(|_| DslError::ValidationError(format!("Invalid blue component in '{}'", s)))?;
+        .map_err(|_| InvalidCondition(format!("Invalid blue component in '{}'", s)))?;
     Ok(ConditionColor::new(r, g, b))
 }
 
 /// Parse comparison operator string to CompareOp.
-fn parse_compare_op(s: &str) -> Result<CompareOp, DslError> {
+fn parse_compare_op(s: &str) -> Result<CompareOp, InvalidCondition> {
     match s {
         "==" | "eq" => Ok(CompareOp::Eq),
         "!=" | "ne" => Ok(CompareOp::Ne),
@@ -944,52 +391,16 @@ fn parse_compare_op(s: &str) -> Result<CompareOp, DslError> {
         "<" | "lt" => Ok(CompareOp::Lt),
         ">=" | "gte" => Ok(CompareOp::Gte),
         "<=" | "lte" => Ok(CompareOp::Lte),
-        _ => Err(DslError::ValidationError(format!(
+        _ => Err(InvalidCondition(format!(
             "Invalid comparison operator '{}'. Use: ==, !=, >, <, >=, <=",
             s
         ))),
     }
 }
 
-// ============================================================================
-// Error types
-// ============================================================================
-
-/// DSL-related errors.
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum DslError {
-    #[error("YAML serialization error: {0}")]
-    SerializationError(String),
-    #[error("YAML parsing error: {0}")]
-    ParseError(String),
-    #[error("Validation error: {0}")]
-    ValidationError(String),
-    #[error("Variable error: {0}")]
-    VariableError(String),
-    #[error("Expression error: {0}")]
-    ExpressionError(String),
-}
-
-impl Serialize for DslError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_export_default_profile() {
-        let profile = Profile::default();
-        let yaml = export_to_yaml(&profile).unwrap();
-        assert!(yaml.contains("name: Default"));
-        assert!(yaml.contains("timeline:"));
-    }
 
     #[test]
     fn test_dsl_value_parsing() {
@@ -1001,125 +412,6 @@ mod tests {
 
         let var_ref = DslValue::String("{{ my_var }}".to_string());
         assert!(var_ref.is_variable_ref());
-    }
-
-    #[test]
-    fn test_roundtrip_export_import() {
-        let profile = Profile::default();
-        let yaml = export_to_yaml(&profile).unwrap();
-        let imported = import_from_yaml(&yaml).unwrap();
-        assert_eq!(profile.name, imported.name);
-        assert_eq!(
-            profile.timeline.actions.len(),
-            imported.timeline.actions.len()
-        );
-    }
-
-    #[test]
-    fn test_document_yaml_roundtrip_preserves_metadata_and_variables() {
-        let mut variables = HashMap::new();
-        variables.insert(
-            "count".to_string(),
-            VariableDefinition {
-                var_type: VariableType::Number,
-                default: Some(serde_json::json!(3)),
-                description: Some("iteration count".to_string()),
-            },
-        );
-
-        let doc = MacroDocument {
-            name: "Param Macro".to_string(),
-            description: Some("uses variables".to_string()),
-            version: DSL_VERSION.to_string(),
-            author: Some("qa".to_string()),
-            tags: vec!["smoke".to_string()],
-            variables,
-            target_window: None,
-            // A coordinate that is an unresolved variable reference must survive.
-            timeline: vec![DslTimedAction {
-                at_ms: 0,
-                action: DslAction::Click {
-                    x: DslValue::String("{{ count }}".to_string()),
-                    y: DslValue::Int(10),
-                    button: DslMouseButton::Right,
-                },
-                enabled: false,
-                note: None,
-            }],
-            run: DslRunConfig {
-                repeat: 0,
-                start_delay_ms: 250,
-                speed: 1.5,
-                humanize: Humanize {
-                    position_px: 4,
-                    delay_ms: 30,
-                },
-            },
-        };
-
-        let yaml = document_to_yaml(&doc).unwrap();
-        let parsed = parse_yaml(&yaml).unwrap();
-        assert_eq!(parsed, doc, "YAML round-trip must be lossless");
-    }
-
-    #[test]
-    fn test_conditions_roundtrip_including_not() {
-        // Regression: `not` wrapping another tagged condition must still
-        // serialize (YAML cannot stack two tags on one node, so `Not` is a
-        // struct variant). Exercise and/or/not nesting plus `conditional`.
-        let doc = MacroDocument {
-            name: "Conditions".to_string(),
-            description: None,
-            version: DSL_VERSION.to_string(),
-            author: None,
-            tags: vec![],
-            variables: HashMap::new(),
-            target_window: None,
-            run: DslRunConfig::default(),
-            timeline: vec![
-                DslTimedAction {
-                    at_ms: 0,
-                    action: DslAction::WaitUntil {
-                        condition: DslCondition::And(vec![
-                            DslCondition::WindowFocused {
-                                title: Some("Notepad".to_string()),
-                                process: None,
-                            },
-                            DslCondition::Not {
-                                condition: Box::new(DslCondition::PixelColor {
-                                    x: 10,
-                                    y: 20,
-                                    color: "#00FF00".to_string(),
-                                    tolerance: 10,
-                                }),
-                            },
-                        ]),
-                        timeout_ms: Some(5000),
-                        poll_interval_ms: 100,
-                    },
-                    enabled: true,
-                    note: None,
-                },
-                DslTimedAction {
-                    at_ms: 1,
-                    action: DslAction::Conditional {
-                        condition: DslCondition::Counter {
-                            key: "n".to_string(),
-                            op: "<".to_string(),
-                            value: 10,
-                        },
-                        then_action: Box::new(DslAction::Exit),
-                        else_action: None,
-                    },
-                    enabled: true,
-                    note: None,
-                },
-            ],
-        };
-
-        let yaml = document_to_yaml(&doc).expect("conditions must serialize");
-        let parsed = parse_yaml(&yaml).unwrap();
-        assert_eq!(parsed, doc, "condition round-trip must be lossless");
     }
 
     #[test]
@@ -1143,67 +435,16 @@ mod tests {
         assert_eq!(parse_compare_op("<=").unwrap(), CompareOp::Lte);
         assert!(parse_compare_op("invalid").is_err());
     }
-    #[test]
-    fn coordinates_default_to_the_screen_and_are_only_written_when_not() {
-        let yaml = "name: m\ntarget_window:\n  process: game.exe\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n";
-        let doc = parse_yaml(yaml).unwrap();
-        let target = doc.target_window.clone().unwrap();
-        assert_eq!(target.coordinates, CoordinateSpace::Screen);
-        assert!(
-            !document_to_yaml(&doc).unwrap().contains("coordinates"),
-            "the default is not serialized, so existing macros are unchanged"
-        );
-    }
 
     #[test]
-    fn window_coordinates_roundtrip_through_yaml_and_json() {
-        let yaml = "name: m\ntarget_window:\n  title: Game\n  coordinates: window\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n";
-        let doc = parse_yaml(yaml).unwrap();
+    fn constructors_store_plain_integer_literals() {
         assert_eq!(
-            doc.target_window.as_ref().unwrap().coordinates,
-            CoordinateSpace::Window
-        );
-
-        let again = parse_yaml(&document_to_yaml(&doc).unwrap()).unwrap();
-        assert_eq!(again, doc);
-
-        let json = serde_json::to_value(&doc).unwrap();
-        assert_eq!(json["target_window"]["coordinates"], "window");
-        let from_json: MacroDocument = serde_json::from_value(json).unwrap();
-        assert_eq!(from_json, doc);
-    }
-
-    #[test]
-    fn humanize_is_off_by_default_and_only_written_when_on() {
-        let doc =
-            parse_yaml("name: m\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n").unwrap();
-        assert!(doc.run.humanize.is_off());
-        assert!(
-            !document_to_yaml(&doc).unwrap().contains("humanize"),
-            "the default is not serialized, so existing macros are unchanged"
-        );
-        assert!(!serde_json::to_string(&doc).unwrap().contains("humanize"));
-    }
-
-    #[test]
-    fn humanize_fields_default_independently_and_roundtrip() {
-        let yaml = "name: m\nrun:\n  humanize:\n    position_px: 3\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n";
-        let doc = parse_yaml(yaml).unwrap();
-        assert_eq!(
-            doc.run.humanize,
-            Humanize {
-                position_px: 3,
-                delay_ms: 0
+            DslAction::click(3, 4, MouseButton::Right),
+            DslAction::Click {
+                x: DslValue::Int(3),
+                y: DslValue::Int(4),
+                button: DslMouseButton::Right,
             }
-        );
-
-        let again = parse_yaml(&document_to_yaml(&doc).unwrap()).unwrap();
-        assert_eq!(again, doc);
-
-        let json = serde_json::to_value(&doc).unwrap();
-        assert_eq!(
-            json["run"]["humanize"],
-            serde_json::json!({ "position_px": 3, "delay_ms": 0 })
         );
     }
 }

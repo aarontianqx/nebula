@@ -31,8 +31,8 @@ export type PickedWindow = Pick<PickedPosition, "window_origin" | "window_missin
 
 // === Resolved actions ===
 //
-// `tap_core::Action` with every value concrete. These are what the *engine* reports
-// (`ActionStarting`) and what the recorder produces; they are not what the editor edits.
+// `tap_core::Action` with every value concrete. This is what the *engine* reports
+// (`ActionStarting`); it is not what the editor edits.
 export type ActionInfo =
   | { Click: { x: number; y: number; button: MouseButton } }
   | { DoubleClick: { x: number; y: number; button: MouseButton } }
@@ -46,17 +46,6 @@ export type ActionInfo =
   | { TextInput: { text: string } }
   | { Wait: { ms: number } }
   | { Scroll: { delta_x: number; delta_y: number } };
-
-export interface TimedAction {
-  at_ms: number;
-  action: ActionInfo;
-  enabled: boolean;
-  note: string | null;
-}
-
-export interface Timeline {
-  actions: TimedAction[];
-}
 
 // === The document model ===
 //

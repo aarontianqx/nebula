@@ -1,8 +1,9 @@
-//! Recording engine: captures input events and converts to Timeline.
+//! Turns the stream of raw input events into the steps of a macro: press/release pairs fold into
+//! clicks, double clicks, drags and key taps, and straight cursor paths collapse to their endpoints.
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tap_core::{normalize_key, Action, MouseButton, Point, TimedAction, Timeline};
+use tap_core::{normalize_key, DslAction, DslTimedAction, DslValue, MouseButton};
 use tracing::{debug, info};
 
 /// A press/release closer than this in time *and* space becomes a `Click`.
@@ -29,11 +30,11 @@ pub struct RecorderConfig {
     /// Whether to record scroll events.
     pub record_scroll: bool,
     /// Fold raw button/key transitions into high-level `Click`, `DoubleClick`,
-    /// `Drag` and `KeyTap` actions when generating the timeline.
+    /// `Drag` and `KeyTap` actions when the recording stops.
     #[serde(default = "default_true")]
     pub synthesize_actions: bool,
-    /// Drop collinear intermediate mouse-move samples when generating the
-    /// timeline so straight cursor paths collapse to their endpoints.
+    /// Drop collinear intermediate mouse-move samples when the recording stops, so straight
+    /// cursor paths collapse to their endpoints.
     #[serde(default = "default_true")]
     pub merge_moves: bool,
 }
@@ -79,11 +80,11 @@ pub enum RecorderEvent {
         event_count: usize,
         duration_ms: u64,
     },
-    /// Recording completed, timeline generated.
-    RecordingCompleted { timeline: Timeline },
+    /// Recording completed.
+    RecordingCompleted { steps: Vec<DslTimedAction> },
 }
 
-/// A buffered raw event before conversion to Action.
+/// A raw event waiting for the recording to end.
 #[derive(Debug, Clone)]
 pub struct BufferedEvent {
     pub timestamp_ms: u64,
@@ -139,7 +140,7 @@ impl From<MouseButtonRaw> for MouseButton {
     }
 }
 
-/// The recorder collects raw input events and converts them to a Timeline.
+/// Buffers raw input events while recording and turns them into steps when it stops.
 pub struct Recorder {
     config: RecorderConfig,
     state: RecorderState,
@@ -254,7 +255,7 @@ impl Recorder {
         })
     }
 
-    /// Stop recording and generate timeline.
+    /// Stop recording and generate the steps.
     pub fn stop(&mut self) -> Option<RecorderEvent> {
         if self.state == RecorderState::Idle {
             return None;
@@ -263,13 +264,10 @@ impl Recorder {
         let _old = self.state;
         self.state = RecorderState::Idle;
 
-        let timeline = self.generate_timeline();
-        info!(
-            "Recording stopped, generated {} actions",
-            timeline.actions.len()
-        );
+        let steps = self.generate_steps();
+        info!("Recording stopped, generated {} steps", steps.len());
 
-        Some(RecorderEvent::RecordingCompleted { timeline })
+        Some(RecorderEvent::RecordingCompleted { steps })
     }
 
     /// Push a raw event into the buffer.
@@ -340,13 +338,9 @@ impl Recorder {
         }
     }
 
-    /// Generate a Timeline from the buffered events.
-    ///
-    /// Runs two optional denoising passes:
-    /// 1. **Synthesis** -- fold raw press/release transitions into high-level
-    ///    `Click` / `DoubleClick` / `Drag` / `KeyTap` actions.
-    /// 2. **Move merge** -- drop collinear intermediate mouse-move samples.
-    fn generate_timeline(&self) -> Timeline {
+    /// The macro steps for the buffered events: synthesis folds raw transitions into gestures, then
+    /// the move merge drops intermediate samples of straight paths. Both are optional.
+    fn generate_steps(&self) -> Vec<DslTimedAction> {
         let mut actions = if self.config.synthesize_actions {
             self.synthesize_actions()
         } else {
@@ -360,52 +354,34 @@ impl Recorder {
             actions = merge_collinear_moves(actions);
         }
 
-        Timeline {
-            actions: actions
-                .into_iter()
-                .map(|(at_ms, action)| TimedAction {
-                    at_ms,
-                    action,
-                    enabled: true,
-                    note: None,
-                })
-                .collect(),
-        }
+        actions
+            .into_iter()
+            .map(|(at_ms, action)| DslTimedAction::new(at_ms, action))
+            .collect()
     }
 
-    /// Map a single raw event to its 1:1 `Action` (no synthesis).
-    fn raw_action(&self, event: &RawEventType) -> Action {
+    /// One raw event as the action that replays it as is.
+    fn raw_action(&self, event: &RawEventType) -> DslAction {
         match event {
-            RawEventType::MouseMove { x, y } => Action::MouseMove { x: *x, y: *y },
+            RawEventType::MouseMove { x, y } => DslAction::mouse_move(*x, *y),
             RawEventType::MouseDown { x, y, button } => {
                 let (px, py) = self.resolve_pos(*x, *y);
-                Action::MouseDown {
-                    x: px,
-                    y: py,
-                    button: (*button).into(),
-                }
+                DslAction::mouse_down(px, py, (*button).into())
             }
             RawEventType::MouseUp { x, y, button } => {
                 let (px, py) = self.resolve_pos(*x, *y);
-                Action::MouseUp {
-                    x: px,
-                    y: py,
-                    button: (*button).into(),
-                }
+                DslAction::mouse_up(px, py, (*button).into())
             }
-            RawEventType::Scroll { delta_x, delta_y } => Action::Scroll {
-                delta_x: *delta_x,
-                delta_y: *delta_y,
-            },
-            RawEventType::KeyDown { key } => Action::KeyDown { key: key.clone() },
-            RawEventType::KeyUp { key } => Action::KeyUp { key: key.clone() },
+            RawEventType::Scroll { delta_x, delta_y } => DslAction::scroll(*delta_x, *delta_y),
+            RawEventType::KeyDown { key } => DslAction::KeyDown { key: key.clone() },
+            RawEventType::KeyUp { key } => DslAction::KeyUp { key: key.clone() },
         }
     }
 
     /// Fold raw button/key transitions into high-level actions.
-    fn synthesize_actions(&self) -> Vec<(u64, Action)> {
+    fn synthesize_actions(&self) -> Vec<(u64, DslAction)> {
         let events = &self.events;
-        let mut out: Vec<(u64, Action)> = Vec::new();
+        let mut out: Vec<(u64, DslAction)> = Vec::new();
         let mut i = 0;
 
         while i < events.len() {
@@ -431,20 +407,7 @@ impl Recorder {
                                 i = up_idx + 1;
                                 continue;
                             } else if travel >= DRAG_MIN_DIST {
-                                out.push((
-                                    down_ts,
-                                    Action::Drag {
-                                        from: Point {
-                                            x: down_pos.0,
-                                            y: down_pos.1,
-                                        },
-                                        to: Point {
-                                            x: up_pos.0,
-                                            y: up_pos.1,
-                                        },
-                                        duration_ms: dt,
-                                    },
-                                ));
+                                out.push((down_ts, DslAction::drag(down_pos, up_pos, dt)));
                                 i = up_idx + 1;
                                 continue;
                             }
@@ -466,7 +429,7 @@ impl Recorder {
                             {
                                 out.push((
                                     buffered.timestamp_ms,
-                                    Action::KeyTap { key: key.clone() },
+                                    DslAction::KeyTap { key: key.clone() },
                                 ));
                                 i += 2;
                                 continue;
@@ -519,80 +482,74 @@ fn find_matching_up(
 
 /// Push a `Click`, upgrading the previous action to `DoubleClick` when the two
 /// clicks are close enough in time and space.
-fn push_click(out: &mut Vec<(u64, Action)>, ts: u64, pos: (i32, i32), button: MouseButton) {
-    let upgrade = match out.last() {
-        Some((prev_ts, Action::Click { x, y, button: pb }))
-            if *pb == button
-                && ts.saturating_sub(*prev_ts) <= DOUBLE_CLICK_MAX_MS
-                && distance((*x, *y), pos) <= DOUBLE_CLICK_MAX_DIST =>
-        {
-            Some((*x, *y, *pb))
+fn push_click(out: &mut Vec<(u64, DslAction)>, ts: u64, pos: (i32, i32), button: MouseButton) {
+    let doubled = match out.last() {
+        Some((prev_ts, DslAction::Click { x, y, button: prev })) => {
+            literal_point(x, y).filter(|prev_pos| {
+                MouseButton::from(*prev) == button
+                    && ts.saturating_sub(*prev_ts) <= DOUBLE_CLICK_MAX_MS
+                    && distance(*prev_pos, pos) <= DOUBLE_CLICK_MAX_DIST
+            })
         }
         _ => None,
     };
 
-    match upgrade {
-        Some((x, y, button)) => {
-            out.last_mut().unwrap().1 = Action::DoubleClick { x, y, button };
-        }
-        None => out.push((
-            ts,
-            Action::Click {
-                x: pos.0,
-                y: pos.1,
-                button,
-            },
-        )),
+    match doubled {
+        Some((x, y)) => out.last_mut().unwrap().1 = DslAction::double_click(x, y, button),
+        None => out.push((ts, DslAction::click(pos.0, pos.1, button))),
     }
 }
+
+/// The recorder only writes integer literals; anything else is not a recorded position.
+fn literal_point(x: &DslValue, y: &DslValue) -> Option<(i32, i32)> {
+    Some((x.as_i32()?, y.as_i32()?))
+}
+
+fn move_point(action: &DslAction) -> Option<(i32, i32)> {
+    match action {
+        DslAction::MouseMove { x, y } => literal_point(x, y),
+        _ => None,
+    }
+}
+
+type MoveStep = ((u64, DslAction), (i32, i32));
 
 /// Collapse runs of consecutive `MouseMove` actions, dropping intermediate
 /// samples whose perpendicular distance from the straight line between their
 /// neighbours is within [`MOVE_SIMPLIFY_TOL`].
-fn merge_collinear_moves(actions: Vec<(u64, Action)>) -> Vec<(u64, Action)> {
-    let mut out: Vec<(u64, Action)> = Vec::with_capacity(actions.len());
-    let mut i = 0;
+fn merge_collinear_moves(actions: Vec<(u64, DslAction)>) -> Vec<(u64, DslAction)> {
+    let mut out = Vec::with_capacity(actions.len());
+    let mut run: Vec<MoveStep> = Vec::new();
 
-    while i < actions.len() {
-        if matches!(actions[i].1, Action::MouseMove { .. }) {
-            let start = i;
-            while i < actions.len() && matches!(actions[i].1, Action::MouseMove { .. }) {
-                i += 1;
+    for step in actions {
+        match move_point(&step.1) {
+            Some(point) => run.push((step, point)),
+            None => {
+                simplify_move_run(std::mem::take(&mut run), &mut out);
+                out.push(step);
             }
-            simplify_move_run(&actions[start..i], &mut out);
-        } else {
-            out.push(actions[i].clone());
-            i += 1;
         }
     }
-
+    simplify_move_run(run, &mut out);
     out
 }
 
-/// Append a simplified version of a single run of `MouseMove` actions.
-fn simplify_move_run(run: &[(u64, Action)], out: &mut Vec<(u64, Action)>) {
-    let pts: Vec<(i32, i32)> = run
-        .iter()
-        .map(|(_, a)| match a {
-            Action::MouseMove { x, y } => (*x, *y),
-            _ => unreachable!("run only contains MouseMove"),
-        })
-        .collect();
+/// Append a run of moves, keeping its endpoints and the samples where the path turns.
+fn simplify_move_run(run: Vec<MoveStep>, out: &mut Vec<(u64, DslAction)>) {
+    let points: Vec<(i32, i32)> = run.iter().map(|(_, point)| *point).collect();
+    let last = points.len().saturating_sub(1);
+    let mut last_kept = None;
 
-    if run.len() <= 2 {
-        out.extend_from_slice(run);
-        return;
-    }
-
-    out.push(run[0].clone());
-    let mut last_kept = pts[0];
-    for w in 1..run.len() - 1 {
-        if perpendicular_distance(pts[w], last_kept, pts[w + 1]) > MOVE_SIMPLIFY_TOL {
-            out.push(run[w].clone());
-            last_kept = pts[w];
+    for (i, (step, point)) in run.into_iter().enumerate() {
+        let turns = |from: (i32, i32)| {
+            perpendicular_distance(point, from, points[i + 1]) > MOVE_SIMPLIFY_TOL
+        };
+        let keep = i == 0 || i == last || last_kept.is_some_and(turns);
+        if keep {
+            last_kept = Some(point);
+            out.push(step);
         }
     }
-    out.push(run[run.len() - 1].clone());
 }
 
 /// Perpendicular distance from point `p` to the line through `a` and `b`.
@@ -675,15 +632,15 @@ mod tests {
     }
 
     /// Record a sequence of raw events and return the synthesized actions.
-    fn recorded(config: RecorderConfig, events: &[(u64, RawEventType)]) -> Vec<Action> {
+    fn recorded(config: RecorderConfig, events: &[(u64, RawEventType)]) -> Vec<DslAction> {
         let mut recorder = Recorder::new(config);
         recorder.start();
         for (ts, ev) in events {
             recorder.push_event(*ts, ev.clone());
         }
         match recorder.stop() {
-            Some(RecorderEvent::RecordingCompleted { timeline }) => {
-                timeline.actions.into_iter().map(|a| a.action).collect()
+            Some(RecorderEvent::RecordingCompleted { steps }) => {
+                steps.into_iter().map(|step| step.action).collect()
             }
             other => panic!("expected RecordingCompleted, got {:?}", other),
         }
@@ -730,14 +687,7 @@ mod tests {
                 ),
             ],
         );
-        assert_eq!(
-            actions,
-            vec![Action::Click {
-                x: 100,
-                y: 200,
-                button: MouseButton::Left
-            }]
-        );
+        assert_eq!(actions, vec![DslAction::click(100, 200, MouseButton::Left)]);
     }
 
     #[test]
@@ -781,11 +731,7 @@ mod tests {
         );
         assert_eq!(
             actions,
-            vec![Action::DoubleClick {
-                x: 50,
-                y: 50,
-                button: MouseButton::Left
-            }]
+            vec![DslAction::double_click(50, 50, MouseButton::Left)]
         );
     }
 
@@ -814,14 +760,7 @@ mod tests {
                 ),
             ],
         );
-        assert_eq!(
-            actions,
-            vec![Action::Drag {
-                from: Point { x: 10, y: 10 },
-                to: Point { x: 100, y: 100 },
-                duration_ms: 30,
-            }]
-        );
+        assert_eq!(actions, vec![DslAction::drag((10, 10), (100, 100), 30)]);
     }
 
     #[test]
@@ -833,7 +772,7 @@ mod tests {
                 (40, RawEventType::KeyUp { key: "a".into() }),
             ],
         );
-        assert_eq!(actions, vec![Action::KeyTap { key: "a".into() }]);
+        assert_eq!(actions, vec![DslAction::KeyTap { key: "a".into() }]);
     }
 
     #[test]
@@ -862,11 +801,11 @@ mod tests {
         assert_eq!(
             actions,
             vec![
-                Action::KeyDown {
+                DslAction::KeyDown {
                     key: "Shift".into()
                 },
-                Action::KeyTap { key: "a".into() },
-                Action::KeyUp {
+                DslAction::KeyTap { key: "a".into() },
+                DslAction::KeyUp {
                     key: "Shift".into()
                 },
             ]
@@ -887,10 +826,7 @@ mod tests {
         );
         assert_eq!(
             actions,
-            vec![
-                Action::MouseMove { x: 0, y: 0 },
-                Action::MouseMove { x: 40, y: 40 },
-            ]
+            vec![DslAction::mouse_move(0, 0), DslAction::mouse_move(40, 40),]
         );
     }
 
@@ -909,9 +845,9 @@ mod tests {
         assert_eq!(
             actions,
             vec![
-                Action::MouseMove { x: 0, y: 0 },
-                Action::MouseMove { x: 10, y: 0 },
-                Action::MouseMove { x: 10, y: 10 },
+                DslAction::mouse_move(0, 0),
+                DslAction::mouse_move(10, 0),
+                DslAction::mouse_move(10, 10),
             ]
         );
     }
@@ -942,16 +878,8 @@ mod tests {
         assert_eq!(
             actions,
             vec![
-                Action::MouseDown {
-                    x: 5,
-                    y: 5,
-                    button: MouseButton::Left
-                },
-                Action::MouseUp {
-                    x: 5,
-                    y: 5,
-                    button: MouseButton::Left
-                },
+                DslAction::mouse_down(5, 5, MouseButton::Left),
+                DslAction::mouse_up(5, 5, MouseButton::Left),
             ]
         );
     }

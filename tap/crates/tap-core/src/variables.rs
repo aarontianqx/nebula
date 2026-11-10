@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::dsl::{VariableDefinition, VariableType};
+use crate::{VariableDefinition, VariableType};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VariableStore {

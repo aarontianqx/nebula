@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use tap_core::{
-    validate_profile, DslTimedAction, MacroDocument, Profile, Timeline, ValidationError,
-    VariableValue,
+    validate_profile, DslAction, DslRunConfig, DslTimedAction, MacroDocument, MouseButton,
+    ValidationError, VariableValue, DSL_VERSION,
 };
 
 /// Canonical, in-memory session state for a single macro.
@@ -19,9 +19,9 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// Create a session seeded with the default document.
+    /// A session that starts with a small sample macro, so the first run shows something.
     pub fn new() -> Self {
-        Self::with_document(MacroDocument::from(&Profile::default()))
+        Self::with_document(starter_document())
     }
 
     /// Create a session around an existing document.
@@ -59,9 +59,9 @@ impl SessionStore {
         self.document.name = name;
     }
 
-    /// Replace the document's timeline with a freshly recorded one.
-    pub fn set_recorded_timeline(&mut self, timeline: Timeline) {
-        self.document.timeline = timeline.actions.iter().map(DslTimedAction::from).collect();
+    /// Replace the document's steps with a fresh recording.
+    pub fn set_recorded_steps(&mut self, steps: Vec<DslTimedAction>) {
+        self.document.timeline = steps;
     }
 
     /// Replace the run-time variable overrides applied on the next run.
@@ -78,5 +78,31 @@ impl SessionStore {
 impl Default for SessionStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn starter_document() -> MacroDocument {
+    MacroDocument {
+        name: "Default".into(),
+        description: None,
+        version: DSL_VERSION.into(),
+        author: None,
+        tags: Vec::new(),
+        variables: Default::default(),
+        target_window: None,
+        timeline: vec![
+            DslTimedAction::new(0, DslAction::click(640, 360, MouseButton::Left)),
+            DslTimedAction::new(500, DslAction::Wait { ms: 500 }),
+            DslTimedAction::new(
+                1200,
+                DslAction::KeyTap {
+                    key: "Space".into(),
+                },
+            ),
+        ],
+        run: DslRunConfig {
+            repeat: 0,
+            ..DslRunConfig::default()
+        },
     }
 }

@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use tap_application::{window_binding, EngineState, RecorderState};
-use tap_core::Timeline;
+use tap_core::MacroDocument;
 use tap_platform::start_input_hook;
 use tauri::State;
 use tracing::info;
@@ -72,41 +72,28 @@ pub fn resume_recording(state: State<'_, Mutex<AppState>>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn stop_recording(state: State<'_, Mutex<AppState>>) -> Result<Timeline, String> {
+pub fn stop_recording(state: State<'_, Mutex<AppState>>) -> Result<MacroDocument, String> {
     let mut app_state = state.lock().unwrap();
 
     if app_state.recorder.state() == RecorderState::Idle {
         return Err("Not recording".into());
     }
 
-    // Stop the input hook
     if let Some(hook) = app_state.input_hook.take() {
         hook.stop();
     }
 
-    // Stop the recorder and get the timeline
-    let event = app_state.recorder.stop();
-    let timeline = match event {
-        Some(tap_application::RecorderEvent::RecordingCompleted { timeline }) => timeline,
-        _ => Timeline { actions: vec![] },
+    let steps = match app_state.recorder.stop() {
+        Some(tap_application::RecorderEvent::RecordingCompleted { steps }) => steps,
+        _ => Vec::new(),
     };
+    info!("Recording stopped, {} steps captured", steps.len());
 
-    info!(
-        "Recording stopped, {} actions captured",
-        timeline.actions.len()
-    );
+    let session = app_state.coordinator.session_mut();
+    session.set_recorded_steps(steps);
+    session.set_name("Recorded".into());
 
-    // Update the canonical document with the recorded timeline.
-    app_state
-        .coordinator
-        .session_mut()
-        .set_recorded_timeline(timeline.clone());
-    app_state
-        .coordinator
-        .session_mut()
-        .set_name("Recorded".into());
-
-    Ok(timeline)
+    Ok(app_state.coordinator.document().clone())
 }
 
 #[tauri::command]
