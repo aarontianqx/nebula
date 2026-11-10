@@ -31,7 +31,8 @@ mod macos {
     use objc2_core_graphics::{CGDataProvider, CGImage};
     use objc2_foundation::NSError;
     use objc2_screen_capture_kit::SCScreenshotManager;
-    use tap_platform::{get_pixel_color, Color};
+    use tap_core::Color;
+    use tap_platform::get_pixel_color;
 
     const SAMPLES: usize = 300;
     /// Samples taken at the `wait_until` cadence (one per poll interval).

@@ -29,7 +29,7 @@ use core_graphics::window::{
 use foreign_types::ForeignType;
 use tracing::warn;
 
-use super::Color;
+use tap_core::Color;
 
 /// `CGWindowListCreateImage(screenBounds, listOption, windowID, imageOption)`.
 type CreateImageFn = unsafe extern "C" fn(

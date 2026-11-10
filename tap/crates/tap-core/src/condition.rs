@@ -34,21 +34,26 @@ impl CompareOp {
     }
 }
 
-/// RGB color for pixel conditions.
+/// An RGB color, as read from the screen or written in a pixel condition.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConditionColor {
+pub struct Color {
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
 
-impl ConditionColor {
+impl Color {
     pub fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
+    /// `#RRGGBB`, upper-case.
+    pub fn to_hex(&self) -> String {
+        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+    }
+
     /// Calculate the difference between two colors.
-    pub fn difference(&self, other: &ConditionColor) -> u32 {
+    pub fn difference(&self, other: &Color) -> u32 {
         let dr = (self.r as i32 - other.r as i32).unsigned_abs();
         let dg = (self.g as i32 - other.g as i32).unsigned_abs();
         let db = (self.b as i32 - other.b as i32).unsigned_abs();
@@ -56,8 +61,14 @@ impl ConditionColor {
     }
 
     /// Check if this color matches another within a tolerance.
-    pub fn matches(&self, other: &ConditionColor, tolerance: u8) -> bool {
+    pub fn matches(&self, other: &Color, tolerance: u8) -> bool {
         self.difference(other) <= tolerance as u32
+    }
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_hex())
     }
 }
 
@@ -78,7 +89,7 @@ pub enum Condition {
     PixelColor {
         x: i32,
         y: i32,
-        color: ConditionColor,
+        color: Color,
         tolerance: u8,
     },
     /// Check a counter value against a comparison.
@@ -127,7 +138,7 @@ pub trait ConditionEvaluator {
     fn window_exists(&self, title: Option<&str>, process: Option<&str>) -> bool;
 
     /// Get the pixel color at the given coordinates.
-    fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor>;
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<Color>;
 
     /// Get a counter value.
     fn get_counter(&self, key: &str) -> i32;
@@ -228,6 +239,20 @@ impl Default for WaitUntilConfig {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_color_prints_as_upper_case_hex() {
+        assert_eq!(Color::new(255, 128, 0).to_hex(), "#FF8000");
+        assert_eq!(Color::new(1, 2, 3).to_string(), "#010203");
+    }
+
+    #[test]
+    fn colors_match_when_the_summed_channel_difference_is_within_tolerance() {
+        let base = Color::new(100, 100, 100);
+        assert_eq!(base.difference(&Color::new(110, 90, 105)), 25);
+        assert!(base.matches(&Color::new(105, 100, 100), 10));
+        assert!(!base.matches(&Color::new(105, 100, 100), 4));
+    }
+
     struct TestEvaluator {
         counters: std::collections::HashMap<String, i32>,
     }
@@ -241,8 +266,8 @@ mod tests {
             true
         }
 
-        fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<ConditionColor> {
-            Some(ConditionColor::new(255, 0, 0))
+        fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<Color> {
+            Some(Color::new(255, 0, 0))
         }
 
         fn get_counter(&self, key: &str) -> i32 {

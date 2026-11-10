@@ -2,9 +2,9 @@
 //!
 //! Uses the singleton global event listener pattern.
 
-use super::{MouseTrackerCommand, MouseTrackerConfig, MouseTrackerEvent};
+use super::{MouseTrackerConfig, MouseTrackerEvent};
 use crate::events::{subscribe_events, MacOSEventType};
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,7 +14,6 @@ use tracing::info;
 pub fn start_tracker(
     config: MouseTrackerConfig,
     event_tx: Sender<MouseTrackerEvent>,
-    _cmd_rx: Receiver<MouseTrackerCommand>,
     running: Arc<AtomicBool>,
 ) {
     info!("Mouse tracker thread started (macOS native, using global listener)");

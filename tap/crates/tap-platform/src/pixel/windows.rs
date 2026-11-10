@@ -1,7 +1,7 @@
 //! Windows implementation of pixel color detection using GDI.
 
-use super::Color;
 use std::ptr;
+use tap_core::Color;
 use windows_sys::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
     GetPixel, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CLR_INVALID,

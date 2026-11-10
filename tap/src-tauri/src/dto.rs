@@ -1,7 +1,7 @@
 //! Shapes sent to the frontend that no lower layer has a reason to own.
 
-use tap_core::Point;
-use tap_platform::{Color, WindowInfo};
+use tap_core::{Color, Point};
+use tap_platform::WindowInfo;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WindowInfoResponse {

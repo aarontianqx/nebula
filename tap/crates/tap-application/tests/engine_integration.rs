@@ -61,7 +61,7 @@ impl PlatformConditionProvider for MockPlatform {
     fn window_exists(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
         true
     }
-    fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::ConditionColor> {
+    fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::Color> {
         None
     }
     fn window_origin(&self, _title: Option<&str>, _process: Option<&str>) -> Option<(i32, i32)> {
@@ -1042,7 +1042,7 @@ impl PlatformConditionProvider for SwitchablePlatform {
     fn window_exists(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
         true
     }
-    fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::ConditionColor> {
+    fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::Color> {
         None
     }
     fn window_origin(&self, _title: Option<&str>, _process: Option<&str>) -> Option<(i32, i32)> {
@@ -1222,7 +1222,7 @@ fn an_overrun_step_still_runs_immediately_without_any_stall() {
 // === Tests: window-relative coordinates ===
 
 type SharedOrigin = Arc<Mutex<Option<(i32, i32)>>>;
-type SharedPixels = Arc<Mutex<HashMap<(i32, i32), tap_core::ConditionColor>>>;
+type SharedPixels = Arc<Mutex<HashMap<(i32, i32), tap_core::Color>>>;
 
 /// A platform whose target window can be moved, hidden and shown while a run is in progress, and
 /// whose screen holds a few known pixels. The window is always focused (when present).
@@ -1238,7 +1238,7 @@ impl PlatformConditionProvider for MovableWindowPlatform {
     fn window_exists(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
         true
     }
-    fn get_pixel_color(&self, x: i32, y: i32) -> Option<tap_core::ConditionColor> {
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<tap_core::Color> {
         self.pixels.lock().unwrap().get(&(x, y)).copied()
     }
     fn window_origin(&self, _title: Option<&str>, _process: Option<&str>) -> Option<(i32, i32)> {
@@ -1481,7 +1481,7 @@ fn pixel_color_positions_are_window_relative() {
     h.pixels
         .lock()
         .unwrap()
-        .insert((105, 55), tap_core::ConditionColor::new(255, 0, 0));
+        .insert((105, 55), tap_core::Color::new(255, 0, 0));
     start(
         &h,
         relative(document(vec![timed(red_pixel_condition(1000))], 1)),
@@ -1504,7 +1504,7 @@ fn a_pixel_condition_without_its_window_never_reads_another_place_on_the_screen(
     h.pixels
         .lock()
         .unwrap()
-        .insert((5, 5), tap_core::ConditionColor::new(255, 0, 0));
+        .insert((5, 5), tap_core::Color::new(255, 0, 0));
     start(
         &h,
         relative(document(vec![timed(red_pixel_condition(150))], 1)),

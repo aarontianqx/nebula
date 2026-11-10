@@ -4,8 +4,8 @@
 use std::time::Instant;
 
 use tap_core::{
-    Action, Condition, ConditionColor, ConditionEvaluator, ConditionResult, DslTargetWindow,
-    MacroDocument, MouseButton, Point, VariableStore,
+    Action, Color, Condition, ConditionEvaluator, ConditionResult, DslTargetWindow, MacroDocument,
+    MouseButton, Point, VariableStore,
 };
 use tracing::error;
 
@@ -274,7 +274,7 @@ impl<P: PlatformConditionProvider> ConditionEvaluator for RuntimeConditionEvalua
         self.platform.window_exists(title, process)
     }
 
-    fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor> {
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<Color> {
         let (dx, dy) = match self.window {
             // No window to measure from: the pixel cannot be read, so the condition errors out
             // (not satisfied) rather than reading some other place on the screen.

@@ -5,8 +5,6 @@ use thiserror::Error;
 /// Platform-level errors.
 #[derive(Debug, Error)]
 pub enum PlatformError {
-    #[error("not implemented")]
-    NotImplemented,
     #[error("injection failed: {0}")]
     InjectionFailed(String),
     #[error("invalid key: {0}")]

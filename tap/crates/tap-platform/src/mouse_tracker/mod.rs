@@ -7,7 +7,7 @@
 //! - Windows/Linux: Uses rdev crate (`rdev_impl.rs`)
 //! - macOS: Uses native Core Graphics API (`macos.rs`)
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -26,20 +26,11 @@ pub enum MouseTrackerEvent {
     PositionUpdate { x: i32, y: i32 },
 }
 
-/// Commands for the mouse tracker.
-#[derive(Debug)]
-pub enum MouseTrackerCommand {
-    /// Stop the tracker.
-    Stop,
-}
-
-/// Handle to control the mouse tracker.
+/// Handle to the mouse tracker.
 ///
-/// The worker thread is detached: it observes `running` / the `Stop` command to
-/// exit, so the handle only needs the channels and the shared flag.
+/// The worker thread is detached and ends on its own once `running` is cleared.
 pub struct MouseTrackerHandle {
     event_rx: Receiver<MouseTrackerEvent>,
-    cmd_tx: Sender<MouseTrackerCommand>,
     running: Arc<AtomicBool>,
 }
 
@@ -49,10 +40,8 @@ impl MouseTrackerHandle {
         &self.event_rx
     }
 
-    /// Stop the tracker.
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
-        let _ = self.cmd_tx.send(MouseTrackerCommand::Stop);
     }
 }
 
@@ -87,25 +76,20 @@ impl Default for MouseTrackerConfig {
 /// On macOS: Uses native Core Graphics API to avoid thread-safety issues.
 pub fn start_mouse_tracker(config: MouseTrackerConfig) -> MouseTrackerHandle {
     let (event_tx, event_rx) = bounded(64);
-    let (cmd_tx, cmd_rx) = bounded(16);
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
     #[cfg(not(target_os = "macos"))]
     thread::spawn(move || {
-        rdev_impl::start_tracker(config, event_tx, cmd_rx, running_clone);
+        rdev_impl::start_tracker(config, event_tx, running_clone);
     });
 
     #[cfg(target_os = "macos")]
     thread::spawn(move || {
-        macos::start_tracker(config, event_tx, cmd_rx, running_clone);
+        macos::start_tracker(config, event_tx, running_clone);
     });
 
-    MouseTrackerHandle {
-        event_rx,
-        cmd_tx,
-        running,
-    }
+    MouseTrackerHandle { event_rx, running }
 }
 
 #[cfg(test)]

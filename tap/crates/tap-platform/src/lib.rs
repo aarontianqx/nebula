@@ -51,8 +51,7 @@ pub use input_hook::{
 
 // Re-export mouse tracker
 pub use mouse_tracker::{
-    start_mouse_tracker, MouseTrackerCommand, MouseTrackerConfig, MouseTrackerEvent,
-    MouseTrackerHandle,
+    start_mouse_tracker, MouseTrackerConfig, MouseTrackerEvent, MouseTrackerHandle,
 };
 
 // Re-export permission probing
@@ -61,7 +60,7 @@ pub use permissions::{
 };
 
 // Re-export pixel detection
-pub use pixel::{get_pixel_color, Color};
+pub use pixel::get_pixel_color;
 
 // Re-export window API
 pub use window::{

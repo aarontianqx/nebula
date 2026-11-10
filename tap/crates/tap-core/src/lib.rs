@@ -14,7 +14,7 @@ mod variables;
 
 pub use action::{Action, MouseButton, Point};
 pub use condition::{
-    CompareOp, Condition, ConditionColor, ConditionEvaluator, ConditionResult, WaitUntilConfig,
+    Color, CompareOp, Condition, ConditionEvaluator, ConditionResult, WaitUntilConfig,
 };
 pub use document::{
     document_to_yaml, parse_yaml, CoordinateSpace, DslRunConfig, DslTargetWindow, DslTimedAction,

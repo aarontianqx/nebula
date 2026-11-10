@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use tap_application::{ActionExecutor, PlatformConditionProvider};
-use tap_core::{Action, ConditionColor};
+use tap_core::{Action, Color};
 use tap_platform::{
     get_pixel_color, is_window_focused, window_exists, EnigoInjector, InputInjector,
 };
@@ -49,8 +49,8 @@ impl PlatformConditionProvider for TauriPlatformProvider {
         window_exists(title, process)
     }
 
-    fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor> {
-        get_pixel_color(x, y).map(|c| ConditionColor::new(c.r, c.g, c.b))
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<Color> {
+        get_pixel_color(x, y)
     }
 
     fn window_origin(&self, title: Option<&str>, process: Option<&str>) -> Option<(i32, i32)> {

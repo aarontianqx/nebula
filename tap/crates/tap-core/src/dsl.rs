@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CompareOp, Condition, ConditionColor, MouseButton};
+use crate::{Color, CompareOp, Condition, MouseButton};
 
 /// An action as the document stores it: values may be `{{ }}` templates, resolved just before
 /// the action runs.
@@ -365,8 +365,8 @@ impl TryFrom<&DslCondition> for Condition {
 #[error("{0}")]
 pub struct InvalidCondition(String);
 
-/// Parse hex color string (#RRGGBB) to ConditionColor.
-fn parse_hex_color(s: &str) -> Result<ConditionColor, InvalidCondition> {
+/// Parse hex color string (#RRGGBB) to Color.
+fn parse_hex_color(s: &str) -> Result<Color, InvalidCondition> {
     if !s.starts_with('#') || s.len() != 7 {
         return Err(InvalidCondition(format!(
             "Invalid color format '{}'. Expected #RRGGBB",
@@ -379,7 +379,7 @@ fn parse_hex_color(s: &str) -> Result<ConditionColor, InvalidCondition> {
         .map_err(|_| InvalidCondition(format!("Invalid green component in '{}'", s)))?;
     let b = u8::from_str_radix(&s[5..7], 16)
         .map_err(|_| InvalidCondition(format!("Invalid blue component in '{}'", s)))?;
-    Ok(ConditionColor::new(r, g, b))
+    Ok(Color::new(r, g, b))
 }
 
 /// Parse comparison operator string to CompareOp.

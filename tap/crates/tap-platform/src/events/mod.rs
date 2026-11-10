@@ -15,7 +15,11 @@
 //!   - The `mouse_tracker` module uses rdev directly
 
 #[cfg(target_os = "macos")]
+mod keycode;
+#[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(target_os = "macos")]
+pub use keycode::keycode_to_name;
 #[cfg(target_os = "macos")]
 pub use macos::*;
