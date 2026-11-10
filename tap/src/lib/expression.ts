@@ -32,6 +32,15 @@ export function parseValueText(text: string, mode: ValueMode): DslValue {
   return text;
 }
 
+/**
+ * Whether a value is computed when the macro runs (an expression or a variable name) rather than
+ * a number: such a value cannot be replaced by a picked screen position without losing it. An
+ * empty field is not dynamic (nothing would be lost).
+ */
+export function isDynamicValue(value: DslValue): boolean {
+  return typeof value === "string" && value.trim() !== "" && !NUMERIC_LITERAL.test(value.trim());
+}
+
 /** Whether the text contains a template (`{{ ... }}`) rather than being a plain literal. */
 export function hasTemplate(text: string): boolean {
   return text.includes("{{");

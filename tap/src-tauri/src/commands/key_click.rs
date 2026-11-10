@@ -15,7 +15,10 @@ use crate::state::AppState;
 ///
 /// Blocks (up to a timeout) on a temporary input hook, so it requires the app
 /// to be idle (no run / recording / Key->Click) to avoid competing hooks.
-#[tauri::command]
+///
+/// `async` runs this plain function on Tauri's thread pool: a plain command runs on the main
+/// thread, which a wait of up to 10 s would freeze (window events, the UI) for its duration.
+#[tauri::command(async)]
 pub fn cmd_capture_key(state: State<'_, Mutex<AppState>>) -> Result<String, String> {
     {
         let app_state = state.lock().unwrap();

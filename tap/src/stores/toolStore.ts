@@ -9,6 +9,7 @@ import type {
   SimpleActionType,
 } from "../lib/types";
 import { useEngineStore } from "./engineStore";
+import { usePickStore } from "./pickStore";
 
 interface ToolStore {
   // Simple mode
@@ -188,6 +189,9 @@ export const useToolStore = create<ToolStore>((set, get) => ({
   },
 
   openPicker: async () => {
+    // Simple mode asks for this position itself: a request left over from the editor (a picker
+    // closed with Esc never reports) must not take it.
+    usePickStore.getState().cancelPosition();
     try {
       await api.openPicker();
     } catch (err) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkTemplate, checkValueText, hasTemplate, parseValueText, valueToText, withReference } from "./expression";
+import { checkTemplate, checkValueText, hasTemplate, isDynamicValue, parseValueText, valueToText, withReference } from "./expression";
 
 describe("value text <-> DslValue", () => {
   it("stores a numeric literal in a number field as a number, anything else as typed", () => {
@@ -103,5 +103,18 @@ describe("inserting a variable", () => {
     expect(withReference("hello ", "name", "text")).toBe("hello {{ name }}");
     expect(withReference("", "name", "text")).toBe("{{ name }}");
     expect(withReference("x", "n", "auto")).toBe("x{{ n }}");
+  });
+});
+
+describe("dynamic values", () => {
+  it("are expressions and variable names, not numbers or an empty field", () => {
+    expect(isDynamicValue("{{ x + 1 }}")).toBe(true);
+    expect(isDynamicValue("px")).toBe(true);
+    expect(isDynamicValue(12)).toBe(false);
+    expect(isDynamicValue(0)).toBe(false);
+    expect(isDynamicValue("")).toBe(false);
+    expect(isDynamicValue("  ")).toBe(false);
+    expect(isDynamicValue("12")).toBe(false);
+    expect(isDynamicValue(true)).toBe(false);
   });
 });

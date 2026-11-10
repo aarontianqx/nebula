@@ -1,10 +1,11 @@
-import { createContext, useContext, useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 
 import { capitalize, MOUSE_BUTTONS } from "../../lib/actions";
 import type { References } from "../../lib/document";
-import { checkValueText, parseValueText, valueToText, withReference } from "../../lib/expression";
+import { checkValueText, isDynamicValue, parseValueText, valueToText, withReference } from "../../lib/expression";
 import type { ValueMode } from "../../lib/expression";
 import type { DslMouseButton, DslValue } from "../../lib/types";
+import { usePickStore } from "../../stores/pickStore";
 
 const NO_REFERENCES: References = { variables: [], counters: [] };
 
@@ -53,6 +54,102 @@ export function OptionalNumberRow(
         min={0}
         placeholder={props.placeholder}
       />
+    </div>
+  );
+}
+
+/**
+ * The newest value of `value`, readable from a callback that outlives the render it was made in
+ * (a key capture waits seconds, during which the step may be edited: the result must apply to
+ * the step as it is then, not as it was when the button was pressed).
+ */
+function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  useEffect(() => {
+    ref.current = value;
+  });
+  return ref;
+}
+
+/** A key name field with a "Capture" button: press the key instead of typing its name. */
+export function KeyRow(props: RowProps & { value: string; onChange: (value: string) => void }) {
+  const id = useId();
+  const capturing = usePickStore((s) => s.captureTarget === id);
+  const busy = usePickStore((s) => s.captureTarget !== null);
+  const onChange = useLatest(props.onChange);
+
+  // A capture must not outlive the field that asked for it (the step was deleted or retyped).
+  useEffect(
+    () => () => {
+      if (usePickStore.getState().captureTarget === id) usePickStore.getState().cancelCapture();
+    },
+    [id],
+  );
+
+  return (
+    <div className="field">
+      <label className="label">{props.label}</label>
+      <div className="input-with-button">
+        <input
+          type="text"
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          disabled={props.disabled}
+          className="input"
+          spellCheck={false}
+        />
+        <button
+          className={`btn btn-pick ${capturing ? "picking" : ""}`}
+          onClick={() => void usePickStore.getState().captureKey(id, (key) => onChange.current(key))}
+          disabled={props.disabled || busy}
+          title="Press the key you want to use (waits up to 10 seconds)"
+        >
+          {capturing ? "Press a key…" : "Capture"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A "pick on screen" button for a pair of coordinates. A coordinate computed by an expression is
+ * not overwritten: the button is off, with the reason shown, until both are plain numbers.
+ */
+export function PickPositionRow(props: {
+  label: string;
+  buttonLabel: string;
+  x: DslValue;
+  y: DslValue;
+  disabled: boolean;
+  onPicked: (x: number, y: number) => void;
+}) {
+  const id = useId();
+  const picking = usePickStore((s) => s.positionTarget === id);
+  const blocked = isDynamicValue(props.x) || isDynamicValue(props.y);
+  const onPicked = useLatest(props.onPicked);
+
+  // A request must not outlive the field that made it (the step was deleted or retyped).
+  useEffect(
+    () => () => {
+      if (usePickStore.getState().positionTarget === id) usePickStore.getState().cancelPosition();
+    },
+    [id],
+  );
+
+  return (
+    <div className="field">
+      <label className="label">{props.label}</label>
+      <div className="value-cell">
+        <button
+          className={`btn btn-pick ${picking ? "picking" : ""}`}
+          onClick={() => void usePickStore.getState().requestPosition(id, (x, y) => onPicked.current(x, y))}
+          disabled={props.disabled || blocked}
+          title="Click anywhere on the screen to take its position (Esc cancels)"
+        >
+          {picking ? "Click on the screen…" : props.buttonLabel}
+        </button>
+        {blocked && <div className="value-hint">X or Y is an expression; make both plain numbers to pick them.</div>}
+      </div>
     </div>
   );
 }

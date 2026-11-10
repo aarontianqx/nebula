@@ -2,9 +2,17 @@
 
 import { useEngineStore } from "../stores/engineStore";
 import { useRecorderStore } from "../stores/recorderStore";
+import { usePickStore } from "../stores/pickStore";
 import { useToolStore } from "../stores/toolStore";
 import { listen } from "./ipc";
 import type { EngineEvent, KeyClickEvent, Point, RecordingStatus } from "./types";
+
+/** Route a position the picker reported: the field that asked for it, else Simple mode. */
+export function routePickedPosition(x: number, y: number): void {
+  if (!usePickStore.getState().deliverPosition(x, y)) {
+    useToolStore.getState().setPickedPosition(x, y);
+  }
+}
 
 export async function setupEventListeners(): Promise<() => void> {
   const unlisteners = await Promise.all([
@@ -12,7 +20,7 @@ export async function setupEventListeners(): Promise<() => void> {
     listen<void>("emergency-stop", () => useEngineStore.getState().onEmergencyStop()),
     listen<RecordingStatus>("recording-status", (e) => useRecorderStore.getState().setStatus(e.payload)),
     listen<Point>("mouse-position", (e) => useEngineStore.getState().setMousePos(e.payload)),
-    listen<Point>("position-picked", (e) => useToolStore.getState().setPickedPosition(e.payload.x, e.payload.y)),
+    listen<Point>("position-picked", (e) => routePickedPosition(e.payload.x, e.payload.y)),
     listen<KeyClickEvent>("key-click-event", (e) => useToolStore.getState().handleKeyClickEvent(e.payload)),
   ]);
 

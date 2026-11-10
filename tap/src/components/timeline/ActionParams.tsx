@@ -5,7 +5,7 @@ import { isValidIdentifier, uniqueName } from "../../lib/document";
 import type { DslAction, DslActionKind, DslValue } from "../../lib/types";
 import { useDocumentStore } from "../../stores/documentStore";
 import { ConditionEditor } from "./ConditionEditor";
-import { ButtonRow, NumberRow, OptionalNumberRow, ReferencesContext, TextRow, ValueInput, ValueRow } from "./fields";
+import { ButtonRow, KeyRow, NumberRow, OptionalNumberRow, PickPositionRow, ReferencesContext, TextRow, ValueInput, ValueRow } from "./fields";
 
 interface KindGroup {
   label: string;
@@ -87,6 +87,14 @@ export function ActionParams({ action, disabled, onChange }: ParamsProps) {
       <>
         <ValueRow label="X" mode="number" value={inner.x} disabled={disabled} onChange={(x) => patch({ x })} />
         <ValueRow label="Y" mode="number" value={inner.y} disabled={disabled} onChange={(y) => patch({ y })} />
+        <PickPositionRow
+          label=""
+          buttonLabel="Pick on screen"
+          x={inner.x}
+          y={inner.y}
+          disabled={disabled}
+          onPicked={(x, y) => patch({ x, y })}
+        />
         <ButtonRow value={inner.button} disabled={disabled} onChange={(button) => patch({ button })} />
       </>
     );
@@ -97,6 +105,14 @@ export function ActionParams({ action, disabled, onChange }: ParamsProps) {
       <>
         <ValueRow label="X" mode="number" value={action.mouse_move.x} disabled={disabled} onChange={(x) => patch({ x })} />
         <ValueRow label="Y" mode="number" value={action.mouse_move.y} disabled={disabled} onChange={(y) => patch({ y })} />
+        <PickPositionRow
+          label=""
+          buttonLabel="Pick on screen"
+          x={action.mouse_move.x}
+          y={action.mouse_move.y}
+          disabled={disabled}
+          onPicked={(x, y) => patch({ x, y })}
+        />
       </>
     );
   }
@@ -107,8 +123,24 @@ export function ActionParams({ action, disabled, onChange }: ParamsProps) {
       <>
         <ValueRow label="From X" mode="number" value={d.from_x} disabled={disabled} onChange={(from_x) => patch({ from_x })} />
         <ValueRow label="From Y" mode="number" value={d.from_y} disabled={disabled} onChange={(from_y) => patch({ from_y })} />
+        <PickPositionRow
+          label=""
+          buttonLabel="Pick start"
+          x={d.from_x}
+          y={d.from_y}
+          disabled={disabled}
+          onPicked={(from_x, from_y) => patch({ from_x, from_y })}
+        />
         <ValueRow label="To X" mode="number" value={d.to_x} disabled={disabled} onChange={(to_x) => patch({ to_x })} />
         <ValueRow label="To Y" mode="number" value={d.to_y} disabled={disabled} onChange={(to_y) => patch({ to_y })} />
+        <PickPositionRow
+          label=""
+          buttonLabel="Pick end"
+          x={d.to_x}
+          y={d.to_y}
+          disabled={disabled}
+          onPicked={(to_x, to_y) => patch({ to_x, to_y })}
+        />
         <NumberRow
           label="Duration"
           value={d.duration_ms}
@@ -143,7 +175,7 @@ export function ActionParams({ action, disabled, onChange }: ParamsProps) {
 
   if ("key_tap" in action || "key_down" in action || "key_up" in action) {
     const key = "key_tap" in action ? action.key_tap.key : "key_down" in action ? action.key_down.key : action.key_up.key;
-    return <TextRow label="Key" value={key} disabled={disabled} onChange={(v) => patch({ key: v })} />;
+    return <KeyRow label="Key" value={key} disabled={disabled} onChange={(v) => patch({ key: v })} />;
   }
 
   if ("text_input" in action) {
