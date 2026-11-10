@@ -109,7 +109,7 @@ The React UI is **store-driven**; components stay thin and read/write Zustand st
 | `input_hook/`    | Global input hook (recording)| rdev           | Subscribes to events singleton |
 | `mouse_tracker/` | Global mouse position        | rdev           | Subscribes to events singleton |
 | `window/`        | Window API (`DWMWA_EXTENDED_FRAME_BOUNDS` rectangles on Windows) | Win32 API      | Quartz `CGWindowList` + `NSWorkspace` (frontmost app) |
-| `pixel/`         | Pixel color reading          | GDI            | `CGWindowListCreateImage` (`examples/pixel_probe.rs` compares it with ScreenCaptureKit) |
+| `pixel/`         | Pixel color reading          | GDI            | `CGWindowListCreateImage`, resolved with `dlsym` at first use (a missing symbol reads as "no color" instead of killing the process); `examples/pixel_probe.rs` compares it with ScreenCaptureKit |
 | `dpi/`           | High DPI handling            | SetProcessDpiAwareness | backing scale via `CGDisplayMode` |
 
 macOS uses a CGEventTap singleton shared across `mouse_tracker` and `input_hook` to avoid multiple event tap conflicts.
