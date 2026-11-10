@@ -11,8 +11,8 @@ export default defineConfig({
     build: {
         rollupOptions: {
             input: {
-                main: resolve(__dirname, "index.html"),
-                picker: resolve(__dirname, "picker.html"),
+                main: resolve(import.meta.dirname, "index.html"),
+                picker: resolve(import.meta.dirname, "picker.html"),
             },
         },
     },
