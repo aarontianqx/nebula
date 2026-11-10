@@ -1,6 +1,6 @@
 # tap - Backlog（待办与未来工作）
 
-> 这是 tap 唯一的前瞻性提案文档，用于“后续捡起继续做”。历史分阶段提案（phase-1..6、roadmap 等）已删除，需要时可在 git 历史中查阅。已交付能力的产品说明见 `specs/features/`。
+> 这是 tap 的前瞻性待办清单，用于“后续捡起继续做”。已立项的工作见 `editor_and_engine_hardening.md`（编辑器与引擎加固）。历史分阶段提案（phase-1..6、roadmap 等）已删除，需要时可在 git 历史中查阅。已交付能力的产品说明见 `specs/features/`。
 
 ## 已交付（背景速览）
 
@@ -8,25 +8,19 @@ repeat 即时工具 + 全局紧急停止；录制 / 回放 + 降噪合成；条�
 
 ## 待办
 
+> 已转入 `editor_and_engine_hardening.md`：窗口相对坐标、macOS ScreenCaptureKit 迁移、前端 store 单测、颜色采样工具、随机抖动。
+
 ### 平台与稳定性
 
-- **窗口相对坐标**：`Action` 增加 `relative_to_window`，录制 / 回放以“窗口相对坐标”存储，提升跨分辨率与窗口移动时的稳定性。底层 `WindowRect::to_absolute()` 已就绪，缺 Action 字段与录制/解析接入。
-- **macOS 像素取色迁移 ScreenCaptureKit**：当前用 `CGWindowListCreateImage`（macOS 14+ 已弃用）。迁移到 ScreenCaptureKit 以面向未来；保留 `CGWindowListCreateImage` 作为回退。
 - **Windows 提权检测**：当前仅 `PermissionBanner` 的静态文案提示。可加入真实检测（tap 是否提权 / 目标进程是否提权），据此更精确地引导“以管理员运行”。
 
 ### 测试与质量
 
-- **前端 store 单测**：`documentStore`（同步契约：去抖回推 + 启动/保存前强制刷盘）、`engineStore`（运行态/倒计时）、`toolStore` 目前无单测，补齐以守护回归。
 - **（可选）E2E 冒烟**：导入带变量宏 → 运行前表单填值 → 倒计时 → 按变量执行 → 随时停止。
 
 ### 分发
 
 - **打包签名与公证**：macOS 代码签名 + notarization、Windows 代码签名，便于对外分发安装。
-
-### 体验增强（Could）
-
-- **颜色采样工具**：在 UI 中点击屏幕取色，便于配置 `pixel_color` 条件（复用全屏覆盖拾取器）。
-- **随机抖动 / 速率限制**：对点击坐标 / 延时做可控小范围随机，避免过快输入导致目标程序卡死或误触。
 
 ### 远期：Phase 7 - 插件系统
 
