@@ -27,5 +27,5 @@ pub use expression::{
     ExpressionEngineHandle, ExpressionError, ExpressionResult,
 };
 pub use keys::normalize_key;
-pub use schema::{validate_profile, ValidationError, ValidationResult};
+pub use schema::{validate_document, ValidationError, ValidationResult};
 pub use variables::{VariableStore, VariableValue};

@@ -1,7 +1,4 @@
-//! Schema validation for DSL profiles.
-//!
-//! Provides validation logic to ensure imported YAML profiles are valid
-//! before converting them to internal Profile format.
+//! Semantic validation of a [`MacroDocument`], beyond what parsing already guarantees.
 
 use crate::{
     CoordinateSpace, DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue,
@@ -34,20 +31,20 @@ impl std::fmt::Display for ValidationError {
 pub type ValidationResult = Result<(), Vec<ValidationError>>;
 
 /// Validate a [`MacroDocument`].
-pub fn validate_profile(profile: &MacroDocument) -> ValidationResult {
+pub fn validate_document(doc: &MacroDocument) -> ValidationResult {
     let mut errors = Vec::new();
 
     // Validate name
-    if profile.name.trim().is_empty() {
+    if doc.name.trim().is_empty() {
         errors.push(ValidationError {
             path: "name".to_string(),
-            message: "Profile name cannot be empty".to_string(),
+            message: "Macro name cannot be empty".to_string(),
             line: None,
         });
     }
 
     // Validate timeline
-    if profile.timeline.is_empty() {
+    if doc.timeline.is_empty() {
         errors.push(ValidationError {
             path: "timeline".to_string(),
             message: "Timeline must have at least one action".to_string(),
@@ -56,12 +53,12 @@ pub fn validate_profile(profile: &MacroDocument) -> ValidationResult {
     }
 
     // Validate each action
-    for (i, timed_action) in profile.timeline.iter().enumerate() {
+    for (i, timed_action) in doc.timeline.iter().enumerate() {
         validate_timed_action(timed_action, &format!("timeline[{}]", i), &mut errors);
     }
 
     // Window-relative coordinates need a window to be relative to.
-    if let Some(target) = &profile.target_window {
+    if let Some(target) = &doc.target_window {
         let names = |s: &Option<String>| s.as_deref().is_some_and(|s| !s.trim().is_empty());
         if target.coordinates == CoordinateSpace::Window
             && !names(&target.title)
@@ -77,10 +74,10 @@ pub fn validate_profile(profile: &MacroDocument) -> ValidationResult {
     }
 
     // Validate run config
-    validate_run_config(&profile.run, "run", &mut errors);
+    validate_run_config(&doc.run, "run", &mut errors);
 
     // Validate variables
-    for name in profile.variables.keys() {
+    for name in doc.variables.keys() {
         if name.trim().is_empty() {
             errors.push(ValidationError {
                 path: format!("variables.{}", name),
@@ -458,7 +455,7 @@ mod tests {
     use super::*;
     use crate::{DslMouseButton, DslRunConfig, DslTimedAction, DslValue, MacroDocument};
 
-    fn minimal_profile() -> MacroDocument {
+    fn minimal_document() -> MacroDocument {
         MacroDocument {
             name: "Test".to_string(),
             description: None,
@@ -482,16 +479,16 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_profile() {
-        let profile = minimal_profile();
-        assert!(validate_profile(&profile).is_ok());
+    fn test_valid_document() {
+        let doc = minimal_document();
+        assert!(validate_document(&doc).is_ok());
     }
 
     #[test]
     fn test_empty_name() {
-        let mut profile = minimal_profile();
-        profile.name = "".to_string();
-        let result = validate_profile(&profile);
+        let mut doc = minimal_document();
+        doc.name = "".to_string();
+        let result = validate_document(&doc);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.path == "name"));
@@ -512,74 +509,74 @@ mod tests {
 
     #[test]
     fn window_relative_coordinates_need_a_window_to_be_relative_to() {
-        let mut profile = minimal_profile();
+        let mut doc = minimal_document();
 
-        profile.target_window = Some(window_target(None, None, CoordinateSpace::Window));
-        let errors = validate_profile(&profile).unwrap_err();
+        doc.target_window = Some(window_target(None, None, CoordinateSpace::Window));
+        let errors = validate_document(&doc).unwrap_err();
         assert!(errors.iter().any(|e| e.path == "target_window.coordinates"));
 
         // A blank name is no name.
-        profile.target_window = Some(window_target(Some("  "), Some(""), CoordinateSpace::Window));
-        assert!(validate_profile(&profile).is_err());
+        doc.target_window = Some(window_target(Some("  "), Some(""), CoordinateSpace::Window));
+        assert!(validate_document(&doc).is_err());
 
-        profile.target_window = Some(window_target(Some("Game"), None, CoordinateSpace::Window));
-        assert!(validate_profile(&profile).is_ok());
-        profile.target_window = Some(window_target(
+        doc.target_window = Some(window_target(Some("Game"), None, CoordinateSpace::Window));
+        assert!(validate_document(&doc).is_ok());
+        doc.target_window = Some(window_target(
             None,
             Some("game.exe"),
             CoordinateSpace::Window,
         ));
-        assert!(validate_profile(&profile).is_ok());
+        assert!(validate_document(&doc).is_ok());
     }
 
     #[test]
     fn screen_coordinates_never_need_a_window_name() {
-        let mut profile = minimal_profile();
-        profile.target_window = Some(window_target(None, None, CoordinateSpace::Screen));
-        assert!(validate_profile(&profile).is_ok());
+        let mut doc = minimal_document();
+        doc.target_window = Some(window_target(None, None, CoordinateSpace::Screen));
+        assert!(validate_document(&doc).is_ok());
     }
 
     #[test]
     fn humanize_is_limited_to_what_still_hits_the_target() {
-        let mut profile = minimal_profile();
-        profile.run.humanize.position_px = MAX_HUMANIZE_POSITION_PX;
-        profile.run.humanize.delay_ms = MAX_HUMANIZE_DELAY_MS;
-        assert!(validate_profile(&profile).is_ok());
+        let mut doc = minimal_document();
+        doc.run.humanize.position_px = MAX_HUMANIZE_POSITION_PX;
+        doc.run.humanize.delay_ms = MAX_HUMANIZE_DELAY_MS;
+        assert!(validate_document(&doc).is_ok());
 
-        profile.run.humanize.position_px = MAX_HUMANIZE_POSITION_PX + 1;
-        let errors = validate_profile(&profile).unwrap_err();
+        doc.run.humanize.position_px = MAX_HUMANIZE_POSITION_PX + 1;
+        let errors = validate_document(&doc).unwrap_err();
         assert!(errors.iter().any(|e| e.path == "run.humanize.position_px"));
 
-        profile.run.humanize.position_px = 0;
-        profile.run.humanize.delay_ms = MAX_HUMANIZE_DELAY_MS + 1;
-        let errors = validate_profile(&profile).unwrap_err();
+        doc.run.humanize.position_px = 0;
+        doc.run.humanize.delay_ms = MAX_HUMANIZE_DELAY_MS + 1;
+        let errors = validate_document(&doc).unwrap_err();
         assert!(errors.iter().any(|e| e.path == "run.humanize.delay_ms"));
     }
 
     #[test]
     fn test_empty_timeline() {
-        let mut profile = minimal_profile();
-        profile.timeline.clear();
-        let result = validate_profile(&profile);
+        let mut doc = minimal_document();
+        doc.timeline.clear();
+        let result = validate_document(&doc);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_invalid_speed() {
-        let mut profile = minimal_profile();
-        profile.run.speed = 0.0;
-        let result = validate_profile(&profile);
+        let mut doc = minimal_document();
+        doc.run.speed = 0.0;
+        let result = validate_document(&doc);
         assert!(result.is_err());
     }
 
     fn conditional(then_action: DslAction, else_action: Option<DslAction>) -> MacroDocument {
-        let mut profile = minimal_profile();
-        profile.timeline[0].action = DslAction::Conditional {
+        let mut doc = minimal_document();
+        doc.timeline[0].action = DslAction::Conditional {
             condition: DslCondition::Always,
             then_action: Box::new(then_action),
             else_action: else_action.map(Box::new),
         };
-        profile
+        doc
     }
 
     fn call(name: &str) -> DslAction {
@@ -591,15 +588,15 @@ mod tests {
 
     #[test]
     fn call_macro_is_valid_as_a_timeline_step() {
-        let mut profile = minimal_profile();
-        profile.timeline[0].action = call("login");
-        assert!(validate_profile(&profile).is_ok());
+        let mut doc = minimal_document();
+        doc.timeline[0].action = call("login");
+        assert!(validate_document(&doc).is_ok());
     }
 
     #[test]
     fn call_macro_is_valid_in_either_branch_of_an_if() {
-        assert!(validate_profile(&conditional(call("login"), None)).is_ok());
-        assert!(validate_profile(&conditional(DslAction::Exit, Some(call("login")))).is_ok());
+        assert!(validate_document(&conditional(call("login"), None)).is_ok());
+        assert!(validate_document(&conditional(DslAction::Exit, Some(call("login")))).is_ok());
     }
 
     #[test]
@@ -609,12 +606,12 @@ mod tests {
             then_action: Box::new(call("login")),
             else_action: None,
         };
-        assert!(validate_profile(&conditional(inner, None)).is_ok());
+        assert!(validate_document(&conditional(inner, None)).is_ok());
     }
 
     #[test]
     fn call_macro_in_a_branch_still_needs_a_name() {
-        let errors = validate_profile(&conditional(call(" "), None)).unwrap_err();
+        let errors = validate_document(&conditional(call(" "), None)).unwrap_err();
         assert!(errors
             .iter()
             .any(|e| e.path == "timeline[0].action.then_action.name"));

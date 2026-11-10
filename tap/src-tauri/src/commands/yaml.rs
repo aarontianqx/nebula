@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use tap_core::{
-    document_to_yaml, parse_yaml, validate_profile, MacroDocument, ValidationError, VariableValue,
+    document_to_yaml, parse_yaml, validate_document, MacroDocument, ValidationError, VariableValue,
 };
 use tauri::State;
 
@@ -38,7 +38,7 @@ pub fn cmd_export_yaml(state: State<'_, Mutex<AppState>>) -> Result<String, Stri
 ///
 /// Used by the import paths, which (unlike live editing) refuse documents that would not run.
 pub(super) fn ensure_valid(document: &MacroDocument) -> Result<(), String> {
-    validate_profile(document).map_err(|errors| {
+    validate_document(document).map_err(|errors| {
         errors
             .iter()
             .map(|e| e.to_string())
@@ -63,7 +63,7 @@ pub fn cmd_import_yaml(
 
 #[tauri::command]
 pub fn cmd_validate_yaml(yaml_content: String) -> Result<(), Vec<ValidationErrorResponse>> {
-    let dsl_profile = parse_yaml(&yaml_content).map_err(|e| {
+    let document = parse_yaml(&yaml_content).map_err(|e| {
         vec![ValidationErrorResponse {
             path: "".to_string(),
             message: e.to_string(),
@@ -71,7 +71,7 @@ pub fn cmd_validate_yaml(yaml_content: String) -> Result<(), Vec<ValidationError
         }]
     })?;
 
-    validate_profile(&dsl_profile).map_err(|errors| errors.into_iter().map(|e| e.into()).collect())
+    validate_document(&document).map_err(|errors| errors.into_iter().map(|e| e.into()).collect())
 }
 
 #[tauri::command]

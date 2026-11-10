@@ -2,10 +2,7 @@
 
 use std::sync::Mutex;
 
-use tap_application::{
-    delete_profile, list_profiles, load_document, load_last_used, load_recent, save_document,
-    save_last_used, save_recent,
-};
+use tap_application::MacroLibrary;
 use tap_core::{document_to_yaml, parse_yaml, MacroDocument};
 use tauri::State;
 
@@ -41,6 +38,7 @@ pub fn update_document(
 #[tauri::command]
 pub fn cmd_save_profile(
     state: State<'_, Mutex<AppState>>,
+    library: State<'_, MacroLibrary>,
     name: Option<String>,
 ) -> Result<String, String> {
     let mut app_state = state.lock().unwrap();
@@ -49,11 +47,9 @@ pub fn cmd_save_profile(
         app_state.coordinator.session_mut().set_name(n);
     }
 
-    // Persist the lossless canonical document (variables + metadata included).
-    let document = app_state.coordinator.document().clone();
-    let path = save_document(&document).map_err(|e| e.to_string())?;
-    let _ = save_last_used(&document.name);
-    let _ = save_recent(&document.name);
+    let document = app_state.coordinator.document();
+    let path = library.save(document).map_err(|e| e.to_string())?;
+    library.remember(&document.name);
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -61,36 +57,36 @@ pub fn cmd_save_profile(
 #[tauri::command]
 pub fn cmd_load_profile(
     state: State<'_, Mutex<AppState>>,
+    library: State<'_, MacroLibrary>,
     name: String,
 ) -> Result<MacroDocument, String> {
-    let document = load_document(&name).map_err(|e| e.to_string())?;
+    let document = library.load(&name).map_err(|e| e.to_string())?;
 
     let mut app_state = state.lock().unwrap();
     app_state.coordinator.set_document(document.clone());
-    let _ = save_last_used(&name);
-    let _ = save_recent(&name);
+    library.remember(&name);
 
     Ok(document)
 }
 
 #[tauri::command]
-pub fn cmd_delete_profile(name: String) -> Result<(), String> {
-    delete_profile(&name).map_err(|e| e.to_string())
+pub fn cmd_delete_profile(library: State<'_, MacroLibrary>, name: String) -> Result<(), String> {
+    library.delete(&name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn cmd_list_profiles() -> Result<Vec<String>, String> {
-    list_profiles().map_err(|e| e.to_string())
+pub fn cmd_list_profiles(library: State<'_, MacroLibrary>) -> Result<Vec<String>, String> {
+    library.list().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn cmd_get_last_used() -> Option<String> {
-    load_last_used()
+pub fn cmd_get_last_used(library: State<'_, MacroLibrary>) -> Option<String> {
+    library.last_used()
 }
 
 #[tauri::command]
-pub fn cmd_get_recent_profiles() -> Vec<String> {
-    load_recent()
+pub fn cmd_get_recent_profiles(library: State<'_, MacroLibrary>) -> Vec<String> {
+    library.recent()
 }
 
 #[tauri::command]

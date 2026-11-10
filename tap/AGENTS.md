@@ -22,7 +22,7 @@ tap (Timed Action Performer) is a cross-platform desktop automation tool built w
 │  - SessionStore           │  Canonical MacroDocument (single source of truth)
 │  - Player (Replay)        │  Document playback + Resolve stage (interruptible)
 │  - Recorder (Record)      │  Global event capture (pausable)
-│  - Storage                │  YAML document persistence
+│  - MacroLibrary           │  Saved macros as YAML on disk
 └──────────────┬────────────┘
                │ Ports (traits: ActionExecutor / PlatformConditionProvider)
                ▼
@@ -59,7 +59,7 @@ tap/
 │                                 #   (engine, document, yaml, recording, key_click, system)
 ├── crates/
 │   ├── tap-core/                 # Pure domain: model, DSL, conditions, variables, expression, schema
-│   ├── tap-application/          # Application layer: Coordinator, SessionStore, playback (Player + ports + protocol), Recorder, Resolve, storage
+│   ├── tap-application/          # Application layer: Coordinator, SessionStore, playback (Player + ports + protocol), Recorder, Resolve, MacroLibrary (YAML persistence)
 │   └── tap-platform/             # Platform abstraction (input injection, hooks, window/pixel/DPI)
 ├── templates/                    # YAML macro templates
 ├── specs/
@@ -70,7 +70,7 @@ tap/
 
 ### Key conventions
 
-- **Engine decoupling**: The automation engine (`tap-application/src/playback/`: `protocol` commands/events, `ports` traits, `player` thread and waits, `run` passes and scheduling, `dispatch` single actions) lives in `tap-application` and depends only on the pure domain (`tap-core`) plus trait *ports*; it must stay independent of the UI framework, the OS and storage (the macros `call_macro` names are found through a loader injected via `PlayerConfig`). A `Start` command carries the document and run-time variables, so the player keeps no copy of them and the coordinator reads the player's state instead of mirroring it. `src-tauri` is a thin adapter that wires up concrete port implementations (the `tap-platform` injector / window queries) and forwards IPC + events. Swapping UI or platform should not affect engine logic.
+- **Engine decoupling**: The automation engine (`tap-application/src/playback/`: `protocol` commands/events, `ports` traits, `player` thread and waits, `run` passes and scheduling, `dispatch` single actions) lives in `tap-application` and depends only on the pure domain (`tap-core`) plus trait *ports*; it must stay independent of the UI framework, the OS and storage (the macros `call_macro` names are found through a loader injected via `PlayerConfig`). `MacroLibrary` is built by the adapter with an explicit root (`default_root()` in production), so no module reaches for a global path; the on-disk names (`profiles/`, `.yaml`) and the `cmd_*_profile` IPC commands keep the pre-rename vocabulary on purpose. A `Start` command carries the document and run-time variables, so the player keeps no copy of them and the coordinator reads the player's state instead of mirroring it. `src-tauri` is a thin adapter that wires up concrete port implementations (the `tap-platform` injector / window queries) and forwards IPC + events. Swapping UI or platform should not affect engine logic.
 - **Single source of truth**: The canonical macro is the `MacroDocument` held by `SessionStore`; the engine turns each templated step into a concrete `Action` only at run time (the Resolve stage). The UI edits the document itself over IPC (`get_document` / `update_document`), so there is no lossy projection to write back and a new document field cannot be silently reset by a bridge. Runs that are not the editor's macro (the Simple-mode repeat tool) play a throwaway document through `Coordinator::start_standalone`, so they can never overwrite or diverge from the session document.
 - **Adapter layout**: `src-tauri/src/main.rs` stays a registration list. A new IPC command goes in the matching `commands/<concern>.rs` (or a new module if it is a new concern), is registered in `main.rs` by its module path, and keeps no logic of its own beyond translating to/from the application layer. Shared mutable resources live in `AppState`, not in module-level statics. Keep modules small (rule of thumb: under ~300 lines).
 - **Serial execution**: Timeline actions execute sequentially within a single macro. No concurrent injection.

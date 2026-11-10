@@ -3,7 +3,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use tap_application::{load_document, Coordinator, Player, PlayerConfig, Recorder};
+use tap_application::{default_root, Coordinator, MacroLibrary, Player, PlayerConfig, Recorder};
 use tap_platform::{start_mouse_tracker, EnigoInjector, MouseTrackerConfig};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info, warn};
@@ -27,10 +27,12 @@ pub fn setup_app(app: &AppHandle) {
 
     let dry_run = Arc::new(AtomicBool::new(false));
     let executor = EnigoExecutor::new(injector, dry_run.clone());
-    let config = PlayerConfig::new(Arc::new(|name| {
-        load_document(name).map_err(|e| e.to_string())
-    }));
-    let player_handle = Player::spawn(executor, platform_provider, config);
+    let library = MacroLibrary::new(default_root());
+    let player_handle = Player::spawn(
+        executor,
+        platform_provider,
+        PlayerConfig::new(library.loader()),
+    );
     let coordinator = Coordinator::new(player_handle);
 
     // Create the recorder
@@ -50,6 +52,7 @@ pub fn setup_app(app: &AppHandle) {
         key_click_injector: None,
     };
 
+    app.manage(library);
     app.manage(Mutex::new(state));
 
     // Start event polling loop

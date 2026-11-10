@@ -1,4 +1,4 @@
-//! The UI edits the canonical document directly (no lossy `Profile` side copy), so an edit can
+//! The UI edits the canonical document directly (there is no second copy to convert back from), so an edit can
 //! never flatten parameterized steps. These tests pin that down, including the macro from the
 //! original "rename silently destroys call_macro" bug report.
 

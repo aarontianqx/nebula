@@ -68,7 +68,7 @@ mod tests {
         for t in TEMPLATES {
             let doc = tap_core::parse_yaml(t.yaml)
                 .unwrap_or_else(|e| panic!("template `{}` failed to parse: {e}", t.id));
-            tap_core::validate_profile(&doc).unwrap_or_else(|errs| {
+            tap_core::validate_document(&doc).unwrap_or_else(|errs| {
                 panic!(
                     "template `{}` failed validation: {}",
                     t.id,

@@ -8,22 +8,23 @@
 //! - `recorder`: turns raw input events into macro steps.
 //! - `simple`: the simple-repeat tool as an ordinary macro.
 //! - `coords`: window-relative coordinates.
-//! - `storage`: YAML persistence of macros and the recent list.
+//! - `library`: the saved macros on disk and the recently-used list.
 //!
 //! The crate is platform-agnostic: it defines ports as traits and lets the infrastructure
 //! (`tap-platform`) and the adapter (`src-tauri`) supply the implementations.
 
 mod coordinator;
 mod coords;
+mod library;
 mod playback;
 mod recorder;
 mod resolve;
 mod session;
 mod simple;
-mod storage;
 
 pub use coordinator::Coordinator;
 pub use coords::{relativize_raw, window_binding};
+pub use library::{default_root, MacroLibrary, StorageError, StorageResult};
 pub use playback::{
     ActionExecutor, EngineCommand, EngineEvent, EngineState, PlatformConditionProvider, Player,
     PlayerConfig, PlayerHandle, SubMacroLoader,
@@ -35,8 +36,3 @@ pub use recorder::{
 pub use resolve::{resolve_action, ResolveError};
 pub use session::SessionStore;
 pub use simple::simple_repeat_document;
-pub use storage::{
-    delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
-    load_document, load_last_used, load_recent, save_document, save_last_used, save_recent,
-    StorageError, StorageResult,
-};

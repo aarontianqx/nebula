@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use tap_core::{
-    validate_profile, DslAction, DslRunConfig, DslTimedAction, MacroDocument, MouseButton,
+    validate_document, DslAction, DslRunConfig, DslTimedAction, MacroDocument, MouseButton,
     ValidationError, VariableValue, DSL_VERSION,
 };
 
@@ -49,7 +49,7 @@ impl SessionStore {
     /// name). The document is stored exactly as given, and the validation
     /// findings are returned so the UI can show them inline.
     pub fn update_document(&mut self, document: MacroDocument) -> Vec<ValidationError> {
-        let issues = validate_profile(&document).err().unwrap_or_default();
+        let issues = validate_document(&document).err().unwrap_or_default();
         self.document = document;
         issues
     }
