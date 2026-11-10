@@ -3,7 +3,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use tap_application::{Coordinator, Player, Recorder};
+use tap_application::{load_document, Coordinator, Player, PlayerConfig, Recorder};
 use tap_platform::{start_mouse_tracker, EnigoInjector, MouseTrackerConfig};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info, warn};
@@ -25,11 +25,12 @@ pub fn setup_app(app: &AppHandle) {
     // Create the platform condition provider
     let platform_provider = TauriPlatformProvider;
 
-    // Create the player with executor and platform provider, wrapped in the
-    // application-layer coordinator (owns the engine state machine + document).
     let dry_run = Arc::new(AtomicBool::new(false));
     let executor = EnigoExecutor::new(injector, dry_run.clone());
-    let player_handle = Player::spawn(executor, platform_provider);
+    let config = PlayerConfig::new(Arc::new(|name| {
+        load_document(name).map_err(|e| e.to_string())
+    }));
+    let player_handle = Player::spawn(executor, platform_provider, config);
     let coordinator = Coordinator::new(player_handle);
 
     // Create the recorder
@@ -60,22 +61,18 @@ pub fn setup_app(app: &AppHandle) {
     info!("App setup complete");
 }
 
-/// Handle emergency stop shortcut
+/// Stop everything that injects input: the player and key-click mode.
+pub fn stop_all(app_state: &AppState) {
+    app_state.coordinator.stop();
+    if let Some(handle) = &app_state.key_click_handle {
+        handle.stop();
+    }
+}
+
 pub fn handle_emergency_stop(app: &AppHandle) {
     warn!("Emergency stop shortcut triggered!");
     let state: State<'_, Mutex<AppState>> = app.state();
-    let app_state = state.lock().unwrap();
-
-    // Stop player if running
-    app_state.coordinator.emergency_stop();
-
-    // Stop key-click mode if running (just signal, don't take)
-    if let Some(ref handle) = app_state.key_click_handle {
-        handle.stop();
-        info!("Key-click mode stop requested by emergency stop shortcut");
-    }
-
-    drop(app_state);
+    stop_all(&state.lock().unwrap());
     if let Err(e) = app.emit("emergency-stop", ()) {
         warn!("Failed to emit emergency-stop: {}", e);
     }

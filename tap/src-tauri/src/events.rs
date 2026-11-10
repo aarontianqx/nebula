@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tap_application::{relativize_raw, window_binding, EngineEvent, MouseButtonRaw, RawEventType};
+use tap_application::{relativize_raw, window_binding, MouseButtonRaw, RawEventType};
 use tap_platform::{InputEventType, MouseButtonType, MouseTrackerEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, warn};
@@ -31,21 +31,6 @@ pub fn poll_events(app: AppHandle) {
         for event in player_events {
             debug!(?event, "received engine event");
 
-            // Update state
-            {
-                let mut app_state = state.lock().unwrap();
-                match &event {
-                    EngineEvent::StateChanged { new, .. } => {
-                        app_state.coordinator.set_engine_state(*new);
-                    }
-                    EngineEvent::IterationCompleted { iteration } => {
-                        debug!(iteration, "iteration completed");
-                    }
-                    _ => {}
-                }
-            }
-
-            // Emit to frontend
             if let Err(e) = app.emit("engine-event", &event) {
                 warn!("Failed to emit event to frontend: {}", e);
             }

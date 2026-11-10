@@ -1,43 +1,32 @@
-//! tap-application: the application layer.
+//! tap-application: the use cases above the pure domain (`tap-core`) and below the adapter.
 //!
-//! Owns use-case orchestration that sits above the pure domain (`tap-core`)
-//! and below the platform/adapter layers:
+//! - `playback`: the player thread that plays a macro, its command/event protocol and the ports
+//!   it needs from the OS.
+//! - `coordinator`: the adapter's entry point; owns the player and the session.
+//! - `session`: the macro being edited and the run-time overrides for its next run.
+//! - `resolve`: the Resolve stage, turning a templated `DslAction` into a concrete `Action`.
+//! - `recorder`: turns raw input events into macro steps.
+//! - `simple`: the simple-repeat tool as an ordinary macro.
+//! - `coords`: window-relative coordinates.
+//! - `storage`: YAML persistence of macros and the recent list.
 //!
-//! - `coordinator` — orchestrates the player + session; the adapter's entry point.
-//! - `session` — the canonical [`MacroDocument`](tap_core::MacroDocument) source of truth.
-//! - `engine` — the playback [`Player`] thread, its command/event protocol, and
-//!   the [`ActionExecutor`] / [`PlatformConditionProvider`] ports it depends on.
-//! - `clock` — the active-time clock the scheduler uses (pauses and lost target
-//!   windows do not count as elapsed timeline time).
-//! - `coords` — window-relative coordinates: moving a position in the target window to the
-//!   screen.
-//! - `humanize` — `run.humanize`: random variation of positions and step start times.
-//! - `resolve` — the Resolve stage: parameterized `DslAction` → concrete `Action`.
-//! - `recorder` — captures raw input events into a [`Timeline`](tap_core::Timeline).
-//! - `storage` — YAML persistence of macro documents and the recent list.
-//! - `submacro` — sub-macro call-stack tracking and variable scoping.
-//!
-//! This crate is platform-agnostic: it defines ports as traits and lets the
-//! infrastructure (`tap-platform`) and adapter (`src-tauri`) layers supply the
-//! concrete implementations.
+//! The crate is platform-agnostic: it defines ports as traits and lets the infrastructure
+//! (`tap-platform`) and the adapter (`src-tauri`) supply the implementations.
 
-mod clock;
 mod coordinator;
 mod coords;
-mod engine;
-mod humanize;
+mod playback;
 mod recorder;
 mod resolve;
 mod session;
 mod simple;
 mod storage;
-mod submacro;
 
 pub use coordinator::Coordinator;
 pub use coords::{relativize_raw, window_binding};
-pub use engine::{
+pub use playback::{
     ActionExecutor, EngineCommand, EngineEvent, EngineState, PlatformConditionProvider, Player,
-    PlayerHandle, SubMacroLoader,
+    PlayerConfig, PlayerHandle, SubMacroLoader,
 };
 pub use recorder::{
     BufferedEvent, MouseButtonRaw, RawEventType, Recorder, RecorderConfig, RecorderEvent,
@@ -50,8 +39,4 @@ pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
     load_document, load_last_used, load_recent, save_document, save_last_used, save_recent,
     StorageError, StorageResult,
-};
-pub use submacro::{
-    create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,
-    SubMacroContextHandle, SubMacroError, MAX_CALL_DEPTH,
 };

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use tap_application::{
     ActionExecutor, Coordinator, EngineCommand, EngineEvent, EngineState,
-    PlatformConditionProvider, Player, PlayerHandle, SessionStore, SubMacroLoader,
+    PlatformConditionProvider, Player, PlayerConfig, PlayerHandle, SessionStore, SubMacroLoader,
 };
 use tap_core::{
     Action, DslAction, DslCondition, DslMouseButton, DslRunConfig, DslTimedAction, DslValue,
@@ -120,15 +120,34 @@ fn document(timeline: Vec<DslTimedAction>, repeat: u32) -> MacroDocument {
 
 // === Harness ===
 
+/// A player that cannot call other macros.
+fn spawn_player<E: ActionExecutor, P: PlatformConditionProvider>(
+    executor: E,
+    platform: P,
+) -> PlayerHandle {
+    Player::spawn(executor, platform, PlayerConfig::new(no_macros()))
+}
+
+fn spawn_seeded<E: ActionExecutor, P: PlatformConditionProvider>(
+    executor: E,
+    platform: P,
+    seed: u64,
+) -> PlayerHandle {
+    let config = PlayerConfig::new(no_macros()).with_seed(seed);
+    Player::spawn(executor, platform, config)
+}
+
+fn no_macros() -> SubMacroLoader {
+    Arc::new(|name| Err(format!("no macro '{name}'")))
+}
+
 fn spawn_recording(loader: Option<SubMacroLoader>) -> (PlayerHandle, Arc<Mutex<Vec<Action>>>) {
     let injected = Arc::new(Mutex::new(Vec::new()));
     let executor = RecordingExecutor {
         injected: injected.clone(),
     };
-    let handle = match loader {
-        Some(loader) => Player::spawn_with_loader(executor, MockPlatform, loader),
-        None => Player::spawn(executor, MockPlatform),
-    };
+    let loader = loader.unwrap_or_else(no_macros);
+    let handle = Player::spawn(executor, MockPlatform, PlayerConfig::new(loader));
     (handle, injected)
 }
 
@@ -152,14 +171,16 @@ fn pump_until_complete(handle: &PlayerHandle, timeout: Duration) -> (bool, Vec<E
     (completed, events)
 }
 
-/// Run a document to completion with no run-time overrides and the default
-/// (disk) sub-macro loader. Returns `(injected_actions, completed)`.
+/// Run a document to completion with no run-time overrides and no callable
+/// macros. Returns `(injected_actions, completed)`.
 ///
 /// Dropping the handle closes the command channel, which is what lets the player thread exit.
 fn run_until_complete(doc: MacroDocument, timeout: Duration) -> (Vec<Action>, bool) {
     let (handle, injected) = spawn_recording(None);
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, timeout);
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -294,9 +315,10 @@ fn runtime_override_beats_default_and_expressions_are_evaluated() {
     let (handle, injected) = spawn_recording(None);
     let mut overrides = HashMap::new();
     overrides.insert("base_x".to_string(), VariableValue::Number(200.0));
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::SetRuntimeVars(overrides));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: overrides,
+    });
 
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
@@ -370,8 +392,10 @@ fn call_macro_expands_child_timeline_inline() {
     );
 
     let (handle, injected) = spawn_recording(Some(loader));
-    handle.send(EngineCommand::SetDocument(Box::new(parent)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(parent),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -406,8 +430,10 @@ fn call_macro_passes_args_into_child_scope() {
     );
 
     let (handle, injected) = spawn_recording(Some(loader));
-    handle.send(EngineCommand::SetDocument(Box::new(parent)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(parent),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -451,8 +477,10 @@ fn call_macro_args_are_evaluated_against_the_callers_scope() {
     );
 
     let (handle, injected) = spawn_recording(Some(loader));
-    handle.send(EngineCommand::SetDocument(Box::new(parent)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(parent),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -480,8 +508,10 @@ fn call_macro_with_an_unresolvable_arg_reports_it_and_skips_only_that_call() {
     );
 
     let (handle, injected) = spawn_recording(Some(loader));
-    handle.send(EngineCommand::SetDocument(Box::new(parent)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(parent),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, events) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -527,8 +557,10 @@ fn call_macro_cycle_is_detected_and_does_not_hang() {
     );
 
     let (handle, injected) = spawn_recording(Some(loader));
-    handle.send(EngineCommand::SetDocument(Box::new(parent)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(parent),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, events) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -574,8 +606,10 @@ fn run_with_macros(
     macros: Vec<(&str, MacroDocument)>,
 ) -> (Vec<Action>, Vec<EngineEvent>, bool) {
     let (handle, injected) = spawn_recording(Some(map_loader(macros)));
-    handle.send(EngineCommand::SetDocument(Box::new(parent)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(parent),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, events) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -779,12 +813,14 @@ fn emergency_stop_halts_a_forever_loop() {
         0, // forever
     );
 
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
 
-    // Let a few iterations run, then request an emergency stop.
+    // Let a few iterations run, then stop.
     std::thread::sleep(Duration::from_millis(100));
-    handle.send(EngineCommand::EmergencyStop);
+    handle.send(EngineCommand::Stop);
 
     // The engine must return to Idle after stopping.
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -796,10 +832,7 @@ fn emergency_stop_halts_a_forever_loop() {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(
-        reached_idle,
-        "engine should return to Idle after EmergencyStop"
-    );
+    assert!(reached_idle, "engine should return to Idle after a stop");
 
     // Once stopped, no further actions should be injected.
     let count_after_stop = injected.lock().unwrap().len();
@@ -905,11 +938,13 @@ fn consecutive_injection_failures_stop_the_run() {
     let executor = FailingExecutor {
         attempts: attempts.clone(),
     };
-    let handle = Player::spawn(executor, MockPlatform);
+    let handle = spawn_player(executor, MockPlatform);
 
     let doc = document(vec![timed(dsl_click(1, 1))], 0); // forever
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
 
     // Wait for the dedicated auto-stop Error.
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -960,8 +995,10 @@ fn sub_second_arming_still_runs_and_ticks() {
     doc.run.start_delay_ms = 200;
 
     let (handle, injected) = spawn_recording(None);
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, events) = pump_until_complete(&handle, Duration::from_secs(5));
     let actions = injected.lock().unwrap().clone();
     drop(handle);
@@ -1042,16 +1079,16 @@ fn ms(d: Duration) -> u128 {
 #[test]
 fn pausing_does_not_make_the_remaining_steps_fire_as_a_burst() {
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn(
+    let handle = spawn_player(
         TimestampedExecutor {
             injected: injected.clone(),
         },
         MockPlatform,
     );
-    handle.send(EngineCommand::SetDocument(Box::new(
-        spaced_clicks_document(),
-    )));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(spaced_clicks_document()),
+        runtime_vars: HashMap::new(),
+    });
 
     // Pause right after the first click, long enough that both remaining steps
     // would be overdue on the wall clock (600ms) by the time we resume.
@@ -1091,7 +1128,7 @@ fn losing_the_target_window_does_not_make_the_remaining_steps_fire_as_a_burst() 
 
     let focused = Arc::new(AtomicBool::new(false)); // target starts unfocused
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn(
+    let handle = spawn_player(
         TimestampedExecutor {
             injected: injected.clone(),
         },
@@ -1107,8 +1144,10 @@ fn losing_the_target_window_does_not_make_the_remaining_steps_fire_as_a_burst() 
         pause_when_unfocused: true,
         coordinates: Default::default(),
     });
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
 
     // The engine blocks on the very first step while the window is unfocused.
     // Stay away long enough that every step would be overdue on the wall clock.
@@ -1146,7 +1185,7 @@ fn an_overrun_step_still_runs_immediately_without_any_stall() {
         note: None,
     };
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn(
+    let handle = spawn_player(
         TimestampedExecutor {
             injected: injected.clone(),
         },
@@ -1160,8 +1199,10 @@ fn an_overrun_step_still_runs_immediately_without_any_stall() {
         ],
         1,
     );
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
 
     assert!(wait_for(Duration::from_secs(3), || {
         injected.lock().unwrap().len() == 2
@@ -1237,7 +1278,7 @@ fn window_harness(origin: Option<(i32, i32)>, move_after_each: bool) -> WindowHa
     let origin: SharedOrigin = Arc::new(Mutex::new(origin));
     let pixels: SharedPixels = Arc::new(Mutex::new(HashMap::new()));
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn(
+    let handle = spawn_player(
         WindowMovingExecutor {
             injected: injected.clone(),
             origin: origin.clone(),
@@ -1271,8 +1312,10 @@ fn relative(doc: MacroDocument) -> MacroDocument {
 }
 
 fn start(h: &WindowHarness, doc: MacroDocument) {
-    h.handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    h.handle.send(EngineCommand::Start);
+    h.handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
 }
 
 #[test]
@@ -1490,15 +1533,17 @@ fn with_humanize(mut doc: MacroDocument, position_px: u32, delay_ms: u32) -> Mac
 /// Run `doc` on a player whose variation is drawn from `seed`.
 fn run_seeded(doc: MacroDocument, seed: u64) -> Vec<Action> {
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn_with_seed(
+    let handle = spawn_seeded(
         RecordingExecutor {
             injected: injected.clone(),
         },
         MockPlatform,
         seed,
     );
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
     assert!(completed);
     let actions = injected.lock().unwrap().clone();
@@ -1592,7 +1637,7 @@ fn a_pressed_button_is_released_where_it_was_pressed() {
 fn humanize_applies_inside_a_window_relative_document_before_the_window_shift() {
     let origin: SharedOrigin = Arc::new(Mutex::new(Some((100, 50))));
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn_with_seed(
+    let handle = spawn_seeded(
         WindowMovingExecutor {
             injected: injected.clone(),
             origin: origin.clone(),
@@ -1605,8 +1650,10 @@ fn humanize_applies_inside_a_window_relative_document_before_the_window_shift() 
         9,
     );
     let doc = relative(with_humanize(document(clicks_at(10, 20, 30), 1), 3, 0));
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
 
     assert!(completed);
@@ -1637,7 +1684,7 @@ fn delay_jitter_keeps_steps_in_order_and_never_starts_one_before_its_earliest_ti
     let doc = with_humanize(document(timeline, 1), 0, JITTER_MS);
 
     let injected = Arc::new(Mutex::new(Vec::new()));
-    let handle = Player::spawn_with_seed(
+    let handle = spawn_seeded(
         TimestampedExecutor {
             injected: injected.clone(),
         },
@@ -1645,8 +1692,10 @@ fn delay_jitter_keeps_steps_in_order_and_never_starts_one_before_its_earliest_ti
         21,
     );
     let began = Instant::now();
-    handle.send(EngineCommand::SetDocument(Box::new(doc)));
-    handle.send(EngineCommand::Start);
+    handle.send(EngineCommand::Start {
+        document: Box::new(doc),
+        runtime_vars: HashMap::new(),
+    });
     let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
 
     assert!(completed);

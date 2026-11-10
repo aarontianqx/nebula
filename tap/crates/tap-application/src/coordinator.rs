@@ -1,23 +1,16 @@
-//! Coordinator: the application-layer entry point for macro execution.
-//!
-//! Owns the playback [`PlayerHandle`] and the canonical [`SessionStore`], and
-//! exposes the use-cases the adapter (`src-tauri`) drives: lifecycle control
-//! (start/pause/resume/stop), document/session mutation, run-time variable
-//! overrides and engine-event draining. The adapter holds one `Coordinator`
-//! and no longer owns the engine state machine itself.
+//! The adapter's single entry point: it owns the player and the session, and offers the use cases
+//! the UI drives (start, pause, resume, stop, edit the document, set run-time overrides).
 
 use std::collections::HashMap;
 
 use tap_core::{MacroDocument, ValidationError, VariableValue};
 
-use crate::engine::{EngineCommand, EngineEvent, EngineState, PlayerHandle};
+use crate::playback::{EngineCommand, EngineEvent, EngineState, PlayerHandle};
 use crate::session::SessionStore;
 
-/// Orchestrates the player thread and the canonical session document.
 pub struct Coordinator {
     player: PlayerHandle,
     session: SessionStore,
-    engine_state: EngineState,
 }
 
 impl Coordinator {
@@ -28,23 +21,13 @@ impl Coordinator {
 
     /// Create a coordinator with an explicit session.
     pub fn with_session(player: PlayerHandle, session: SessionStore) -> Self {
-        Self {
-            player,
-            session,
-            engine_state: EngineState::Idle,
-        }
+        Self { player, session }
     }
 
     // === Engine lifecycle ===
 
-    /// Current engine state (mirrored from player events via [`Self::drain_events`]).
     pub fn engine_state(&self) -> EngineState {
-        self.engine_state
-    }
-
-    /// Update the mirrored engine state (called by the adapter event pump).
-    pub fn set_engine_state(&mut self, state: EngineState) {
-        self.engine_state = state;
+        self.player.state()
     }
 
     /// Run the session's macro with the session's run-time overrides.
@@ -66,20 +49,19 @@ impl Coordinator {
         document: MacroDocument,
         runtime_vars: HashMap<String, VariableValue>,
     ) -> Result<(), String> {
-        if self.engine_state != EngineState::Idle {
+        if self.engine_state() != EngineState::Idle {
             return Err("Cannot start: not in idle state".into());
         }
-        self.player
-            .send(EngineCommand::SetDocument(Box::new(document)));
-        self.player
-            .send(EngineCommand::SetRuntimeVars(runtime_vars));
-        self.player.send(EngineCommand::Start);
+        self.player.send(EngineCommand::Start {
+            document: Box::new(document),
+            runtime_vars,
+        });
         Ok(())
     }
 
     /// Pause a running macro.
     pub fn pause(&self) -> Result<(), String> {
-        if self.engine_state != EngineState::Running {
+        if self.engine_state() != EngineState::Running {
             return Err("Cannot pause: not running".into());
         }
         self.player.send(EngineCommand::Pause);
@@ -88,21 +70,15 @@ impl Coordinator {
 
     /// Resume a paused macro.
     pub fn resume(&self) -> Result<(), String> {
-        if self.engine_state != EngineState::Paused {
+        if self.engine_state() != EngineState::Paused {
             return Err("Cannot resume: not paused".into());
         }
         self.player.send(EngineCommand::Resume);
         Ok(())
     }
 
-    /// Stop the current run (cooperative).
     pub fn stop(&self) {
         self.player.send(EngineCommand::Stop);
-    }
-
-    /// Emergency stop (highest priority).
-    pub fn emergency_stop(&self) {
-        self.player.send(EngineCommand::EmergencyStop);
     }
 
     /// Drain all pending engine events (non-blocking).

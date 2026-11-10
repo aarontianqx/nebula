@@ -44,12 +44,6 @@ pub enum Action {
         timeout_ms: Option<u64>,
         poll_interval_ms: u64,
     },
-    /// Conditional execution: if condition then action, else optional action.
-    Conditional {
-        condition: Condition,
-        then_action: Box<Action>,
-        else_action: Option<Box<Action>>,
-    },
     /// Set a counter to a value.
     SetCounter { key: String, value: i32 },
     /// Increment a counter by 1.

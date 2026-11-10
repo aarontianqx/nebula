@@ -252,7 +252,7 @@ action: !drag
 
 The engine presses at `from`, interpolates toward `to` over `duration_ms`
 (~60 steps/sec, capped), then releases at `to`. The interpolation is
-interruptible: a Stop/EmergencyStop during the drag releases the button before
+interruptible: a stop during the drag releases the button before
 halting, so a half-finished drag never leaves the mouse stuck down.
 
 ```yaml

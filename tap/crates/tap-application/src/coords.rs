@@ -18,8 +18,7 @@ pub fn window_binding(doc: &MacroDocument) -> Option<&DslTargetWindow> {
 
 /// Whether `action` carries a screen position of its own.
 ///
-/// `Conditional` does not: the actions it wraps are shifted when they are dispatched. Every
-/// variant is listed so that a new action with a position cannot be forgotten here.
+/// Every variant is listed so that a new action with a position cannot be forgotten here.
 pub(crate) fn has_position(action: &Action) -> bool {
     match action {
         Action::Click { .. }
@@ -35,7 +34,6 @@ pub(crate) fn has_position(action: &Action) -> bool {
         | Action::TextInput { .. }
         | Action::Wait { .. }
         | Action::WaitUntil { .. }
-        | Action::Conditional { .. }
         | Action::SetCounter { .. }
         | Action::IncrCounter { .. }
         | Action::DecrCounter { .. }

@@ -8,6 +8,7 @@ use tap_core::{DslAction, DslMouseButton, MouseButton};
 use tauri::State;
 use tracing::{info, warn};
 
+use crate::app::stop_all;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -79,17 +80,8 @@ pub fn stop_execution(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn emergency_stop(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app_state = state.lock().unwrap();
-
-    app_state.coordinator.emergency_stop();
     warn!("Emergency stop triggered!");
-
-    // Also stop key-click mode if running (just signal, don't take)
-    if let Some(ref handle) = app_state.key_click_handle {
-        handle.stop();
-        info!("Key-click mode stop requested by emergency stop");
-    }
-
+    stop_all(&state.lock().unwrap());
     Ok(())
 }
 

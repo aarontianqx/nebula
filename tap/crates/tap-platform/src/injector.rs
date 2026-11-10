@@ -246,7 +246,6 @@ fn execute_action(enigo: &mut Enigo, action: &Action) -> PlatformResult<()> {
 
         // Engine-level actions never reach the injector.
         Action::WaitUntil { .. }
-        | Action::Conditional { .. }
         | Action::SetCounter { .. }
         | Action::IncrCounter { .. }
         | Action::DecrCounter { .. }

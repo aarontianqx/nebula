@@ -19,8 +19,8 @@ pub enum ResolveError {
     NotAnInteger { field: String, got: String },
     #[error("invalid condition: {0}")]
     Condition(String),
-    #[error("`call_macro` is expanded by the engine and has no primitive form")]
-    CallMacro,
+    #[error("`{0}` is carried out by the engine and has no concrete form")]
+    HandledByEngine(&'static str),
 }
 
 /// Resolve a [`DslValue`] used as an integer coordinate/amount.
@@ -83,8 +83,8 @@ pub(crate) fn resolve_condition(dsl: &tap_core::DslCondition) -> Result<Conditio
 
 /// Resolve a parameterized [`DslAction`] into a concrete [`Action`] using `vars`.
 ///
-/// Returns [`ResolveError::CallMacro`] for `call_macro`, which the engine expands
-/// inline rather than turning into a primitive action.
+/// `call_macro` and `conditional` are decided by the engine before an action is resolved, so they
+/// have no concrete form: [`ResolveError::HandledByEngine`].
 pub fn resolve_action(
     dsl: &DslAction,
     vars: &VariableStore,
@@ -152,19 +152,6 @@ pub fn resolve_action(
             timeout_ms: *timeout_ms,
             poll_interval_ms: *poll_interval_ms,
         },
-        DslAction::Conditional {
-            condition,
-            then_action,
-            else_action,
-        } => Action::Conditional {
-            condition: resolve_condition(condition)?,
-            then_action: Box::new(resolve_action(then_action, vars, engine)?),
-            else_action: else_action
-                .as_ref()
-                .map(|a| resolve_action(a, vars, engine))
-                .transpose()?
-                .map(Box::new),
-        },
         DslAction::SetCounter { key, value } => Action::SetCounter {
             key: key.clone(),
             value: resolve_i32(value, "set_counter.value", vars, engine)?,
@@ -173,7 +160,8 @@ pub fn resolve_action(
         DslAction::DecrCounter { key } => Action::DecrCounter { key: key.clone() },
         DslAction::ResetCounter { key } => Action::ResetCounter { key: key.clone() },
         DslAction::Exit => Action::Exit,
-        DslAction::CallMacro { .. } => return Err(ResolveError::CallMacro),
+        DslAction::CallMacro { .. } => return Err(ResolveError::HandledByEngine("call_macro")),
+        DslAction::Conditional { .. } => return Err(ResolveError::HandledByEngine("conditional")),
     };
     Ok(action)
 }

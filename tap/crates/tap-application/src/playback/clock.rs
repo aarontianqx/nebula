@@ -15,7 +15,6 @@
 //! `call_macro`) is deliberately **not** a stall: an overdue step still runs
 //! immediately afterwards. Only involuntary stalls are excluded.
 
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Accumulates stalled time. Pure and time-source agnostic: callers pass `now`
@@ -82,17 +81,17 @@ impl StallAccounting {
     }
 }
 
-/// The engine's run clock: a monotonic epoch plus shared stall accounting.
+/// The engine's run clock: a monotonic epoch plus the stall accounting.
 pub(crate) struct RunClock {
     epoch: Instant,
-    stalls: Mutex<StallAccounting>,
+    stalls: StallAccounting,
 }
 
 impl RunClock {
     pub(crate) fn new() -> Self {
         Self {
             epoch: Instant::now(),
-            stalls: Mutex::new(StallAccounting::default()),
+            stalls: StallAccounting::default(),
         }
     }
 
@@ -100,48 +99,25 @@ impl RunClock {
         self.epoch.elapsed()
     }
 
-    /// Start a stall that is ended explicitly with [`Self::end_stall`] (pause).
-    pub(crate) fn begin_stall(&self) {
+    pub(crate) fn begin_stall(&mut self) {
         let now = self.now();
-        self.stalls.lock().unwrap().begin(now);
+        self.stalls.begin(now);
     }
 
-    pub(crate) fn end_stall(&self) {
+    pub(crate) fn end_stall(&mut self) {
         let now = self.now();
-        self.stalls.lock().unwrap().end(now);
-    }
-
-    /// Start a stall that ends when the returned guard is dropped, on every
-    /// exit path (target window wait).
-    pub(crate) fn stall(&self) -> StallGuard<'_> {
-        self.begin_stall();
-        StallGuard { clock: self }
+        self.stalls.end(now);
     }
 
     pub(crate) fn origin(&self) -> ClockOrigin {
         let now = self.now();
-        self.stalls.lock().unwrap().origin(now)
+        self.stalls.origin(now)
     }
 
     /// Active milliseconds elapsed since `origin`.
     pub(crate) fn active_elapsed_ms(&self, origin: ClockOrigin) -> u64 {
         let now = self.now();
-        self.stalls
-            .lock()
-            .unwrap()
-            .active_elapsed(origin, now)
-            .as_millis() as u64
-    }
-}
-
-/// Ends a stall started by [`RunClock::stall`] when dropped.
-pub(crate) struct StallGuard<'a> {
-    clock: &'a RunClock,
-}
-
-impl Drop for StallGuard<'_> {
-    fn drop(&mut self) {
-        self.clock.end_stall();
+        self.stalls.active_elapsed(origin, now).as_millis() as u64
     }
 }
 
@@ -226,19 +202,5 @@ mod tests {
         acc.end(ms(10));
         let origin = acc.origin(ms(0));
         assert_eq!(acc.active_elapsed(origin, ms(50)), ms(50));
-    }
-
-    #[test]
-    fn stall_guard_ends_the_stall_on_drop() {
-        let clock = RunClock::new();
-        let origin = clock.origin();
-        {
-            let _guard = clock.stall();
-            std::thread::sleep(ms(60));
-        }
-        // The 60ms spent stalled must not be counted as active time.
-        assert!(clock.active_elapsed_ms(origin) < 40);
-        std::thread::sleep(ms(30));
-        assert!(clock.active_elapsed_ms(origin) >= 25);
     }
 }
