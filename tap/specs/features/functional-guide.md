@@ -108,7 +108,7 @@ tap 不追求成为企业级 RPA，而是提供**轻量、低门槛、可持续�
 
 ## 关键设计约束（需长期记住）
 
-1. **坐标系 = 注入空间**：所有鼠标坐标基于 OS 注入空间——**Windows 全屏物理像素**、**macOS point**，绝不使用 WebView 相对坐标。拾取器经 `browser_to_injection_scale()` 把浏览器 CSS 像素换算到注入空间，使录制 / 回放 / 拾取三者一致；`get_primary_scale_factor()` 仅作信息展示。**因此宏不跨机移植**，换机需重新拾取坐标。
+1. **坐标系 = 注入空间**：所有鼠标坐标基于 OS 注入空间——**Windows 全屏物理像素**、**macOS point**，绝不使用 WebView 相对坐标。拾取器经 `browser_to_injection_scale()` 把浏览器 CSS 像素换算到注入空间，使录制 / 回放 / 拾取三者一致。**因此宏不跨机移植**，换机需重新拾取坐标。
 2. **按键名归一化**：录制 / 捕获得到的平台按键名（`ControlLeft` / `ShiftLeft` / `MetaLeft` / `AltGr` / `Return` / `Kp5` …）在入库与注入前统一归一化为规范名（`Ctrl` / `Shift` / `Meta` / `Enter` / `5` …），避免修饰键被误当字母键注入，并保证同一宏可在 Win/mac 间移植回放。
 3. **工具模式 vs DSL**：事件驱动的工具模式（Key→Click）由实时输入驱动、时长不定，刻意不塞进时间线 DSL，避免引擎复杂化。它属于 Application/Tauri 层的 Tool Runner。
 4. **单一数据源**：规范宏是 `SessionStore` 持有的 `MacroDocument`；运行时 `Profile` 只是用于展示/IPC 的解析投影。编辑与执行始终经由文档，绝不走有损副本。

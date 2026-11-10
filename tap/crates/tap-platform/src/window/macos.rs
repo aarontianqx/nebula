@@ -151,11 +151,3 @@ pub fn get_foreground_window() -> Option<WindowInfo> {
 pub fn list_windows() -> Vec<WindowInfo> {
     on_screen_windows()
 }
-
-/// Get the rectangle of a window by handle (its `CGWindowID`).
-pub fn get_window_rect(handle: usize) -> Option<WindowRect> {
-    on_screen_windows()
-        .into_iter()
-        .find(|w| w.handle == handle)
-        .map(|w| w.rect)
-}

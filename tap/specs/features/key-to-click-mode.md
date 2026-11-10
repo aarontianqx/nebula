@@ -50,6 +50,6 @@ DSL 的抽象是“时间线上的动作”，而 Key→Click 由用户实时输
 
 ## 实现落点
 
-- 后端：`tap/src-tauri/src/key_click.rs`（Tool Runner 线程 + 输入订阅 + 注入），命令 `start_key_click` / `stop_key_click` / `get_key_click_status`。
+- 后端：`tap/src-tauri/src/key_click.rs`（Tool Runner 线程 + 输入订阅 + 注入），命令 `start_key_click` / `stop_key_click`。
 - 前端：`toolStore` + `SimpleConfig`（Simple 模式下 Action 增加 Key→Click 项）。
 - 行为与上文一致：触发 A–Z、Space/Stop 终止、与 Engine/Recorder 互斥，配置项含鼠标按键、点击位置、`min_interval_ms`、`hold_delay_ms`、窗口锁定。

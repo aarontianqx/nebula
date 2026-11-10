@@ -127,9 +127,4 @@ impl Coordinator {
     pub fn set_runtime_vars(&mut self, vars: HashMap<String, VariableValue>) {
         self.session.set_runtime_vars(vars);
     }
-
-    /// Borrow the current run-time variable overrides.
-    pub fn runtime_vars(&self) -> &HashMap<String, VariableValue> {
-        self.session.runtime_vars()
-    }
 }

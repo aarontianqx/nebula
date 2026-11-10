@@ -1,16 +1,9 @@
-//! System queries: OS permissions, global mouse tracking, windows and pixels.
-
-use std::sync::Mutex;
+//! System queries: OS permissions, windows and pixels.
 
 use tap_platform::{
-    check_permissions, get_pixel_color, is_window_focused, list_windows, open_permission_settings,
-    request_screen_recording, start_mouse_tracker, window_exists, Color, MouseTrackerConfig,
-    PermissionStatus, WindowInfo,
+    check_permissions, get_pixel_color, list_windows, open_permission_settings,
+    request_screen_recording, Color, PermissionStatus, WindowInfo,
 };
-use tauri::State;
-use tracing::info;
-
-use crate::state::AppState;
 
 #[tauri::command]
 pub fn cmd_check_permissions() -> PermissionStatus {
@@ -25,34 +18,6 @@ pub fn cmd_request_screen_recording() -> PermissionStatus {
 #[tauri::command]
 pub fn cmd_open_permission_settings(which: String) -> Result<(), String> {
     open_permission_settings(&which)
-}
-
-#[tauri::command]
-pub fn start_mouse_tracking(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let mut app_state = state.lock().unwrap();
-
-    if app_state.mouse_tracker.is_some() {
-        return Ok(()); // Already tracking
-    }
-
-    let config = MouseTrackerConfig::default();
-    let tracker = start_mouse_tracker(config);
-    app_state.mouse_tracker = Some(tracker);
-
-    info!("Global mouse tracking started");
-    Ok(())
-}
-
-#[tauri::command]
-pub fn stop_mouse_tracking(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let mut app_state = state.lock().unwrap();
-
-    if let Some(tracker) = app_state.mouse_tracker.take() {
-        tracker.stop();
-        info!("Global mouse tracking stopped");
-    }
-
-    Ok(())
 }
 
 /// Window info for frontend.
@@ -116,14 +81,4 @@ pub fn cmd_get_foreground_window() -> Option<WindowInfoResponse> {
 #[tauri::command]
 pub fn cmd_get_pixel_color(x: i32, y: i32) -> Option<ColorResponse> {
     get_pixel_color(x, y).map(|c| c.into())
-}
-
-#[tauri::command]
-pub fn cmd_check_window_focused(title: Option<String>, process: Option<String>) -> bool {
-    is_window_focused(title.as_deref(), process.as_deref())
-}
-
-#[tauri::command]
-pub fn cmd_check_window_exists(title: Option<String>, process: Option<String>) -> bool {
-    window_exists(title.as_deref(), process.as_deref())
 }

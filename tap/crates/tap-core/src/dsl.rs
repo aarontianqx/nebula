@@ -236,7 +236,6 @@ pub enum DslAction {
     /// Exit/stop macro.
     Exit,
 
-    // === Phase 4: Sub-macro call ===
     /// Call another macro.
     #[serde(rename = "call_macro")]
     CallMacro {

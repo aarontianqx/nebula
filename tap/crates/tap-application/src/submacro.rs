@@ -1,48 +1,32 @@
-//! Sub-macro calling functionality for Phase 4.
-//!
-//! Provides:
-//! - Loading and executing sub-macros
-//! - Call stack tracking to prevent circular calls
-//! - Variable context sharing between parent and child macros
+//! What a `call_macro` needs besides the callee itself: a call stack that stops cycles and runaway
+//! depth, the arguments evaluated in the caller's scope, and the callee's own scope.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::storage::load_profile;
 use tap_core::{resolve_typed_value, DslValue, ExpressionEngine, MacroDocument};
-use tap_core::{Profile, VariableStore, VariableValue};
+use tap_core::{VariableStore, VariableValue};
 
-/// Maximum call stack depth to prevent infinite recursion.
 pub const MAX_CALL_DEPTH: usize = 10;
 
-/// Sub-macro execution context.
+#[derive(Default)]
 pub struct SubMacroContext {
-    /// Current call stack (macro names).
     call_stack: Vec<String>,
-    /// Cached loaded profiles.
-    profile_cache: HashMap<String, Profile>,
 }
 
 impl SubMacroContext {
-    /// Create a new sub-macro context.
     pub fn new() -> Self {
-        Self {
-            call_stack: Vec::new(),
-            profile_cache: HashMap::new(),
-        }
+        Self::default()
     }
 
-    /// Check if calling a macro would create a circular reference.
     pub fn would_be_circular(&self, macro_name: &str) -> bool {
         self.call_stack.iter().any(|name| name == macro_name)
     }
 
-    /// Check if the call stack has reached maximum depth.
     pub fn is_max_depth(&self) -> bool {
         self.call_stack.len() >= MAX_CALL_DEPTH
     }
 
-    /// Push a macro onto the call stack.
     pub fn push(&mut self, macro_name: &str) -> Result<(), SubMacroError> {
         if self.would_be_circular(macro_name) {
             return Err(SubMacroError::CircularCall {
@@ -60,49 +44,13 @@ impl SubMacroContext {
         Ok(())
     }
 
-    /// Pop a macro from the call stack.
     pub fn pop(&mut self) {
         self.call_stack.pop();
     }
-
-    /// Get the current call stack.
-    pub fn call_stack(&self) -> &[String] {
-        &self.call_stack
-    }
-
-    /// Get the current call depth.
-    pub fn depth(&self) -> usize {
-        self.call_stack.len()
-    }
-
-    /// Load a profile by name (with caching).
-    pub fn load_profile(&mut self, name: &str) -> Result<&Profile, SubMacroError> {
-        if !self.profile_cache.contains_key(name) {
-            let profile = load_profile(name).map_err(|e| SubMacroError::LoadError {
-                macro_name: name.to_string(),
-                error: e.to_string(),
-            })?;
-            self.profile_cache.insert(name.to_string(), profile);
-        }
-        Ok(self.profile_cache.get(name).unwrap())
-    }
-
-    /// Clear the profile cache.
-    pub fn clear_cache(&mut self) {
-        self.profile_cache.clear();
-    }
 }
 
-impl Default for SubMacroContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Thread-safe sub-macro context handle.
 pub type SubMacroContextHandle = Arc<Mutex<SubMacroContext>>;
 
-/// Create a new thread-safe sub-macro context.
 pub fn create_submacro_context() -> SubMacroContextHandle {
     Arc::new(Mutex::new(SubMacroContext::new()))
 }
@@ -134,21 +82,16 @@ pub fn prepare_submacro_args(
     Ok(result)
 }
 
-/// Create a child variable store for sub-macro execution.
-/// The child inherits the parent's variables but can override them with args.
+/// The callee sees the caller's scope, then its own declared defaults, then the call's arguments
+/// (later ones win).
 pub fn create_child_variable_store(
     parent: &VariableStore,
-    profile: &MacroDocument,
+    callee: &MacroDocument,
     args: HashMap<String, VariableValue>,
 ) -> VariableStore {
     let mut child = parent.clone();
-
-    // Initialize with profile's variable definitions
-    child.init_from_definitions(&profile.variables);
-
-    // Override with provided arguments
+    child.init_from_definitions(&callee.variables);
     child.set_variables(args);
-
     child
 }
 
@@ -162,10 +105,6 @@ pub enum SubMacroError {
     },
     #[error("Maximum call depth exceeded: {depth}/{max}")]
     MaxDepthExceeded { depth: usize, max: usize },
-    #[error("Failed to load macro '{macro_name}': {error}")]
-    LoadError { macro_name: String, error: String },
-    #[error("Macro not found: {0}")]
-    NotFound(String),
     #[error("Variable error in sub-macro: {0}")]
     VariableError(String),
 }
@@ -180,13 +119,13 @@ mod tests {
 
         assert!(ctx.push("macro1").is_ok());
         assert!(ctx.push("macro2").is_ok());
-        assert_eq!(ctx.depth(), 2);
+        assert_eq!(ctx.call_stack.len(), 2);
 
         // Circular call should fail
         assert!(ctx.push("macro1").is_err());
 
         ctx.pop();
-        assert_eq!(ctx.depth(), 1);
+        assert_eq!(ctx.call_stack.len(), 1);
     }
 
     #[test]

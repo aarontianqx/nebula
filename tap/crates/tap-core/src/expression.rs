@@ -1,41 +1,29 @@
-//! Expression evaluation using Rhai scripting engine.
-//!
-//! Provides:
-//! - Safe expression evaluation in a sandboxed environment
-//! - Variable/counter access within expressions
-//! - Support for {{ expr }} syntax in DSL values
+//! Sandboxed `{{ expr }}` evaluation (Rhai) over the run scope.
 
 use rhai::{Dynamic, Engine, Scope};
 use std::sync::Arc;
 
 use crate::variables::{VariableStore, VariableValue};
 
-/// Expression evaluator using Rhai.
 pub struct ExpressionEngine {
     engine: Engine,
 }
 
 impl ExpressionEngine {
-    /// Create a new expression engine with sandboxed settings.
+    /// Rhai ships without file or network access; the limits keep a runaway expression from
+    /// stalling the run.
     pub fn new() -> Self {
         let mut engine = Engine::new();
-
-        // Sandbox settings: disable dangerous operations
         engine.set_max_expr_depths(64, 64);
         engine.set_max_call_levels(32);
         engine.set_max_operations(10000);
-        engine.set_max_modules(0); // No external modules
+        engine.set_max_modules(0);
         engine.set_max_string_size(4096);
         engine.set_max_array_size(1000);
         engine.set_max_map_size(100);
-
-        // Disable file system and network access by not registering those modules
-        // Rhai by default doesn't have these, so we're safe
-
         Self { engine }
     }
 
-    /// Evaluate an expression with the given variable store.
     pub fn evaluate(
         &self,
         expr: &str,
@@ -43,78 +31,25 @@ impl ExpressionEngine {
     ) -> Result<ExpressionResult, ExpressionError> {
         let mut scope = Scope::new();
 
-        // Add all variables to scope
         for (key, value) in variables.all_variables() {
             match value {
-                crate::variables::VariableValue::String(s) => {
-                    scope.push(key.clone(), s.clone());
-                }
-                crate::variables::VariableValue::Number(n) => {
-                    // Use i64 for integers, f64 for floats
-                    if n.fract() == 0.0 {
-                        scope.push(key.clone(), *n as i64);
-                    } else {
-                        scope.push(key.clone(), *n);
-                    }
-                }
-                crate::variables::VariableValue::Boolean(b) => {
-                    scope.push(key.clone(), *b);
-                }
-            }
+                VariableValue::String(s) => scope.push(key.clone(), s.clone()),
+                // Whole numbers become integers so `x % 2` and `x / 2` behave as written.
+                VariableValue::Number(n) if n.fract() == 0.0 => scope.push(key.clone(), *n as i64),
+                VariableValue::Number(n) => scope.push(key.clone(), *n),
+                VariableValue::Boolean(b) => scope.push(key.clone(), *b),
+            };
         }
-
-        // Add all counters to scope
         for (key, value) in variables.all_counters() {
-            scope.push(key.clone(), value as i64);
+            scope.push(key, value as i64);
         }
 
-        // Evaluate the expression
         let result = self
             .engine
             .eval_with_scope::<Dynamic>(&mut scope, expr)
             .map_err(|e| ExpressionError::EvaluationError(e.to_string()))?;
 
         Ok(ExpressionResult::from_dynamic(result))
-    }
-
-    /// Evaluate an expression and return as i32.
-    pub fn evaluate_to_i32(
-        &self,
-        expr: &str,
-        variables: &VariableStore,
-    ) -> Result<i32, ExpressionError> {
-        let result = self.evaluate(expr, variables)?;
-        result
-            .as_i32()
-            .ok_or_else(|| ExpressionError::TypeMismatch {
-                expected: "integer".to_string(),
-                got: result.type_name().to_string(),
-            })
-    }
-
-    /// Evaluate an expression and return as string.
-    pub fn evaluate_to_string(
-        &self,
-        expr: &str,
-        variables: &VariableStore,
-    ) -> Result<String, ExpressionError> {
-        let result = self.evaluate(expr, variables)?;
-        Ok(result.as_string())
-    }
-
-    /// Evaluate an expression and return as bool.
-    pub fn evaluate_to_bool(
-        &self,
-        expr: &str,
-        variables: &VariableStore,
-    ) -> Result<bool, ExpressionError> {
-        let result = self.evaluate(expr, variables)?;
-        result
-            .as_bool()
-            .ok_or_else(|| ExpressionError::TypeMismatch {
-                expected: "boolean".to_string(),
-                got: result.type_name().to_string(),
-            })
     }
 }
 
@@ -124,7 +59,6 @@ impl Default for ExpressionEngine {
     }
 }
 
-/// Result of expression evaluation.
 #[derive(Debug, Clone)]
 pub enum ExpressionResult {
     Integer(i64),
@@ -135,7 +69,6 @@ pub enum ExpressionResult {
 }
 
 impl ExpressionResult {
-    /// Convert from Rhai Dynamic.
     pub fn from_dynamic(d: Dynamic) -> Self {
         if d.is::<i64>() {
             ExpressionResult::Integer(d.cast::<i64>())
@@ -148,43 +81,10 @@ impl ExpressionResult {
         } else if d.is_unit() {
             ExpressionResult::Unit
         } else {
-            // Convert other types to string
             ExpressionResult::String(d.to_string())
         }
     }
 
-    /// Get the type name.
-    pub fn type_name(&self) -> &str {
-        match self {
-            ExpressionResult::Integer(_) => "integer",
-            ExpressionResult::Float(_) => "float",
-            ExpressionResult::String(_) => "string",
-            ExpressionResult::Boolean(_) => "boolean",
-            ExpressionResult::Unit => "unit",
-        }
-    }
-
-    /// Convert to i32.
-    pub fn as_i32(&self) -> Option<i32> {
-        match self {
-            ExpressionResult::Integer(n) => Some(*n as i32),
-            ExpressionResult::Float(f) => Some(*f as i32),
-            ExpressionResult::String(s) => s.parse().ok(),
-            _ => None,
-        }
-    }
-
-    /// Convert to f64.
-    pub fn as_f64(&self) -> Option<f64> {
-        match self {
-            ExpressionResult::Integer(n) => Some(*n as f64),
-            ExpressionResult::Float(f) => Some(*f),
-            ExpressionResult::String(s) => s.parse().ok(),
-            _ => None,
-        }
-    }
-
-    /// Convert to string.
     pub fn as_string(&self) -> String {
         match self {
             ExpressionResult::Integer(n) => n.to_string(),
@@ -192,21 +92,6 @@ impl ExpressionResult {
             ExpressionResult::String(s) => s.clone(),
             ExpressionResult::Boolean(b) => b.to_string(),
             ExpressionResult::Unit => "()".to_string(),
-        }
-    }
-
-    /// Convert to bool.
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            ExpressionResult::Boolean(b) => Some(*b),
-            ExpressionResult::Integer(n) => Some(*n != 0),
-            ExpressionResult::Float(f) => Some(*f != 0.0),
-            ExpressionResult::String(s) => match s.to_lowercase().as_str() {
-                "true" | "yes" | "1" => Some(true),
-                "false" | "no" | "0" => Some(false),
-                _ => None,
-            },
-            ExpressionResult::Unit => Some(false),
         }
     }
 }
@@ -360,11 +245,8 @@ mod tests {
         let engine = ExpressionEngine::new();
         let vars = VariableStore::new();
 
-        let result = engine.evaluate("1 + 2", &vars).unwrap();
-        assert_eq!(result.as_i32(), Some(3));
-
-        let result = engine.evaluate("10 * 5", &vars).unwrap();
-        assert_eq!(result.as_i32(), Some(50));
+        assert_eq!(engine.evaluate("1 + 2", &vars).unwrap().as_string(), "3");
+        assert_eq!(engine.evaluate("10 * 5", &vars).unwrap().as_string(), "50");
     }
 
     #[test]
@@ -374,8 +256,7 @@ mod tests {
         vars.set_variable("x", 10);
         vars.set_variable("y", 20);
 
-        let result = engine.evaluate("x + y", &vars).unwrap();
-        assert_eq!(result.as_i32(), Some(30));
+        assert_eq!(engine.evaluate("x + y", &vars).unwrap().as_string(), "30");
     }
 
     #[test]
@@ -384,8 +265,10 @@ mod tests {
         let mut vars = VariableStore::new();
         vars.set_counter("count", 5);
 
-        let result = engine.evaluate("count * 2", &vars).unwrap();
-        assert_eq!(result.as_i32(), Some(10));
+        assert_eq!(
+            engine.evaluate("count * 2", &vars).unwrap().as_string(),
+            "10"
+        );
     }
 
     #[test]
@@ -394,10 +277,8 @@ mod tests {
         let mut vars = VariableStore::new();
         vars.set_variable("name", "World");
 
-        let result = engine
-            .evaluate_to_string("\"Hello, \" + name", &vars)
-            .unwrap();
-        assert_eq!(result, "Hello, World");
+        let result = engine.evaluate("\"Hello, \" + name", &vars).unwrap();
+        assert_eq!(result.as_string(), "Hello, World");
     }
 
     #[test]
@@ -406,11 +287,14 @@ mod tests {
         let mut vars = VariableStore::new();
         vars.set_variable("x", 10);
 
-        let result = engine.evaluate_to_bool("x > 5", &vars).unwrap();
-        assert!(result);
-
-        let result = engine.evaluate_to_bool("x < 5", &vars).unwrap();
-        assert!(!result);
+        assert!(matches!(
+            engine.evaluate("x > 5", &vars).unwrap(),
+            ExpressionResult::Boolean(true)
+        ));
+        assert!(matches!(
+            engine.evaluate("x < 5", &vars).unwrap(),
+            ExpressionResult::Boolean(false)
+        ));
     }
 
     #[test]

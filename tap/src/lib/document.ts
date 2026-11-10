@@ -14,6 +14,11 @@ import type {
   VariableType,
 } from "./types";
 
+/** `value` unless it is empty, in which case the field is dropped (serde reads that as `None`). */
+export function orUndefined(value: string): string | undefined {
+  return value === "" ? undefined : value;
+}
+
 /** The document shown before the backend has delivered the real one. */
 export function emptyDocument(): MacroDocument {
   return {

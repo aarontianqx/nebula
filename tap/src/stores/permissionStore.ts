@@ -59,8 +59,3 @@ export const usePermissionStore = create<PermissionStore>((set) => ({
 export function selectInputReady(s: PermissionStore): boolean {
   return s.os !== "macos" || s.accessibility;
 }
-
-/** Pixel/window reads (color picker, conditions, target window) need Screen Recording. */
-export function selectCaptureReady(s: PermissionStore): boolean {
-  return s.os !== "macos" || s.screen_recording;
-}

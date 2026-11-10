@@ -29,20 +29,6 @@ impl Color {
         Self { r, g, b }
     }
 
-    /// Create color from hex string (e.g., "#FF0000" or "FF0000").
-    pub fn from_hex(hex: &str) -> Option<Self> {
-        let hex = hex.trim_start_matches('#');
-        if hex.len() != 6 {
-            return None;
-        }
-
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-
-        Some(Self { r, g, b })
-    }
-
     /// Convert to hex string (e.g., "#FF0000").
     pub fn to_hex(&self) -> String {
         format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
@@ -87,29 +73,9 @@ pub fn get_pixel_color(x: i32, y: i32) -> Option<Color> {
     }
 }
 
-/// Check if the pixel at the given coordinates matches the expected color.
-pub fn pixel_matches(x: i32, y: i32, expected: &Color, tolerance: u8) -> bool {
-    get_pixel_color(x, y)
-        .map(|c| c.matches(expected, tolerance))
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_color_from_hex() {
-        let color = Color::from_hex("#FF0000").unwrap();
-        assert_eq!(color.r, 255);
-        assert_eq!(color.g, 0);
-        assert_eq!(color.b, 0);
-
-        let color = Color::from_hex("00FF00").unwrap();
-        assert_eq!(color.r, 0);
-        assert_eq!(color.g, 255);
-        assert_eq!(color.b, 0);
-    }
 
     #[test]
     fn test_color_to_hex() {

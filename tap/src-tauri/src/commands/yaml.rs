@@ -34,23 +34,6 @@ pub fn cmd_export_yaml(state: State<'_, Mutex<AppState>>) -> Result<String, Stri
     document_to_yaml(app_state.coordinator.document()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn cmd_export_yaml_with_metadata(
-    state: State<'_, Mutex<AppState>>,
-    description: Option<String>,
-    author: Option<String>,
-) -> Result<String, String> {
-    let app_state = state.lock().unwrap();
-    let mut document = app_state.coordinator.document().clone();
-    if description.is_some() {
-        document.description = description;
-    }
-    if author.is_some() {
-        document.author = author;
-    }
-    document_to_yaml(&document).map_err(|e| e.to_string())
-}
-
 /// Validate a document about to replace the current one, flattening the findings into one message.
 ///
 /// Used by the import paths, which (unlike live editing) refuse documents that would not run.
@@ -119,25 +102,4 @@ pub fn cmd_set_runtime_variables(
         .set_runtime_vars(overrides);
 
     Ok(())
-}
-
-#[tauri::command]
-pub fn cmd_get_runtime_variables(
-    state: State<'_, Mutex<AppState>>,
-) -> std::collections::HashMap<String, serde_json::Value> {
-    let app_state = state.lock().unwrap();
-    let mut result = std::collections::HashMap::new();
-
-    for (key, value) in app_state.coordinator.runtime_vars() {
-        let json_val = match value {
-            VariableValue::String(s) => serde_json::Value::String(s.clone()),
-            VariableValue::Number(n) => serde_json::Value::Number(
-                serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
-            ),
-            VariableValue::Boolean(b) => serde_json::Value::Bool(*b),
-        };
-        result.insert(key.clone(), json_val);
-    }
-
-    result
 }

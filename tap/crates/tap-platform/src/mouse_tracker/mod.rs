@@ -18,13 +18,6 @@ mod rdev_impl;
 #[cfg(target_os = "macos")]
 mod macos;
 
-/// Current mouse position.
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
-pub struct MousePosition {
-    pub x: i32,
-    pub y: i32,
-}
-
 /// Events emitted by the mouse tracker.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type")]

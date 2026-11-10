@@ -5,7 +5,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use tap_core::Profile;
 use tap_core::{document_to_yaml, MacroDocument};
 use thiserror::Error;
 use tracing::{debug, info};
@@ -21,8 +20,6 @@ pub enum StorageError {
     Json(#[from] serde_json::Error),
     #[error("YAML error: {0}")]
     Yaml(String),
-    #[error("Document conversion error: {0}")]
-    Conversion(String),
     #[error("Profile not found: {0}")]
     NotFound(String),
 }
@@ -49,10 +46,6 @@ pub fn ensure_profiles_dir() -> StorageResult<PathBuf> {
     }
     Ok(dir)
 }
-
-// ============================================================================
-// Document API (canonical, lossless)
-// ============================================================================
 
 /// Save a macro document to disk as YAML.
 pub fn save_document(doc: &MacroDocument) -> StorageResult<PathBuf> {
@@ -89,20 +82,6 @@ fn load_document_from(dir: &Path, name: &str) -> StorageResult<MacroDocument> {
     }
 
     Err(StorageError::NotFound(name.to_string()))
-}
-
-// ============================================================================
-// Profile API (resolved runtime form, thin adapters over the document API)
-// ============================================================================
-
-/// Load a runtime profile from disk by name.
-///
-/// Loads the canonical document and resolves it to the runtime form. Fails with
-/// [`StorageError::Conversion`] if the document cannot be resolved (e.g. it uses
-/// unresolved variable references in coordinates).
-pub fn load_profile(name: &str) -> StorageResult<Profile> {
-    let doc = load_document(name)?;
-    Profile::try_from(&doc).map_err(|e| StorageError::Conversion(e.to_string()))
 }
 
 /// Delete a profile from disk.

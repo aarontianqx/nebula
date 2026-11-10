@@ -2,7 +2,7 @@ import { formatCondition } from "./conditions";
 import type { ActionInfo, DslAction, DslActionKind, DslMouseButton, DslValue } from "./types";
 
 /** Makes a `switch` / `if` chain over a union exhaustive: a new variant fails `tsc` here. */
-export function assertNever(value: never): never {
+function assertNever(value: never): never {
   throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);
 }
 
@@ -221,15 +221,6 @@ export function formatResolvedAction(action: ActionInfo): string {
   if ("Wait" in action) return `Wait ${action.Wait.ms}ms`;
   if ("Scroll" in action) return `Scroll (${action.Scroll.delta_x}, ${action.Scroll.delta_y})`;
   return JSON.stringify(action);
-}
-
-export function formatTime(): string {
-  const now = new Date();
-  const h = now.getHours().toString().padStart(2, "0");
-  const m = now.getMinutes().toString().padStart(2, "0");
-  const s = now.getSeconds().toString().padStart(2, "0");
-  const ms = now.getMilliseconds().toString().padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
 }
 
 export function formatDuration(ms: number): string {

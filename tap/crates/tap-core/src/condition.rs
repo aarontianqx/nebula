@@ -1,9 +1,5 @@
-//! Condition types and evaluation for Phase 3 conditional execution.
-//!
-//! Provides:
-//! - Condition enum for different condition types
-//! - ConditionEvaluator for evaluating conditions
-//! - ConditionalAction for actions with conditions
+//! The runtime form of a condition, and how it is evaluated against the run scope and the
+//! platform.
 
 use serde::{Deserialize, Serialize};
 

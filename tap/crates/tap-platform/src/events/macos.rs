@@ -99,10 +99,6 @@ pub struct MacOSEvent {
     pub timestamp_ms: u64,
 }
 
-// ============================================================================
-// SINGLETON GLOBAL EVENT LISTENER
-// ============================================================================
-
 /// Global singleton for the event listener (using OnceLock for safe initialization)
 static GLOBAL_LISTENER: OnceLock<Arc<GlobalEventListener>> = OnceLock::new();
 
@@ -363,10 +359,6 @@ fn run_event_tap(sender: Sender<MacOSEvent>) -> Result<(), String> {
     info!("macOS event listener stopped");
     Ok(())
 }
-
-// ============================================================================
-// PUBLIC API
-// ============================================================================
 
 /// A handle to receive global macOS events.
 /// When dropped, it unsubscribes from the global listener.

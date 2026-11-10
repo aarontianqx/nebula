@@ -140,7 +140,7 @@ fn get_process_name(pid: u32) -> Option<String> {
 /// (about 7 px on the left, right and bottom), which would shift every window-relative
 /// coordinate. The DWM extended frame bounds are the visible frame; the plain rectangle is the
 /// fallback for windows DWM does not report (and for a disabled compositor).
-pub fn get_window_rect(handle: usize) -> Option<WindowRect> {
+fn get_window_rect(handle: usize) -> Option<WindowRect> {
     unsafe {
         let hwnd = handle as HWND;
         let mut rect: RECT = std::mem::zeroed();

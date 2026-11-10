@@ -1,13 +1,5 @@
-//! Window API for detecting and interacting with OS windows.
-//!
-//! Provides functionality for:
-//! - Getting foreground window information
-//! - Finding windows by title or process name
-//! - Getting window rectangles for relative coordinate support
-//!
-//! Platform implementations:
-//! - Windows: Uses Win32 API (`windows.rs`)
-//! - macOS: Uses Quartz window services / `CGWindowList` (`macos.rs`)
+//! Window queries: the foreground window, the list of visible windows, and which of them a
+//! target (title / process pattern) stands for.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,13 +33,6 @@ pub struct WindowRect {
     pub y: i32,
     pub width: i32,
     pub height: i32,
-}
-
-impl WindowRect {
-    /// Convert relative coordinates to absolute screen coordinates.
-    pub fn to_absolute(&self, rel_x: i32, rel_y: i32) -> (i32, i32) {
-        (self.x + rel_x, self.y + rel_y)
-    }
 }
 
 /// The window that stands for the application `pid`, among `windows` (front to back).
@@ -91,22 +76,6 @@ pub fn get_foreground_window() -> Option<WindowInfo> {
     }
 }
 
-/// Find a window by its title (partial match, case-insensitive).
-pub fn find_window_by_title(title: &str) -> Option<WindowInfo> {
-    let title_lower = title.to_lowercase();
-    list_windows()
-        .into_iter()
-        .find(|w| w.title.to_lowercase().contains(&title_lower))
-}
-
-/// Find a window by process name (partial match, case-insensitive).
-pub fn find_window_by_process(process: &str) -> Option<WindowInfo> {
-    let process_lower = process.to_lowercase();
-    list_windows()
-        .into_iter()
-        .find(|w| w.process_name.to_lowercase().contains(&process_lower))
-}
-
 /// List all visible windows.
 pub fn list_windows() -> Vec<WindowInfo> {
     #[cfg(windows)]
@@ -120,23 +89,6 @@ pub fn list_windows() -> Vec<WindowInfo> {
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         Vec::new()
-    }
-}
-
-/// Get the rectangle of a window by handle.
-pub fn get_window_rect(handle: usize) -> Option<WindowRect> {
-    #[cfg(windows)]
-    {
-        windows::get_window_rect(handle)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        macos::get_window_rect(handle)
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        let _ = handle;
-        None
     }
 }
 

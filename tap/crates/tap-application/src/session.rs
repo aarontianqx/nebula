@@ -73,11 +73,6 @@ impl SessionStore {
     pub fn runtime_vars(&self) -> &HashMap<String, VariableValue> {
         &self.runtime_vars
     }
-
-    /// Clear all run-time variable overrides.
-    pub fn clear_runtime_vars(&mut self) {
-        self.runtime_vars.clear();
-    }
 }
 
 impl Default for SessionStore {

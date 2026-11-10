@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { emptyDocument, MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX, parseRepeat } from "../lib/document";
+import { emptyDocument, MAX_HUMANIZE_DELAY_MS, MAX_HUMANIZE_POSITION_PX, orUndefined, parseRepeat } from "../lib/document";
 import { api, isTauri, pickOpenPath, pickSavePath } from "../lib/ipc";
 import type {
   CoordinateSpace,
@@ -85,11 +85,6 @@ interface DocumentStore {
   setAtMs: (index: number, atMs: number) => void;
   adjustDelay: (index: number, delta: number) => void;
   batchAdjustDelay: (delta: number) => void;
-}
-
-/** `value` unless it is empty, in which case the field is dropped (serde treats it as `None`). */
-function orUndefined(value: string): string | undefined {
-  return value === "" ? undefined : value;
 }
 
 export const useDocumentStore = create<DocumentStore>((set, get) => {

@@ -431,40 +431,6 @@ select.input {
   animation: pulse 0.5s infinite;
 }
 
-.picking-mode {
-  cursor: crosshair !important;
-}
-
-.picking-mode * {
-  cursor: crosshair !important;
-}
-
-.picking-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.3);
-  z-index: 1000;
-  cursor: crosshair;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.picking-hint {
-  background: rgba(0, 0, 0, 0.8);
-  color: white;
-  padding: 16px 24px;
-  border-radius: 8px;
-  font-size: 14px;
-  text-align: center;
-  line-height: 1.6;
-  pointer-events: auto;
-  cursor: pointer;
-}
-
 /* ===== Last Action Display ===== */
 .last-action {
   display: flex;
@@ -725,7 +691,7 @@ select.input {
   opacity: 1;
 }
 
-/* ===== Phase 3: Target Window ===== */
+/* ===== Target Window ===== */
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -751,7 +717,7 @@ select.input {
   color: var(--warning);
 }
 
-/* ===== Phase 3: Color Picker ===== */
+/* ===== Color Picker ===== */
 .color-preview {
   display: flex;
   align-items: center;
@@ -783,7 +749,7 @@ select.input {
   color: var(--muted);
 }
 
-/* ===== Phase 4: DSL / Code View ===== */
+/* ===== DSL / Code View ===== */
 .timeline-header {
   display: flex;
   align-items: center;
@@ -916,7 +882,7 @@ select.input {
   justify-content: flex-end;
 }
 
-/* ===== Phase 4: Variable Dialog Modal ===== */
+/* ===== Variable Dialog Modal ===== */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1037,7 +1003,7 @@ select.input {
   color: var(--muted);
 }
 
-/* ===== M8: Profiles list (name + delete row) ===== */
+/* ===== Profiles list (name + delete row) ===== */
 .profile-item {
   display: flex;
   align-items: center;
@@ -1091,7 +1057,7 @@ select.input {
   cursor: not-allowed;
 }
 
-/* ===== M8: Timeline editor body (view + inspector) ===== */
+/* ===== Timeline editor body (view + inspector) ===== */
 .timeline-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
@@ -1117,13 +1083,7 @@ select.input {
   font-style: italic;
 }
 
-.readonly-banner {
-  border-color: rgba(245, 158, 11, 0.4);
-  background: rgba(245, 158, 11, 0.1);
-  margin-bottom: 12px;
-}
-
-/* ===== M8: Inspector ===== */
+/* ===== Inspector ===== */
 .inspector-card {
   position: sticky;
   top: 0;
@@ -1293,7 +1253,7 @@ select.add-action {
   justify-content: space-between;
 }
 
-/* ===== M8: Rail view ===== */
+/* ===== Rail view ===== */
 .timeline-rail-card {
   padding-top: 12px;
 }
@@ -1452,7 +1412,7 @@ select.add-action {
   cursor: not-allowed;
 }
 
-/* ===== M10: Permission + onboarding banners ===== */
+/* ===== Permission + onboarding banners ===== */
 .btn-small {
   padding: 6px 12px;
   font-size: 12px;
@@ -1580,7 +1540,7 @@ kbd {
   margin-bottom: 6px;
 }
 
-/* ===== M12: Dry-run ===== */
+/* ===== Dry-run ===== */
 .dry-run-toggle {
   margin-top: 12px;
 }

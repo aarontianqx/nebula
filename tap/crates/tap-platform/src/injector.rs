@@ -22,16 +22,6 @@ pub trait InputInjector: Send + Sync {
     fn inject(&self, action: &Action) -> PlatformResult<()>;
 }
 
-/// Minimal no-op injector for early UI development / testing.
-pub struct NoopInjector;
-
-impl InputInjector for NoopInjector {
-    fn inject(&self, action: &Action) -> PlatformResult<()> {
-        debug!(?action, "NoopInjector: would inject action");
-        Ok(())
-    }
-}
-
 /// Internal command for the injection thread.
 struct InjectionCommand {
     action: Action,
@@ -254,7 +244,7 @@ fn execute_action(enigo: &mut Enigo, action: &Action) -> PlatformResult<()> {
             // Wait is handled by the execution engine, not the injector
         }
 
-        // Phase 3: These actions are handled by the execution engine, not the injector
+        // Engine-level actions never reach the injector.
         Action::WaitUntil { .. }
         | Action::Conditional { .. }
         | Action::SetCounter { .. }

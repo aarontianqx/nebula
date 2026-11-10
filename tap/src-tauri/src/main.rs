@@ -82,11 +82,9 @@ fn main() {
             commands::document::cmd_import_yaml_from_path,
             // YAML / DSL
             commands::yaml::cmd_export_yaml,
-            commands::yaml::cmd_export_yaml_with_metadata,
             commands::yaml::cmd_import_yaml,
             commands::yaml::cmd_validate_yaml,
             commands::yaml::cmd_set_runtime_variables,
-            commands::yaml::cmd_get_runtime_variables,
             // Recording
             commands::recording::start_recording,
             commands::recording::pause_recording,
@@ -96,19 +94,14 @@ fn main() {
             // Key->Click tool mode + key capture
             commands::key_click::start_key_click,
             commands::key_click::stop_key_click,
-            commands::key_click::get_key_click_status,
             commands::key_click::cmd_capture_key,
             // System: permissions, mouse tracking, windows, pixels
             commands::system::cmd_check_permissions,
             commands::system::cmd_request_screen_recording,
             commands::system::cmd_open_permission_settings,
-            commands::system::start_mouse_tracking,
-            commands::system::stop_mouse_tracking,
             commands::system::cmd_list_windows,
             commands::system::cmd_get_foreground_window,
             commands::system::cmd_get_pixel_color,
-            commands::system::cmd_check_window_focused,
-            commands::system::cmd_check_window_exists,
             // Position picker
             picker::open_picker_window,
             picker::close_picker_window,

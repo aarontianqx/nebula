@@ -8,10 +8,9 @@
 //! - [`MockPlatform`] provides deterministic window/pixel answers so condition
 //!   evaluation never touches the real OS.
 //!
-//! Because the engine now consumes a [`MacroDocument`] directly (Phase 6 / M3),
-//! these tests also assert the Resolve stage: `{{ var }}` / `{{ expr }}` and
-//! run-time overrides are substituted *before* injection, and `call_macro`
-//! (M4) is expanded inline with cycle protection and an isolated child scope.
+//! The engine consumes a [`MacroDocument`] directly, so these tests also cover the Resolve
+//! stage: `{{ var }}` / `{{ expr }}` and run-time overrides are substituted *before* injection,
+//! and `call_macro` is expanded inline with cycle protection and an isolated child scope.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -272,7 +271,7 @@ fn conditional_takes_then_branch_based_on_counter() {
     assert_eq!(injected, vec![click(7, 7)]);
 }
 
-// === Tests: M3 Resolve stage ===
+// === Tests: Resolve stage ===
 
 #[test]
 fn runtime_override_beats_default_and_expressions_are_evaluated() {
@@ -346,7 +345,7 @@ fn text_input_resolves_string_variable() {
     );
 }
 
-// === Tests: M4 call_macro expansion ===
+// === Tests: call_macro expansion ===
 
 /// Build an in-memory loader from a name → document map.
 fn map_loader(macros: Vec<(&str, MacroDocument)>) -> SubMacroLoader {
@@ -798,7 +797,7 @@ fn emergency_stop_halts_a_forever_loop() {
     drop(handle);
 }
 
-// === Tests: M7 drag interpolation + safety hardening ===
+// === Tests: drag interpolation + safety hardening ===
 
 #[test]
 fn drag_is_interpolated_into_down_moves_up() {

@@ -11,6 +11,7 @@ import {
   LEAF_CONDITION_KINDS,
 } from "../../lib/conditions";
 import type { LeafConditionKind } from "../../lib/conditions";
+import { orUndefined } from "../../lib/document";
 import type { DslCondition } from "../../lib/types";
 import { NumberRow, PickPositionRow, ReferencesContext, SelectRow, TextRow } from "./fields";
 
@@ -18,11 +19,6 @@ interface Props {
   condition: DslCondition;
   disabled: boolean;
   onChange: (condition: DslCondition) => void;
-}
-
-/** `value` unless it is empty, in which case the field is dropped (the backend reads `None`). */
-function orUndefined(value: string): string | undefined {
-  return value === "" ? undefined : value;
 }
 
 function clampTolerance(value: number): number {

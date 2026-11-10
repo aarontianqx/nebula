@@ -14,7 +14,7 @@
 //! - `humanize` — `run.humanize`: random variation of positions and step start times.
 //! - `resolve` — the Resolve stage: parameterized `DslAction` → concrete `Action`.
 //! - `recorder` — captures raw input events into a [`Timeline`](tap_core::Timeline).
-//! - `storage` — canonical YAML persistence for macro documents (+ legacy JSON).
+//! - `storage` — YAML persistence of macro documents and the recent list.
 //! - `submacro` — sub-macro call-stack tracking and variable scoping.
 //!
 //! This crate is platform-agnostic: it defines ports as traits and lets the
@@ -46,8 +46,8 @@ pub use resolve::{resolve_action, ResolveError};
 pub use session::SessionStore;
 pub use storage::{
     delete_profile, ensure_profiles_dir, get_app_data_dir, get_profiles_dir, list_profiles,
-    load_document, load_last_used, load_profile, load_recent, save_document, save_last_used,
-    save_recent, StorageError, StorageResult,
+    load_document, load_last_used, load_recent, save_document, save_last_used, save_recent,
+    StorageError, StorageResult,
 };
 pub use submacro::{
     create_child_variable_store, create_submacro_context, prepare_submacro_args, SubMacroContext,

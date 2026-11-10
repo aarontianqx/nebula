@@ -35,10 +35,10 @@ mod window;
 pub use error::{PlatformError, PlatformResult};
 
 // Re-export DPI utilities
-pub use dpi::{browser_to_injection_scale, get_primary_scale_factor, set_dpi_aware, ScaledCoords};
+pub use dpi::{browser_to_injection_scale, set_dpi_aware};
 
 // Re-export input injection
-pub use injector::{EnigoInjector, InputInjector, NoopInjector};
+pub use injector::{EnigoInjector, InputInjector};
 
 // Re-export input hook
 pub use input_hook::{
@@ -47,7 +47,7 @@ pub use input_hook::{
 
 // Re-export mouse tracker
 pub use mouse_tracker::{
-    start_mouse_tracker, MousePosition, MouseTrackerCommand, MouseTrackerConfig, MouseTrackerEvent,
+    start_mouse_tracker, MouseTrackerCommand, MouseTrackerConfig, MouseTrackerEvent,
     MouseTrackerHandle,
 };
 
@@ -57,11 +57,10 @@ pub use permissions::{
 };
 
 // Re-export pixel detection
-pub use pixel::{get_pixel_color, pixel_matches, Color};
+pub use pixel::{get_pixel_color, Color};
 
 // Re-export window API
 pub use window::{
-    find_target_window, find_window_by_process, find_window_by_title, get_foreground_window,
-    get_window_rect, is_window_focused, list_windows, window_exists, window_origin, WindowInfo,
-    WindowRect,
+    get_foreground_window, is_window_focused, list_windows, window_exists, window_origin,
+    WindowInfo,
 };

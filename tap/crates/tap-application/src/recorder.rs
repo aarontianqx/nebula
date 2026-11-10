@@ -329,11 +329,6 @@ impl Recorder {
         })
     }
 
-    /// Get the last known mouse position.
-    pub fn last_mouse_position(&self) -> (i32, i32) {
-        self.last_mouse_pos
-    }
-
     /// Resolve an event position, falling back to the last known cursor
     /// position when the platform reported `(0, 0)` (some backends omit the
     /// coordinate on button events).

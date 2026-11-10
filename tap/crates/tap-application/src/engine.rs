@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 use tap_core::{
     create_expression_engine, Action, Condition, ConditionColor, ConditionEvaluator,
@@ -108,7 +108,6 @@ pub struct PlayerHandle {
     cmd_tx: Sender<EngineCommand>,
     event_rx: Receiver<EngineEvent>,
     state: Arc<Mutex<EngineState>>,
-    thread: Option<JoinHandle<()>>,
 }
 
 impl PlayerHandle {
@@ -127,14 +126,6 @@ impl PlayerHandle {
     /// Get current state.
     pub fn state(&self) -> EngineState {
         *self.state.lock().unwrap()
-    }
-
-    /// Stop and wait for thread to finish.
-    pub fn shutdown(mut self) {
-        let _ = self.cmd_tx.send(EngineCommand::Stop);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
     }
 }
 
@@ -229,15 +220,12 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
             event_tx,
         };
 
-        let thread = thread::spawn(move || {
-            player.run_loop();
-        });
+        thread::spawn(move || player.run_loop());
 
         PlayerHandle {
             cmd_tx,
             event_rx,
             state,
-            thread: Some(thread),
         }
     }
 
@@ -721,7 +709,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         }
     }
 
-    /// Execute a single action (including new Phase 3 actions).
+    /// Execute a single concrete action.
     ///
     /// `doc` is the document the action belongs to: when its coordinates are window-relative, a
     /// positioned action is moved to its screen position here, the one place every injected
@@ -751,7 +739,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         };
 
         match action {
-            // Phase 3: Counter actions
+            // Counter actions
             Action::SetCounter { key, value } => {
                 self.variables.lock().unwrap().set_counter(key, *value);
                 self.emit(EngineEvent::CounterChanged {
@@ -785,10 +773,10 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 ActionResult::Completed
             }
 
-            // Phase 3: Exit action
+            // Exit action
             Action::Exit => ActionResult::Exit,
 
-            // Phase 3: WaitUntil action
+            // WaitUntil action
             Action::WaitUntil {
                 condition,
                 timeout_ms,
@@ -829,7 +817,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 }
             }
 
-            // Phase 3: Conditional action
+            // Conditional action
             Action::Conditional {
                 condition,
                 then_action,

@@ -1,19 +1,14 @@
-//! Windows DPI awareness implementation.
-
 use std::sync::Once;
 use tracing::{info, warn};
 
 static INIT: Once = Once::new();
 
-/// Set the process DPI awareness to Per-Monitor V2.
-/// This ensures we receive physical (unscaled) coordinates from the system.
-///
-/// Must be called early in the application lifecycle, before any window is created.
+/// Opts into Per-Monitor V2 so the system hands out physical (unscaled) coordinates. Must run
+/// before any window is created.
 pub fn set_dpi_aware() {
     INIT.call_once(|| {
-        // Try to set Per-Monitor V2 DPI awareness (Windows 10 1703+)
+        // Per-Monitor V2 needs Windows 10 1703+.
         unsafe {
-            // Define constants inline to avoid windows-sys dependency just for this
             const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 
             #[link(name = "user32")]
@@ -31,26 +26,15 @@ pub fn set_dpi_aware() {
     });
 }
 
-/// Get the current DPI scale factor for the primary monitor.
-/// Returns 1.0 if DPI awareness is properly set, or the scale factor if not.
-pub fn get_primary_scale_factor() -> f64 {
+/// Injection is in physical pixels while the browser reports CSS pixels, so the factor is the
+/// system DPI scale.
+pub fn browser_to_injection_scale() -> f64 {
     unsafe {
         #[link(name = "user32")]
         extern "system" {
             fn GetDpiForSystem() -> u32;
         }
 
-        let dpi = GetDpiForSystem();
-        dpi as f64 / 96.0
+        GetDpiForSystem() as f64 / 96.0
     }
-}
-
-/// Factor to convert browser CSS pixels (`window.screenX/Y`) into the OS
-/// injection coordinate space.
-///
-/// With Per-Monitor V2 DPI awareness, injection happens in physical pixels
-/// while the browser reports logical (CSS) pixels, so the conversion factor is
-/// the system DPI scale.
-pub fn browser_to_injection_scale() -> f64 {
-    get_primary_scale_factor()
 }

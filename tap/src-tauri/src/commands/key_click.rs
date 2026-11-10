@@ -8,7 +8,7 @@ use tap_platform::{is_window_focused, start_input_hook, EnigoInjector, InputEven
 use tauri::State;
 use tracing::{info, warn};
 
-use crate::key_click::{start_key_click_runner, FocusGate, KeyClickRequest, KeyClickStatus};
+use crate::key_click::{start_key_click_runner, FocusGate, KeyClickRequest};
 use crate::state::AppState;
 
 /// Capture the next physical key press and return its normalized name.
@@ -181,18 +181,4 @@ pub fn stop_key_click(state: State<'_, Mutex<AppState>>) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-#[tauri::command]
-pub fn get_key_click_status(state: State<'_, Mutex<AppState>>) -> KeyClickStatus {
-    let app_state = state.lock().unwrap();
-
-    if let Some(ref handle) = app_state.key_click_handle {
-        handle.status()
-    } else {
-        KeyClickStatus {
-            running: false,
-            click_count: 0,
-        }
-    }
 }

@@ -30,12 +30,6 @@ pub enum KeyClickEvent {
     Stopped { total_clicks: u64, reason: String },
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct KeyClickStatus {
-    pub running: bool,
-    pub click_count: u64,
-}
-
 /// Mouse button choice, deserialized from the frontend (`"left"`/`"right"`/`"middle"`).
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -101,17 +95,12 @@ pub struct KeyClickHandle {
     stop_requested: Arc<AtomicBool>,
     event_rx: Receiver<KeyClickEvent>,
     running: Arc<AtomicBool>,
-    click_count: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl KeyClickHandle {
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
-    }
-
-    pub fn click_count(&self) -> u64 {
-        self.click_count.load(Ordering::SeqCst)
     }
 
     pub fn drain(&self) -> Vec<KeyClickEvent> {
@@ -124,13 +113,6 @@ impl KeyClickHandle {
 
     pub fn stop(&self) {
         self.stop_requested.store(true, Ordering::SeqCst);
-    }
-
-    pub fn status(&self) -> KeyClickStatus {
-        KeyClickStatus {
-            running: self.is_running(),
-            click_count: self.click_count(),
-        }
     }
 }
 
@@ -178,11 +160,9 @@ pub fn start_key_click_runner(
 
     let stop_requested = Arc::new(AtomicBool::new(false));
     let running = Arc::new(AtomicBool::new(true));
-    let click_count = Arc::new(AtomicU64::new(0));
 
     let stop_clone = stop_requested.clone();
     let running_clone = running.clone();
-    let count_clone = click_count.clone();
 
     let thread = thread::spawn(move || {
         run_loop(
@@ -195,7 +175,6 @@ pub fn start_key_click_runner(
             stop_clone,
             event_tx,
             running_clone,
-            count_clone,
         );
     });
 
@@ -203,7 +182,6 @@ pub fn start_key_click_runner(
         stop_requested,
         event_rx,
         running,
-        click_count,
         thread: Some(thread),
     }
 }
@@ -225,7 +203,6 @@ fn run_loop(
     stop_requested: Arc<AtomicBool>,
     event_tx: Sender<KeyClickEvent>,
     running: Arc<AtomicBool>,
-    click_count: Arc<AtomicU64>,
 ) {
     info!(
         min_interval_ms = config.min_interval_ms,
@@ -234,6 +211,7 @@ fn run_loop(
         "Key-click started"
     );
     let _ = event_tx.send(KeyClickEvent::Started);
+    let click_count = AtomicU64::new(0);
 
     let hold_delay = Duration::from_millis(config.hold_delay_ms);
     let repeat_interval = Duration::from_millis(config.min_interval_ms);

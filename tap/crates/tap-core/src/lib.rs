@@ -25,7 +25,7 @@ pub use expression::{
 };
 pub use keys::normalize_key;
 pub use schema::{validate_profile, ValidationError, ValidationResult};
-pub use variables::{VariableError, VariableResolver, VariableStore, VariableValue};
+pub use variables::{VariableStore, VariableValue};
 
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,6 @@ pub struct Profile {
     pub name: String,
     pub timeline: Timeline,
     pub run: RunConfig,
-    /// Target window binding (Phase 3).
     #[serde(default)]
     pub target_window: Option<TargetWindow>,
 }
@@ -161,7 +160,6 @@ pub enum Action {
     /// Wait/delay.
     Wait { ms: u64 },
 
-    // === Phase 3: Condition & Variable Actions ===
     /// Wait until a condition is satisfied or timeout.
     WaitUntil {
         condition: Condition,
