@@ -6,6 +6,10 @@
 //! on macOS); on Retina displays the captured image is denser than one device
 //! pixel, and we sample its top-left pixel.
 //!
+//! `CGWindowListCreateImage` is deprecated by Apple. A ScreenCaptureKit alternative was measured
+//! (`examples/pixel_probe.rs`, proposal WS6c) and found comparable in latency but not
+//! pixel-identical, so this stays until the symbol is actually at risk.
+//!
 //! Note: screen capture requires the Screen Recording permission. Without it
 //! the returned image is empty/blank and this function yields `None` or a
 //! black pixel.

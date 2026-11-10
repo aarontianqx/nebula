@@ -241,7 +241,7 @@ flowchart LR
 
 PR 1、2、3、4 互不依赖，可并行。每个 PR 独立可发布、可回滚。
 
-进度：PR 1–12 已实现；PR 13 待启动（按触发条件）。
+进度：PR 1–13 已完成（PR 13 是 spike，结论为暂不替换，见下）。
 
 PR 5 落地说明（与上文设计的差异）：
 - WS0 的临时止血层（`edit_support`、`apply_profile_edit` 的拒绝逻辑、`get_edit_support`、前端 `editable`）与 `profile_view` / `document_to_profile_view` 已整体删除；不变量测试迁移为 `tests/document_sync.rs`（文档按原样存储、改名不丢步骤、编辑中间态不被拒绝）。
@@ -292,6 +292,19 @@ PR 12 落地说明（与上文设计的差异）：
 - 延迟抖动作用于每步自己的计划时间（`at_ms / speed`）而不是累加，所以不会漂移；负偏移不会早于 0；步骤顺序由顺序执行本身保证，已过期的步骤立即执行。
 - 上限：位置 ≤ 100 px、延迟 ≤ 10 000 ms（校验错误）；引擎在运行开始时再夹一次，防止未经校验的文档要求过大偏移。设置取主宏的 `run.humanize`，子宏沿用。
 - 分布是均匀的方形范围（每轴独立），不是圆形或高斯；若要更像真人的轨迹（曲线、速度变化）是另一件事，不在此做。
+
+PR 13 落地说明（spike 结论：**暂不替换取色实现**）：
+- 做了什么：只加了 `crates/tap-platform/examples/pixel_probe.rs`（macOS 专用示例）和仅供它使用的 dev-dependencies；运行时代码与 `get_pixel_color` 不变。运行：`cargo run --release -p tap-platform --example pixel_probe`（终端需有屏幕录制权限）。
+- 方案选择：用 `objc2-screen-capture-kit`（纯绑定，与已在依赖树里的 objc2 0.6 同族，无需 Swift）。`screencapturekit` crate 的 `build.rs` 会编译 Swift bridge，需要 Swift 工具链，CI / 发布构建风险更大，不采用。
+- 取点方式：`SCScreenshotManager.captureImageInRect:completionHandler:`（单个 1×1 点，跨显示器，坐标与注入同为点）。它要求 **macOS 15.2+**；14.0–15.1 只能走 `captureImageWithFilter`（先取 `SCShareableContent`、构造 `SCContentFilter` 与配置），代码量更大，需缓存显示器列表。
+- 实测（M 系列 MacBook，macOS 26.5.1，1512×982，300 个点，release）：
+  - 连续取点：`CGWindowListCreateImage` p50 3.1 ms / p95 5.0 ms / max 13 ms；SCK p50 2.0 ms / p95 4.1 ms / max 5.7 ms。首次 SCK 调用 14 ms。两者都没有读不到的点。
+  - 按 `wait_until` 默认节奏（取一次、空闲 100 ms、再取）：Quartz p50 6.0 / p95 13 / p99 39 / max 63 ms；SCK p50 7.7 / p95 30 / p99 63 / max 69 ms。空闲后两者都变慢，SCK 的尾部略差，但都远低于 100 ms 间隔，不需要退到 `SCStream` 缓存帧。
+- 颜色并不逐位相同：300 个点里 231 个相同，其余每通道差 1（通道差之和最大 3）；Quartz 对自己的两次读取 300/300 相同，所以这是两种取法的系统性差异（疑为色彩空间换算 / 取整），不是屏幕在变。`pixel_color` 默认容差 10，吸收得了；容差为 0 的条件在换实现后可能不再命中。结论：**拾取器与引擎必须用同一个取色实现**，换实现需要一次有意识的决定（或归一化），不能混用。
+- 真正更值得先做的是“Quartz 符号被移除”这一风险：`core-graphics` 把 `CGWindowListCreateImage` 作为导入符号直接链接，若将来系统移除它，应用可能在**启动时**就加载失败，而不是取色时才失败。所以前置措施应是用 `dlsym` 运行期解析该符号、解析不到时改走 SCK，而不只是加一个回退实现。此点没有办法在当前系统上复现，仅是对链接方式的推断。
+- 最低系统版本：应用声明 `minimumSystemVersion` 为 10.15，而 ScreenCaptureKit 自 macOS 12.3 才有；直接链接该框架会让更老的系统无法启动，所以要弱链接 / `dlopen`，或提高最低版本。
+- 未验证：缺少屏幕录制权限时 SCK 的行为（理论上返回错误，而 Quartz 是悄悄返回空白图，若属实反而更容易检测）；Sequoia 起的“定期重新授权”提示对两种 API 是否一视同仁；多显示器、副屏在负坐标一侧。
+- 触发后的步骤（保持原设计）：1) `dlsym` 加载 Quartz；2) 引入 `PixelSampler` trait，运行期选择；3) SCK 实现（15.2+ 用 `captureImageInRect`，14–15.1 走 filter，弱链接）；4) 决定颜色归一化；5) 用 `pixel_probe` 复测延迟与一致性。
 
 ## 6. 风险
 

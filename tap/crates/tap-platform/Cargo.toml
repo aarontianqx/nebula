@@ -33,3 +33,12 @@ core-foundation = "0.10"
 # `NSWorkspace.frontmostApplication`: which application has focus. Already in the dependency
 # tree through Tauri, so this adds no new version.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Only the `pixel_probe` example (a ScreenCaptureKit latency spike) uses these; the shipped
+# sampler is still `CGWindowListCreateImage`. Pure bindings, no Swift toolchain needed.
+objc2-screen-capture-kit = { version = "0.3", default-features = false, features = ["std", "SCScreenshotManager", "block2", "objc2-core-foundation", "objc2-core-graphics"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGImage", "CGDataProvider"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString"] }
+block2 = "0.6"
