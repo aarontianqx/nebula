@@ -4,11 +4,13 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use tap_application::window_binding;
+use tap_core::Point;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tracing::{info, warn};
 
 use crate::commands::system::ColorResponse;
-use crate::state::PositionPickedEvent;
+use crate::state::{AppState, PositionPickedEvent};
 
 /// What a pick should report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
@@ -140,6 +142,24 @@ pub async fn picker_position_selected(
         }
     };
 
+    // A document measured from its target window needs that window's origin to turn the picked
+    // screen position into a window-relative one. The editor does the subtraction (it also knows
+    // which field asked); Simple mode keeps the screen position.
+    let binding = {
+        let app_state: State<'_, Mutex<AppState>> = app.state();
+        let app_state = app_state.lock().map_err(|e| e.to_string())?;
+        window_binding(app_state.coordinator.document())
+            .map(|t| (t.title.clone(), t.process.clone()))
+    };
+    let window_origin = binding.as_ref().and_then(|(title, process)| {
+        tap_platform::window_origin(title.as_deref(), process.as_deref())
+            .map(|(x, y)| Point { x, y })
+    });
+    let window_missing = binding.is_some() && window_origin.is_none();
+    if window_missing {
+        warn!("Target window not found while picking a window-relative position");
+    }
+
     // Emit the injection-space coordinates (and color, if asked for) to the main window
     app.emit(
         "position-picked",
@@ -147,6 +167,8 @@ pub async fn picker_position_selected(
             x: inject_x,
             y: inject_y,
             color,
+            window_origin,
+            window_missing,
         },
     )
     .map_err(|e| format!("Failed to emit position-picked: {}", e))?;
@@ -177,6 +199,8 @@ mod tests {
             x: 1,
             y: 2,
             color: None,
+            window_origin: None,
+            window_missing: false,
         })
         .unwrap();
         assert_eq!(plain, serde_json::json!({ "x": 1, "y": 2 }));
@@ -190,8 +214,39 @@ mod tests {
                 b: 0,
                 hex: "#FF8800".into(),
             }),
+            window_origin: None,
+            window_missing: false,
         })
         .unwrap();
         assert_eq!(with_color["color"]["hex"], "#FF8800");
+    }
+
+    #[test]
+    fn the_window_origin_is_reported_only_for_window_relative_documents() {
+        let relative = serde_json::to_value(PositionPickedEvent {
+            x: 110,
+            y: 70,
+            color: None,
+            window_origin: Some(Point { x: 100, y: 50 }),
+            window_missing: false,
+        })
+        .unwrap();
+        assert_eq!(
+            relative,
+            serde_json::json!({ "x": 110, "y": 70, "window_origin": { "x": 100, "y": 50 } })
+        );
+
+        let missing = serde_json::to_value(PositionPickedEvent {
+            x: 110,
+            y: 70,
+            color: None,
+            window_origin: None,
+            window_missing: true,
+        })
+        .unwrap();
+        assert_eq!(
+            missing,
+            serde_json::json!({ "x": 110, "y": 70, "window_missing": true })
+        );
     }
 }

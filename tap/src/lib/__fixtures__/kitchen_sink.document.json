@@ -12,6 +12,7 @@
     "contract"
   ],
   "target_window": {
+    "coordinates": "window",
     "pause_when_unfocused": false,
     "process": "notepad.exe",
     "title": "Notepad"

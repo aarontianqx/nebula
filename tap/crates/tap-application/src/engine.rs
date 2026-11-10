@@ -9,8 +9,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tap_core::{
     create_expression_engine, Action, Condition, ConditionColor, ConditionEvaluator,
-    ConditionResult, DslAction, DslTimedAction, DslValue, ExpressionEngineHandle, MacroDocument,
-    MouseButton, Point, VariableStore, VariableValue,
+    ConditionResult, DslAction, DslTargetWindow, DslTimedAction, DslValue, ExpressionEngineHandle,
+    MacroDocument, MouseButton, Point, VariableStore, VariableValue,
 };
 use tracing::{debug, error, info, warn};
 
@@ -25,6 +25,7 @@ const DRAG_STEP_MS: u64 = 16;
 const MAX_DRAG_STEPS: u32 = 240;
 
 use crate::clock::RunClock;
+use crate::coords::{has_position, shift_action, window_binding};
 use crate::resolve::resolve_action;
 use crate::storage::load_document;
 use crate::submacro::{
@@ -153,6 +154,10 @@ pub trait PlatformConditionProvider: Send + Sync {
     fn window_exists(&self, title: Option<&str>, process: Option<&str>) -> bool;
     /// Get the pixel color at the given coordinates.
     fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor>;
+    /// The screen position of the top-left corner of the window matching `title` / `process`:
+    /// the origin of window-relative coordinates. `None` when there is no such window (or it is
+    /// minimized).
+    fn window_origin(&self, title: Option<&str>, process: Option<&str>) -> Option<(i32, i32)>;
 }
 
 /// Loads a sub-macro document by name. Defaults to disk storage; injectable in
@@ -401,7 +406,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 }
             };
 
-            match self.execute_action(&action, index) {
+            match self.execute_action(&action, index, doc) {
                 ActionResult::Completed | ActionResult::Timeout => {
                     self.consecutive_failures.store(0, Ordering::Relaxed);
                     self.emit(EngineEvent::ActionCompleted { index });
@@ -609,8 +614,56 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         true
     }
 
+    /// Where the window a window-relative document is measured from is on the screen.
+    ///
+    /// When the window is not there (closed, minimized) the run waits for it the same way it
+    /// waits for a target window that lost focus, and the time spent does not count towards the
+    /// timeline clock. `None` means a stop was requested while waiting.
+    fn wait_for_window_origin(&self, target: &DslTargetWindow) -> Option<(i32, i32)> {
+        let lookup = || {
+            self.platform
+                .window_origin(target.title.as_deref(), target.process.as_deref())
+        };
+        if let Some(origin) = lookup() {
+            return Some(origin);
+        }
+
+        self.emit(EngineEvent::TargetWindowUnfocused {
+            title: target.title.clone(),
+            process: target.process.clone(),
+        });
+        let _stall = self.clock.stall();
+        loop {
+            if self.should_stop() {
+                return None;
+            }
+            if let Some(origin) = lookup() {
+                self.emit(EngineEvent::TargetWindowFocused);
+                return Some(origin);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     /// Execute a single action (including new Phase 3 actions).
-    fn execute_action(&self, action: &Action, index: usize) -> ActionResult {
+    ///
+    /// `doc` is the document the action belongs to: when its coordinates are window-relative, a
+    /// positioned action is moved to its screen position here, the one place every injected
+    /// action passes through (also the ones nested in an `if`). `ActionStarting` reports the
+    /// screen position, i.e. what is injected.
+    fn execute_action(&self, action: &Action, index: usize, doc: &MacroDocument) -> ActionResult {
+        let on_screen;
+        let action = match window_binding(doc).filter(|_| has_position(action)) {
+            Some(target) => {
+                let Some(origin) = self.wait_for_window_origin(target) else {
+                    return ActionResult::Stopped;
+                };
+                on_screen = shift_action(action, origin);
+                &on_screen
+            }
+            None => action,
+        };
+
         match action {
             // Phase 3: Counter actions
             Action::SetCounter { key, value } => {
@@ -667,7 +720,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                     }
 
                     // Evaluate condition
-                    let result = self.evaluate_condition(condition);
+                    let result = self.evaluate_condition(condition, doc);
                     if result.is_satisfied() {
                         self.emit(EngineEvent::ConditionSatisfied {
                             condition: cond_str,
@@ -696,11 +749,11 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
                 then_action,
                 else_action,
             } => {
-                let result = self.evaluate_condition(condition);
+                let result = self.evaluate_condition(condition, doc);
                 if result.is_satisfied() {
-                    self.execute_action(then_action, index)
+                    self.execute_action(then_action, index, doc)
                 } else if let Some(else_act) = else_action {
-                    self.execute_action(else_act, index)
+                    self.execute_action(else_act, index, doc)
                 } else {
                     ActionResult::Completed
                 }
@@ -845,12 +898,14 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         }
     }
 
-    /// Evaluate a condition using the platform provider and variables.
-    fn evaluate_condition(&self, condition: &Condition) -> ConditionResult {
+    /// Evaluate a condition using the platform provider and variables. In a window-relative
+    /// document, `pixel_color` positions are measured from the target window.
+    fn evaluate_condition(&self, condition: &Condition, doc: &MacroDocument) -> ConditionResult {
         // Create an evaluator that combines platform and variables
         let evaluator = RuntimeConditionEvaluator {
             platform: &*self.platform,
             variables: &self.variables,
+            window: window_binding(doc),
         };
         evaluator.evaluate(condition)
     }
@@ -903,6 +958,8 @@ fn lerp_point(from: Point, to: Point, k: u32, steps: u32) -> (i32, i32) {
 struct RuntimeConditionEvaluator<'a, P: PlatformConditionProvider> {
     platform: &'a P,
     variables: &'a Mutex<VariableStore>,
+    /// The window `pixel_color` positions are relative to, for a window-relative document.
+    window: Option<&'a DslTargetWindow>,
 }
 
 impl<'a, P: PlatformConditionProvider> ConditionEvaluator for RuntimeConditionEvaluator<'a, P> {
@@ -915,7 +972,16 @@ impl<'a, P: PlatformConditionProvider> ConditionEvaluator for RuntimeConditionEv
     }
 
     fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor> {
-        self.platform.get_pixel_color(x, y)
+        let (dx, dy) = match self.window {
+            // No window to measure from: the pixel cannot be read, so the condition errors out
+            // (not satisfied) rather than reading some other place on the screen.
+            Some(target) => self
+                .platform
+                .window_origin(target.title.as_deref(), target.process.as_deref())?,
+            None => (0, 0),
+        };
+        self.platform
+            .get_pixel_color(x.saturating_add(dx), y.saturating_add(dy))
     }
 
     fn get_counter(&self, key: &str) -> i32 {

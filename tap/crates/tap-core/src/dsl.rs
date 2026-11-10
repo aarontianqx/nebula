@@ -83,6 +83,25 @@ pub enum VariableType {
     Boolean,
 }
 
+/// What the coordinates of a document are measured from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinateSpace {
+    /// The screen: coordinates are positions in the OS injection space.
+    #[default]
+    Screen,
+    /// The target window's top-left corner: the window can be moved or the display changed
+    /// without re-capturing. Applies to every action with a position and to `pixel_color`.
+    Window,
+}
+
+impl CoordinateSpace {
+    /// For `skip_serializing_if`: only a non-default choice is written out.
+    pub fn is_screen(&self) -> bool {
+        *self == CoordinateSpace::Screen
+    }
+}
+
 /// Target window binding in DSL format.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DslTargetWindow {
@@ -95,6 +114,9 @@ pub struct DslTargetWindow {
     /// Whether to pause when target window is not focused.
     #[serde(default = "default_pause")]
     pub pause_when_unfocused: bool,
+    /// What this document's coordinates are relative to (the screen unless set).
+    #[serde(default, skip_serializing_if = "CoordinateSpace::is_screen")]
+    pub coordinates: CoordinateSpace,
 }
 
 fn default_pause() -> bool {
@@ -390,6 +412,7 @@ impl From<&Profile> for MacroDocument {
                 title: tw.title.clone(),
                 process: tw.process.clone(),
                 pause_when_unfocused: tw.pause_when_unfocused,
+                coordinates: CoordinateSpace::Screen,
             }),
             timeline: profile
                 .timeline
@@ -1082,5 +1105,34 @@ mod tests {
         assert_eq!(parse_compare_op(">=").unwrap(), CompareOp::Gte);
         assert_eq!(parse_compare_op("<=").unwrap(), CompareOp::Lte);
         assert!(parse_compare_op("invalid").is_err());
+    }
+    #[test]
+    fn coordinates_default_to_the_screen_and_are_only_written_when_not() {
+        let yaml = "name: m\ntarget_window:\n  process: game.exe\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n";
+        let doc = parse_yaml(yaml).unwrap();
+        let target = doc.target_window.clone().unwrap();
+        assert_eq!(target.coordinates, CoordinateSpace::Screen);
+        assert!(
+            !document_to_yaml(&doc).unwrap().contains("coordinates"),
+            "the default is not serialized, so existing macros are unchanged"
+        );
+    }
+
+    #[test]
+    fn window_coordinates_roundtrip_through_yaml_and_json() {
+        let yaml = "name: m\ntarget_window:\n  title: Game\n  coordinates: window\ntimeline:\n- at_ms: 0\n  action: !wait\n    ms: 1\n";
+        let doc = parse_yaml(yaml).unwrap();
+        assert_eq!(
+            doc.target_window.as_ref().unwrap().coordinates,
+            CoordinateSpace::Window
+        );
+
+        let again = parse_yaml(&document_to_yaml(&doc).unwrap()).unwrap();
+        assert_eq!(again, doc);
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert_eq!(json["target_window"]["coordinates"], "window");
+        let from_json: MacroDocument = serde_json::from_value(json).unwrap();
+        assert_eq!(from_json, doc);
     }
 }

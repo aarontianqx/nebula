@@ -3,7 +3,9 @@
 //! Provides validation logic to ensure imported YAML profiles are valid
 //! before converting them to internal Profile format.
 
-use crate::dsl::{DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue, MacroDocument};
+use crate::dsl::{
+    CoordinateSpace, DslAction, DslCondition, DslRunConfig, DslTimedAction, DslValue, MacroDocument,
+};
 use serde::{Deserialize, Serialize};
 
 /// Validation error with context.
@@ -55,6 +57,22 @@ pub fn validate_profile(profile: &MacroDocument) -> ValidationResult {
     // Validate each action
     for (i, timed_action) in profile.timeline.iter().enumerate() {
         validate_timed_action(timed_action, &format!("timeline[{}]", i), &mut errors);
+    }
+
+    // Window-relative coordinates need a window to be relative to.
+    if let Some(target) = &profile.target_window {
+        let names = |s: &Option<String>| s.as_deref().is_some_and(|s| !s.trim().is_empty());
+        if target.coordinates == CoordinateSpace::Window
+            && !names(&target.title)
+            && !names(&target.process)
+        {
+            errors.push(ValidationError {
+                path: "target_window.coordinates".to_string(),
+                message: "window-relative coordinates need the target window's title or process"
+                    .to_string(),
+                line: None,
+            });
+        }
     }
 
     // Validate run config
@@ -479,6 +497,48 @@ mod tests {
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.path == "name"));
+    }
+
+    fn window_target(
+        title: Option<&str>,
+        process: Option<&str>,
+        coordinates: CoordinateSpace,
+    ) -> crate::dsl::DslTargetWindow {
+        crate::dsl::DslTargetWindow {
+            title: title.map(String::from),
+            process: process.map(String::from),
+            pause_when_unfocused: true,
+            coordinates,
+        }
+    }
+
+    #[test]
+    fn window_relative_coordinates_need_a_window_to_be_relative_to() {
+        let mut profile = minimal_profile();
+
+        profile.target_window = Some(window_target(None, None, CoordinateSpace::Window));
+        let errors = validate_profile(&profile).unwrap_err();
+        assert!(errors.iter().any(|e| e.path == "target_window.coordinates"));
+
+        // A blank name is no name.
+        profile.target_window = Some(window_target(Some("  "), Some(""), CoordinateSpace::Window));
+        assert!(validate_profile(&profile).is_err());
+
+        profile.target_window = Some(window_target(Some("Game"), None, CoordinateSpace::Window));
+        assert!(validate_profile(&profile).is_ok());
+        profile.target_window = Some(window_target(
+            None,
+            Some("game.exe"),
+            CoordinateSpace::Window,
+        ));
+        assert!(validate_profile(&profile).is_ok());
+    }
+
+    #[test]
+    fn screen_coordinates_never_need_a_window_name() {
+        let mut profile = minimal_profile();
+        profile.target_window = Some(window_target(None, None, CoordinateSpace::Screen));
+        assert!(validate_profile(&profile).is_ok());
     }
 
     #[test]

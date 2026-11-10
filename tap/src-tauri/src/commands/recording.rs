@@ -2,7 +2,7 @@
 
 use std::sync::Mutex;
 
-use tap_application::{EngineState, RecorderState};
+use tap_application::{window_binding, EngineState, RecorderState};
 use tap_core::Timeline;
 use tap_platform::start_input_hook;
 use tauri::State;
@@ -20,6 +20,18 @@ pub fn start_recording(state: State<'_, Mutex<AppState>>) -> Result<(), String> 
 
     if app_state.coordinator.engine_state() != EngineState::Idle {
         return Err("Cannot record while playing".into());
+    }
+
+    // A window-relative document needs the window on screen to measure positions from.
+    if let Some(target) = window_binding(app_state.coordinator.document()) {
+        if tap_platform::window_origin(target.title.as_deref(), target.process.as_deref()).is_none()
+        {
+            return Err(
+                "The target window was not found. Bring it on screen to record positions \
+                 relative to it."
+                    .into(),
+            );
+        }
     }
 
     // Start the input hook

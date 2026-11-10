@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 use tap_core::{
-    DslAction, DslCondition, DslMouseButton, DslRunConfig, DslTargetWindow, DslTimedAction,
-    DslValue, MacroDocument, VariableDefinition, VariableType,
+    CoordinateSpace, DslAction, DslCondition, DslMouseButton, DslRunConfig, DslTargetWindow,
+    DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType,
 };
 
 fn fixture_path() -> PathBuf {
@@ -281,6 +281,7 @@ fn kitchen_sink() -> MacroDocument {
             title: Some("Notepad".into()),
             process: Some("notepad.exe".into()),
             pause_when_unfocused: false,
+            coordinates: CoordinateSpace::Window,
         }),
         timeline,
         run: DslRunConfig {

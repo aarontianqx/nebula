@@ -126,6 +126,36 @@ Specify `title`, `process`, or both. Omit `target_window` to run on any window.
 On macOS, reading the window **title** requires Screen Recording permission;
 matching by **process** works without it.
 
+### Window-relative coordinates
+
+By default every position in the macro is a screen position. With
+`coordinates: window` every position is measured from the top-left corner of
+the target window instead:
+
+```yaml
+target_window:
+  title: "Notepad"
+  coordinates: window         # screen (default, not written) | window
+```
+
+- It applies to every action that carries a position (`click`, `double_click`,
+  `mouse_down`, `mouse_up`, `mouse_move`, both ends of `drag`) — also inside
+  `conditional` branches — and to `pixel_color` conditions. Scroll amounts and
+  key actions are unaffected.
+- The window's position is looked up each time a step runs, so a window that was
+  moved since the last step (or since recording) is followed.
+- It needs the window's `title` or `process`; `target_window` with only
+  `pause_when_unfocused` and `coordinates: window` is a validation error.
+- If the window cannot be found (not open, minimized, parked off-screen) the run
+  waits for it, as for an unfocused window, and carries on when it appears.
+- Which window is meant: the focused one if it matches, otherwise the largest
+  matching window (topmost on a tie).
+- Positions only translate; they do not scale if the window is resized.
+- Recording writes window-relative positions and refuses to start while the
+  window is not on screen. The position picker reports window-relative
+  positions to the field that asked for one.
+- Switching the setting does not convert positions already in the macro.
+
 ## Timeline
 
 A sequence of timed actions:

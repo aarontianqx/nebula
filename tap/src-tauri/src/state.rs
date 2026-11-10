@@ -60,4 +60,13 @@ pub struct PositionPickedEvent {
     /// the color could not be read (for example, missing Screen Recording permission).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<ColorResponse>,
+    /// Where the target window's top-left corner is on the screen, when the document measures
+    /// positions from that window. The editor subtracts it from `x` / `y` for the field that asked;
+    /// Simple mode keeps the screen position.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_origin: Option<tap_core::Point>,
+    /// The document measures positions from its target window but that window was not found, so
+    /// no window-relative position can be offered.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub window_missing: bool,
 }

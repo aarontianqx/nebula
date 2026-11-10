@@ -307,7 +307,13 @@ describe("lossless editing", () => {
     expect(sent.variables).toEqual(sink.variables);
     expect(sent.run).toEqual({ repeat: 0, start_delay_ms: 5000, speed: 2 });
     expect(sent.author).toBe("someone else");
-    expect(sent.target_window).toEqual({ title: "Calc", process: "calc.exe", pause_when_unfocused: false });
+    // The fixture is window-relative; switching windows must not silently turn that off.
+    expect(sent.target_window).toEqual({
+      title: "Calc",
+      process: "calc.exe",
+      pause_when_unfocused: false,
+      coordinates: "window",
+    });
   });
 
   it("step edits on a parameterized macro keep neighbouring expressions intact", async () => {
@@ -339,6 +345,33 @@ describe("document-level fields", () => {
     store.setTargetTitle("Calc", "calc.exe");
     expect(doc(stores).target_window?.pause_when_unfocused).toBe(false);
 
+    store.setTargetTitle("", "");
+    expect(doc(stores)).not.toHaveProperty("target_window");
+  });
+
+  it("setCoordinates marks the document window-relative, keeps that across windows, and clears it for the screen", async () => {
+    const stores = await setup();
+    const store = stores.useDocumentStore.getState();
+
+    store.setCoordinates("window");
+    expect(doc(stores)).not.toHaveProperty("target_window"); // needs a window to belong to
+
+    store.setTargetTitle("Notepad", "notepad.exe");
+    store.setCoordinates("window");
+    expect(doc(stores).target_window?.coordinates).toBe("window");
+
+    store.setTargetTitle("Calc", "calc.exe");
+    expect(doc(stores).target_window).toEqual({
+      title: "Calc",
+      process: "calc.exe",
+      pause_when_unfocused: true,
+      coordinates: "window",
+    });
+
+    store.setCoordinates("screen");
+    expect(doc(stores).target_window).not.toHaveProperty("coordinates");
+
+    store.setCoordinates("window");
     store.setTargetTitle("", "");
     expect(doc(stores)).not.toHaveProperty("target_window");
   });

@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { emptyDocument, parseRepeat } from "../lib/document";
 import { api, isTauri, pickOpenPath, pickSavePath } from "../lib/ipc";
 import type {
+  CoordinateSpace,
   DslAction,
   DslTimedAction,
   MacroDocument,
@@ -64,6 +65,8 @@ interface DocumentStore {
   setCountdownSecs: (secs: number) => void;
   setTargetTitle: (title: string, process: string) => void;
   setPauseWhenUnfocused: (value: boolean) => void;
+  /** Measure positions from the target window (`"window"`) or from the screen (the default). */
+  setCoordinates: (space: CoordinateSpace) => void;
   /** Replace the declared variables (an empty map removes the field, as the backend omits it). */
   setVariables: (variables: Record<string, VariableDefinition>) => void;
 
@@ -295,6 +298,7 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
             title: title || null,
             process: process || null,
             pause_when_unfocused: d.target_window?.pause_when_unfocused ?? true,
+            ...(d.target_window?.coordinates ? { coordinates: d.target_window.coordinates } : {}),
           },
         };
       }),
@@ -303,6 +307,14 @@ export const useDocumentStore = create<DocumentStore>((set, get) => {
       mutate((d) =>
         d.target_window ? { ...d, target_window: { ...d.target_window, pause_when_unfocused: value } } : d,
       ),
+
+    setCoordinates: (space) =>
+      mutate((d) => {
+        if (!d.target_window) return d;
+        // "screen" is the default and stays out of the document, like on the backend.
+        const { coordinates: _previous, ...rest } = d.target_window;
+        return { ...d, target_window: space === "window" ? { ...rest, coordinates: space } : rest };
+      }),
 
     setVariables: (variables) =>
       mutate((d) => {

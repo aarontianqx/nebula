@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
+use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows_sys::Win32::System::ProcessStatus::GetModuleBaseNameW;
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
@@ -133,12 +134,24 @@ fn get_process_name(pid: u32) -> Option<String> {
     }
 }
 
+/// The window's rectangle as the user sees it.
+///
+/// `GetWindowRect` includes the invisible resize border Windows 10/11 add around a window
+/// (about 7 px on the left, right and bottom), which would shift every window-relative
+/// coordinate. The DWM extended frame bounds are the visible frame; the plain rectangle is the
+/// fallback for windows DWM does not report (and for a disabled compositor).
 pub fn get_window_rect(handle: usize) -> Option<WindowRect> {
     unsafe {
         let hwnd = handle as HWND;
         let mut rect: RECT = std::mem::zeroed();
 
-        if WinGetWindowRect(hwnd, &mut rect) == 0 {
+        let hr = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+            &mut rect as *mut RECT as *mut std::ffi::c_void,
+            std::mem::size_of::<RECT>() as u32,
+        );
+        if hr != 0 && WinGetWindowRect(hwnd, &mut rect) == 0 {
             return None;
         }
 

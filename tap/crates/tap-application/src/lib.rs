@@ -9,6 +9,8 @@
 //!   the [`ActionExecutor`] / [`PlatformConditionProvider`] ports it depends on.
 //! - `clock` — the active-time clock the scheduler uses (pauses and lost target
 //!   windows do not count as elapsed timeline time).
+//! - `coords` — window-relative coordinates: moving a position in the target window to the
+//!   screen.
 //! - `resolve` — the Resolve stage: parameterized `DslAction` → concrete `Action`.
 //! - `recorder` — captures raw input events into a [`Timeline`](tap_core::Timeline).
 //! - `storage` — canonical YAML persistence for macro documents (+ legacy JSON).
@@ -20,6 +22,7 @@
 
 mod clock;
 mod coordinator;
+mod coords;
 mod engine;
 mod recorder;
 mod resolve;
@@ -28,6 +31,7 @@ mod storage;
 mod submacro;
 
 pub use coordinator::Coordinator;
+pub use coords::{relativize_raw, window_binding};
 pub use engine::{
     ActionExecutor, EngineCommand, EngineEvent, EngineState, PlatformConditionProvider, Player,
     PlayerHandle, SubMacroLoader,

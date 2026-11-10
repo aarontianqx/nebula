@@ -14,6 +14,7 @@ export function TargetWindowCard() {
   const target = useDocumentStore((s) => s.doc.target_window);
   const targetTitle = target?.title ?? "";
   const pauseWhenUnfocused = target?.pause_when_unfocused ?? true;
+  const windowRelative = target?.coordinates === "window";
   const doc = useDocumentStore.getState;
 
   const [windowList, setWindowList] = useState<WindowInfoResponse[]>([]);
@@ -69,6 +70,23 @@ export function TargetWindowCard() {
             />
             Pause when target window not focused
           </label>
+        </div>
+        <div className="field">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={windowRelative}
+              onChange={(e) => doc().setCoordinates(e.target.checked ? "window" : "screen")}
+              disabled={disabled || !target}
+            />
+            Positions relative to the window
+          </label>
+          {windowRelative && (
+            <div className="hint">
+              Positions are measured from the window&apos;s top-left corner and follow it when it moves. Existing
+              positions are not converted.
+            </div>
+          )}
         </div>
         {!targetWindowMatched && active && <div className="warning-box">Target window not focused</div>}
       </div>

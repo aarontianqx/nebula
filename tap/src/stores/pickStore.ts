@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { api } from "../lib/ipc";
-import type { ColorResponse } from "../lib/types";
+import type { ColorResponse, PickedWindow } from "../lib/types";
 import { useEngineStore } from "./engineStore";
 
 // Picking a position and capturing a key are one-shot requests made by a field of the editor.
@@ -36,8 +36,12 @@ interface PickStore {
   requestPosition: (target: string, onPicked: PositionConsumer, options?: { color?: boolean }) => Promise<void>;
   /** Forget a pending request (the next picked position then belongs to Simple mode). */
   cancelPosition: () => void;
-  /** Give a picked position to whoever asked for it; `false` if nobody did. */
-  deliverPosition: (x: number, y: number, color?: ColorResponse) => boolean;
+  /**
+   * Give a picked screen position to whoever asked for it; `false` if nobody did. If the document
+   * measures from its target window the position is handed over relative to that window; when the
+   * window cannot be found nothing is handed over.
+   */
+  deliverPosition: (x: number, y: number, color?: ColorResponse, window?: PickedWindow) => boolean;
 
   /** Wait for the next physical key press and hand its normalized name to `onCaptured`. */
   captureKey: (target: string, onCaptured: KeyConsumer) => Promise<void>;
@@ -69,17 +73,24 @@ export const usePickStore = create<PickStore>((set, get) => ({
     set({ positionTarget: null });
   },
 
-  deliverPosition: (x, y, color) => {
+  deliverPosition: (x, y, color, window) => {
     const consumer = positionConsumer;
     if (!consumer) return false;
     const wantedColor = positionWantsColor;
     get().cancelPosition();
+    if (window?.window_missing) {
+      log(`Picked (${x}, ${y}) on screen, but the target window was not found, so no window-relative position was set.`);
+      return true;
+    }
     if (wantedColor && !color) {
       log(`Could not read the color at (${x}, ${y}); only the position was set. Screen Recording permission may be missing.`);
     }
+    const origin = window?.window_origin;
+    const px = origin ? x - origin.x : x;
+    const py = origin ? y - origin.y : y;
     // Without a color the call keeps its two-argument shape.
-    if (color) consumer(x, y, color);
-    else consumer(x, y);
+    if (color) consumer(px, py, color);
+    else consumer(px, py);
     return true;
   },
 

@@ -15,8 +15,9 @@ pub use condition::{
 };
 pub use dsl::{
     document_to_yaml, export_to_yaml, export_to_yaml_with_metadata, import_from_yaml, parse_yaml,
-    DslAction, DslCondition, DslError, DslMouseButton, DslRunConfig, DslTargetWindow,
-    DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType, DSL_VERSION,
+    CoordinateSpace, DslAction, DslCondition, DslError, DslMouseButton, DslRunConfig,
+    DslTargetWindow, DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType,
+    DSL_VERSION,
 };
 pub use expression::{
     create_expression_engine, resolve_expressions, resolve_typed_value, ExpressionEngine,

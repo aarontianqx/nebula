@@ -65,6 +65,9 @@ impl PlatformConditionProvider for MockPlatform {
     fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::ConditionColor> {
         None
     }
+    fn window_origin(&self, _title: Option<&str>, _process: Option<&str>) -> Option<(i32, i32)> {
+        None
+    }
 }
 
 // === Builders ===
@@ -792,6 +795,9 @@ impl PlatformConditionProvider for SwitchablePlatform {
     fn get_pixel_color(&self, _x: i32, _y: i32) -> Option<tap_core::ConditionColor> {
         None
     }
+    fn window_origin(&self, _title: Option<&str>, _process: Option<&str>) -> Option<(i32, i32)> {
+        None
+    }
 }
 
 /// Three clicks 300ms apart: at 0, 300 and 600 ms of timeline time.
@@ -886,6 +892,7 @@ fn losing_the_target_window_does_not_make_the_remaining_steps_fire_as_a_burst() 
         title: Some("Game".to_string()),
         process: None,
         pause_when_unfocused: true,
+        coordinates: Default::default(),
     });
     handle.send(EngineCommand::SetDocument(Box::new(doc)));
     handle.send(EngineCommand::Start);
@@ -956,4 +963,303 @@ fn an_overrun_step_still_runs_immediately_without_any_stall() {
         "an overdue step after a Wait must not be delayed further ({}ms)",
         ms(gap)
     );
+}
+
+// === Tests: window-relative coordinates ===
+
+type SharedOrigin = Arc<Mutex<Option<(i32, i32)>>>;
+type SharedPixels = Arc<Mutex<HashMap<(i32, i32), tap_core::ConditionColor>>>;
+
+/// A platform whose target window can be moved, hidden and shown while a run is in progress, and
+/// whose screen holds a few known pixels. The window is always focused (when present).
+struct MovableWindowPlatform {
+    origin: SharedOrigin,
+    pixels: SharedPixels,
+}
+
+impl PlatformConditionProvider for MovableWindowPlatform {
+    fn is_window_focused(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
+        true
+    }
+    fn window_exists(&self, _title: Option<&str>, _process: Option<&str>) -> bool {
+        true
+    }
+    fn get_pixel_color(&self, x: i32, y: i32) -> Option<tap_core::ConditionColor> {
+        self.pixels.lock().unwrap().get(&(x, y)).copied()
+    }
+    fn window_origin(&self, _title: Option<&str>, _process: Option<&str>) -> Option<(i32, i32)> {
+        *self.origin.lock().unwrap()
+    }
+}
+
+/// Records injected actions and, if asked, drags the target window 200 px to the right each time
+/// something is injected (to prove the origin is looked up per action, not once per run).
+struct WindowMovingExecutor {
+    injected: Arc<Mutex<Vec<Action>>>,
+    origin: SharedOrigin,
+    move_after_each: bool,
+}
+
+impl ActionExecutor for WindowMovingExecutor {
+    fn execute(&self, action: &Action) -> Result<(), String> {
+        self.injected.lock().unwrap().push(action.clone());
+        if self.move_after_each {
+            if let Some((x, y)) = self.origin.lock().unwrap().as_mut() {
+                *x += 200;
+                let _ = y;
+            }
+        }
+        Ok(())
+    }
+}
+
+struct WindowHarness {
+    handle: PlayerHandle,
+    injected: Arc<Mutex<Vec<Action>>>,
+    origin: SharedOrigin,
+    pixels: SharedPixels,
+}
+
+fn window_harness(origin: Option<(i32, i32)>, move_after_each: bool) -> WindowHarness {
+    let origin: SharedOrigin = Arc::new(Mutex::new(origin));
+    let pixels: SharedPixels = Arc::new(Mutex::new(HashMap::new()));
+    let injected = Arc::new(Mutex::new(Vec::new()));
+    let handle = Player::spawn(
+        WindowMovingExecutor {
+            injected: injected.clone(),
+            origin: origin.clone(),
+            move_after_each,
+        },
+        MovableWindowPlatform {
+            origin: origin.clone(),
+            pixels: pixels.clone(),
+        },
+    );
+    WindowHarness {
+        handle,
+        injected,
+        origin,
+        pixels,
+    }
+}
+
+fn targeting(mut doc: MacroDocument, coordinates: tap_core::CoordinateSpace) -> MacroDocument {
+    doc.target_window = Some(tap_core::DslTargetWindow {
+        title: Some("Game".to_string()),
+        process: None,
+        pause_when_unfocused: true,
+        coordinates,
+    });
+    doc
+}
+
+fn relative(doc: MacroDocument) -> MacroDocument {
+    targeting(doc, tap_core::CoordinateSpace::Window)
+}
+
+fn start(h: &WindowHarness, doc: MacroDocument) {
+    h.handle.send(EngineCommand::SetDocument(Box::new(doc)));
+    h.handle.send(EngineCommand::Start);
+}
+
+#[test]
+fn window_relative_positions_are_moved_to_the_windows_screen_position() {
+    let h = window_harness(Some((100, 50)), false);
+    start(&h, relative(document(vec![timed(dsl_click(10, 20))], 1)));
+
+    let (completed, _) = pump_until_complete(&h.handle, Duration::from_secs(3));
+
+    assert!(completed);
+    assert_eq!(*h.injected.lock().unwrap(), vec![click(110, 70)]);
+}
+
+#[test]
+fn a_window_that_moves_between_steps_is_followed() {
+    // The executor drags the window 200 px right after every injected action.
+    let h = window_harness(Some((100, 50)), true);
+    start(
+        &h,
+        relative(document(
+            vec![timed(dsl_click(10, 20)), timed(dsl_click(10, 20))],
+            2,
+        )),
+    );
+
+    let (completed, _) = pump_until_complete(&h.handle, Duration::from_secs(3));
+
+    assert!(completed);
+    assert_eq!(
+        *h.injected.lock().unwrap(),
+        vec![
+            click(110, 70),
+            click(310, 70),
+            click(510, 70),
+            click(710, 70)
+        ]
+    );
+}
+
+#[test]
+fn both_ends_of_a_drag_are_window_relative() {
+    let h = window_harness(Some((100, 50)), false);
+    let drag = DslAction::Drag {
+        from_x: DslValue::Int(1),
+        from_y: DslValue::Int(2),
+        to_x: DslValue::Int(30),
+        to_y: DslValue::Int(40),
+        duration_ms: 0,
+    };
+    start(&h, relative(document(vec![timed(drag)], 1)));
+
+    let (completed, _) = pump_until_complete(&h.handle, Duration::from_secs(3));
+
+    assert!(completed);
+    let injected = h.injected.lock().unwrap();
+    let press = Action::MouseDown {
+        x: 101,
+        y: 52,
+        button: MouseButton::Left,
+    };
+    let release = Action::MouseUp {
+        x: 130,
+        y: 90,
+        button: MouseButton::Left,
+    };
+    assert_eq!(injected.first(), Some(&press));
+    assert_eq!(injected.last(), Some(&release));
+}
+
+#[test]
+fn an_action_nested_in_a_conditional_is_window_relative_too() {
+    let h = window_harness(Some((100, 50)), false);
+    let branch = DslAction::Conditional {
+        condition: DslCondition::Always,
+        then_action: Box::new(dsl_click(10, 20)),
+        else_action: None,
+    };
+    start(&h, relative(document(vec![timed(branch)], 1)));
+
+    let (completed, _) = pump_until_complete(&h.handle, Duration::from_secs(3));
+
+    assert!(completed);
+    assert_eq!(*h.injected.lock().unwrap(), vec![click(110, 70)]);
+}
+
+#[test]
+fn screen_coordinates_are_untouched_even_with_a_target_window() {
+    // The window is somewhere, but the document measures from the screen.
+    let h = window_harness(Some((100, 50)), false);
+    start(
+        &h,
+        targeting(
+            document(vec![timed(dsl_click(10, 20))], 1),
+            tap_core::CoordinateSpace::Screen,
+        ),
+    );
+
+    let (completed, _) = pump_until_complete(&h.handle, Duration::from_secs(3));
+
+    assert!(completed);
+    assert_eq!(*h.injected.lock().unwrap(), vec![click(10, 20)]);
+}
+
+#[test]
+fn a_missing_window_is_waited_for_and_the_step_then_lands_in_the_window() {
+    let h = window_harness(None, false);
+    start(&h, relative(document(vec![timed(dsl_click(10, 20))], 1)));
+
+    std::thread::sleep(Duration::from_millis(350));
+    assert!(
+        h.injected.lock().unwrap().is_empty(),
+        "nothing may be injected while there is no window to measure from"
+    );
+
+    *h.origin.lock().unwrap() = Some((300, 100));
+    let (completed, events) = pump_until_complete(&h.handle, Duration::from_secs(3));
+
+    assert!(completed);
+    assert_eq!(*h.injected.lock().unwrap(), vec![click(310, 120)]);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::TargetWindowUnfocused { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::TargetWindowFocused)));
+}
+
+#[test]
+fn stopping_while_waiting_for_the_window_ends_the_run() {
+    let h = window_harness(None, false);
+    start(&h, relative(document(vec![timed(dsl_click(10, 20))], 1)));
+    std::thread::sleep(Duration::from_millis(250));
+
+    h.handle.send(EngineCommand::Stop);
+
+    assert!(wait_for(Duration::from_secs(3), || {
+        h.handle.state() == EngineState::Idle
+    }));
+    assert!(h.injected.lock().unwrap().is_empty());
+}
+
+fn red_pixel_condition(timeout_ms: u64) -> DslAction {
+    DslAction::WaitUntil {
+        condition: DslCondition::PixelColor {
+            x: 5,
+            y: 5,
+            color: "#FF0000".to_string(),
+            tolerance: 0,
+        },
+        timeout_ms: Some(timeout_ms),
+        poll_interval_ms: 10,
+    }
+}
+
+fn events_of(h: &WindowHarness, timeout: Duration) -> Vec<EngineEvent> {
+    pump_until_complete(&h.handle, timeout).1
+}
+
+#[test]
+fn pixel_color_positions_are_window_relative() {
+    let h = window_harness(Some((100, 50)), false);
+    // Red at (5, 5) *in the window*, which is (105, 55) on the screen.
+    h.pixels
+        .lock()
+        .unwrap()
+        .insert((105, 55), tap_core::ConditionColor::new(255, 0, 0));
+    start(
+        &h,
+        relative(document(vec![timed(red_pixel_condition(1000))], 1)),
+    );
+
+    let events = events_of(&h, Duration::from_secs(3));
+
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::ConditionSatisfied { .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::ConditionTimeout { .. })));
+}
+
+#[test]
+fn a_pixel_condition_without_its_window_never_reads_another_place_on_the_screen() {
+    let h = window_harness(None, false);
+    // The unshifted position holds the wanted color: reading it would be the wrong answer.
+    h.pixels
+        .lock()
+        .unwrap()
+        .insert((5, 5), tap_core::ConditionColor::new(255, 0, 0));
+    start(
+        &h,
+        relative(document(vec![timed(red_pixel_condition(150))], 1)),
+    );
+
+    let events = events_of(&h, Duration::from_secs(3));
+
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::ConditionTimeout { .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, EngineEvent::ConditionSatisfied { .. })));
 }

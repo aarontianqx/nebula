@@ -276,6 +276,7 @@ mod tests {
                 title: Some("Notepad".to_string()),
                 process: None,
                 pause_when_unfocused: true,
+                coordinates: Default::default(),
             }),
             timeline: vec![DslTimedAction {
                 at_ms: 100,

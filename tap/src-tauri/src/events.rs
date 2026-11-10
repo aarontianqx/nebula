@@ -2,8 +2,9 @@
 //! events and forwards them to the frontend.
 
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-use tap_application::{EngineEvent, MouseButtonRaw, RawEventType};
+use tap_application::{relativize_raw, window_binding, EngineEvent, MouseButtonRaw, RawEventType};
 use tap_platform::{InputEventType, MouseButtonType, MouseTrackerEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, warn};
@@ -12,6 +13,9 @@ use crate::key_click::KeyClickEvent;
 use crate::state::{AppState, MousePositionUpdate, RecordingStatus};
 
 pub fn poll_events(app: AppHandle) {
+    let mut origin_tracker = OriginTracker::default();
+    // The cursor on the screen, whatever space the recording uses (see `convert_input_event`).
+    let mut last_screen_pos = (0, 0);
     loop {
         std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps for smooth recording
 
@@ -48,22 +52,52 @@ pub fn poll_events(app: AppHandle) {
         }
 
         // Process recording input events
-        let input_events: Vec<_> = {
+        let (input_events, recording_window) = {
             let app_state = state.lock().unwrap();
-            app_state
+            let events = app_state
                 .input_hook
                 .as_ref()
                 .map(|h| h.drain())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            // The window recorded positions are measured from, if the document uses one.
+            let window = window_binding(app_state.coordinator.document())
+                .map(|t| (t.title.clone(), t.process.clone()));
+            if app_state.input_hook.is_none() {
+                origin_tracker.reset();
+            }
+            (events, window)
         };
 
         if !input_events.is_empty() {
             let mut app_state = state.lock().unwrap();
-            let last_pos = app_state.recorder.last_mouse_position();
 
             for raw_event in input_events {
                 // Convert platform event to core event
-                let core_event = convert_input_event(&raw_event.event, last_pos);
+                let mut core_event = convert_input_event(&raw_event.event, last_screen_pos);
+                match &core_event {
+                    RawEventType::MouseMove { x, y }
+                    | RawEventType::MouseDown { x, y, .. }
+                    | RawEventType::MouseUp { x, y, .. } => last_screen_pos = (*x, *y),
+                    _ => {}
+                }
+
+                // Window-relative document: measure positions from the window. The origin is
+                // looked up fresh for button events (the ones that matter) and cached briefly for
+                // the flood of move events. Without any known origin the event cannot be placed.
+                if let Some((title, process)) = &recording_window {
+                    let precise = !matches!(core_event, RawEventType::MouseMove { .. });
+                    let origin = origin_tracker.origin(Instant::now(), precise, || {
+                        tap_platform::window_origin(title.as_deref(), process.as_deref())
+                    });
+                    match origin {
+                        Some(origin) => core_event = relativize_raw(core_event, origin),
+                        None if has_position(&core_event) => {
+                            debug!("target window not found, dropping a positioned event");
+                            continue;
+                        }
+                        None => {}
+                    }
+                }
 
                 // Push to recorder; emit recording status to the frontend.
                 if let Some(tap_application::RecorderEvent::EventCaptured {
@@ -157,6 +191,58 @@ pub fn poll_events(app: AppHandle) {
     }
 }
 
+/// How long the window origin found for a mouse move is reused. Moves arrive in floods and the
+/// window rarely moves between two of them; button events always look the origin up again.
+const MOVE_ORIGIN_CACHE: Duration = Duration::from_millis(100);
+
+/// The recorded window's origin, as of the last successful lookup.
+#[derive(Default)]
+struct OriginTracker {
+    last: Option<((i32, i32), Instant)>,
+}
+
+impl OriginTracker {
+    /// The window origin at `now`. `precise` forces a fresh `lookup`; otherwise a result younger
+    /// than `MOVE_ORIGIN_CACHE` is reused. When the window cannot be found the last known origin
+    /// stands in, so a press and its release (or a drag that ends outside) stay consistent; with
+    /// none known the answer is `None`.
+    fn origin(
+        &mut self,
+        now: Instant,
+        precise: bool,
+        lookup: impl FnOnce() -> Option<(i32, i32)>,
+    ) -> Option<(i32, i32)> {
+        if !precise {
+            if let Some((origin, at)) = self.last {
+                if now.saturating_duration_since(at) < MOVE_ORIGIN_CACHE {
+                    return Some(origin);
+                }
+            }
+        }
+        match lookup() {
+            Some(origin) => {
+                self.last = Some((origin, now));
+                Some(origin)
+            }
+            None => self.last.map(|(origin, _)| origin),
+        }
+    }
+
+    /// Forget the cached origin (a new recording starts from scratch).
+    fn reset(&mut self) {
+        self.last = None;
+    }
+}
+
+fn has_position(event: &RawEventType) -> bool {
+    matches!(
+        event,
+        RawEventType::MouseMove { .. }
+            | RawEventType::MouseDown { .. }
+            | RawEventType::MouseUp { .. }
+    )
+}
+
 /// Convert platform input event to core raw event type.
 fn convert_input_event(event: &InputEventType, last_pos: (i32, i32)) -> RawEventType {
     match event {
@@ -200,5 +286,51 @@ fn convert_button(button: MouseButtonType) -> MouseButtonRaw {
         MouseButtonType::Right => MouseButtonRaw::Right,
         MouseButtonType::Middle => MouseButtonRaw::Middle,
         MouseButtonType::Unknown => MouseButtonRaw::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn button_events_always_look_the_origin_up_again() {
+        let mut tracker = OriginTracker::default();
+        let t0 = Instant::now();
+        assert_eq!(tracker.origin(t0, true, || Some((10, 20))), Some((10, 20)));
+        // A second precise lookup right away still asks the platform (the window may have moved).
+        assert_eq!(tracker.origin(t0, true, || Some((30, 40))), Some((30, 40)));
+    }
+
+    #[test]
+    fn move_events_reuse_a_fresh_origin_and_refresh_a_stale_one() {
+        let mut tracker = OriginTracker::default();
+        let t0 = Instant::now();
+        tracker.origin(t0, true, || Some((10, 20)));
+
+        let soon = t0 + Duration::from_millis(50);
+        assert_eq!(
+            tracker.origin(soon, false, || panic!("must be served from the cache")),
+            Some((10, 20))
+        );
+
+        let later = t0 + Duration::from_millis(150);
+        assert_eq!(
+            tracker.origin(later, false, || Some((99, 99))),
+            Some((99, 99))
+        );
+    }
+
+    #[test]
+    fn a_lost_window_falls_back_to_the_last_known_origin_and_then_to_none() {
+        let mut tracker = OriginTracker::default();
+        let t0 = Instant::now();
+        assert_eq!(tracker.origin(t0, true, || None), None);
+
+        tracker.origin(t0, true, || Some((10, 20)));
+        assert_eq!(tracker.origin(t0, true, || None), Some((10, 20)));
+
+        tracker.reset();
+        assert_eq!(tracker.origin(t0, true, || None), None);
     }
 }

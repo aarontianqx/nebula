@@ -241,7 +241,7 @@ flowchart LR
 
 PR 1、2、3、4 互不依赖，可并行。每个 PR 独立可发布、可回滚。
 
-进度：PR 1–10 已实现；PR 11 起待启动。
+进度：PR 1–11 已实现；PR 12 起待启动。
 
 PR 5 落地说明（与上文设计的差异）：
 - WS0 的临时止血层（`edit_support`、`apply_profile_edit` 的拒绝逻辑、`get_edit_support`、前端 `editable`）与 `profile_view` / `document_to_profile_view` 已整体删除；不变量测试迁移为 `tests/document_sync.rs`（文档按原样存储、改名不丢步骤、编辑中间态不被拒绝）。
@@ -275,6 +275,15 @@ PR 10 落地说明（与上文设计的差异）：
 - 现在先用 `NSWorkspace.frontmostApplication` 取前台应用的 pid，再用 `main_window_of` 选主窗口：以该应用最大窗口的面积为基准忽略小于一半的窗口，其余候选里取最上面的**有标题**窗口（飞书这类 Electron 应用在带标题窗口上方叠着同尺寸的无标题辅助窗口），都没有标题时取最上面的。该函数是纯函数，放在跨平台的 `window/mod.rs` 并在所有 OS 的 CI 上单测。前台应用没有普通窗口时返回 `None`。
 - 与设计的差异：Windows 的 `DWMWA_EXTENDED_FRAME_BOUNDS` 未在本 PR 做。Windows 的前台判定本来就用 `GetForegroundWindow`，是对的；矩形的 7px 不可见边框目前只用于界面显示，没有逻辑依赖它，改到真正使用矩形的 PR 11 时一并做并实机验证。
 - 局限：多个同样大小且都有标题的窗口之间按 z 序取最上面的，和系统的键盘焦点窗口通常一致但不保证；要精确需走辅助功能 API（`AXFocusedWindow`），依赖额外权限，暂不做。`frontmostApplication` 依赖主线程 run loop 更新，在 Tauri 应用内成立；脱离 run loop 的命令行进程只能读到启动时刻的值。
+
+PR 11 落地说明（与上文设计的差异）：
+- 与设计一致：文档级 `target_window.coordinates`（`screen` 默认且不序列化 / `window`），`Action` / `DslAction` 不变；引擎在每个动作分发时取原点并平移，`pixel_color` 的评估器同样平移；校验要求窗口相对必须有标题或进程。
+- 原点解析是纯函数 `pick_target_window`：前台窗口匹配则取之，否则取匹配窗口中面积最大者（并列取最上面）；零面积与停在屏外（坐标 ≤ -30000）的窗口视为不可用。引擎在窗口不可用时复用“目标窗口失焦”流程（同样的事件、同样的暂停计时豁免），停止命令随时可打断等待。
+- 条件里读不到窗口时，`pixel_color` 返回“读不到”（条件不满足）而不是读屏幕上别处的像素。
+- 录制在事件泵里逐事件换算：按键事件每次现取原点，移动事件复用 ≤100 ms 的缓存；窗口暂时找不到时沿用最近一次已知原点，使按下 / 松开成对，从未知道过原点则丢弃该位置事件。`start_recording` 在窗口不在屏上时拒绝开始。事件泵内的“(0,0) 回退到上次位置”改为按屏幕坐标记，不受换算影响。
+- 拾取器事件新增 `window_origin`（文档窗口相对且找到窗口时）与 `window_missing`；换算在前端 `pickStore.deliverPosition` 中做（它知道是哪个字段在请求），Simple 模式始终拿屏幕坐标；窗口找不到时不填字段并写日志。
+- Windows 矩形改用 `DWMWA_EXTENDED_FRAME_BOUNDS`（无则回退 `GetWindowRect`）；已在 macOS 上用 `cargo check/clippy --target x86_64-pc-windows-msvc` 验证能编译，**尚未在 Windows 真机上验证数值**。
+- 局限：切换开关不会改写已有坐标（UI 有提示）；仅平移不缩放；录制中途窗口被关闭后，后续位置事件沿用最后已知原点；多显示器 / 混合 DPI 未实机验证。
 
 ## 6. 风险
 

@@ -20,7 +20,14 @@ export type PickMode = "position" | "position_color";
 export interface PickedPosition extends Point {
   /** Present only for `position_color` picks, and absent if the color could not be read. */
   color?: ColorResponse;
+  /** The target window's top-left corner, when the document measures positions from that window. */
+  window_origin?: Point;
+  /** The document measures from its target window, but the window was not found. */
+  window_missing?: boolean;
 }
+
+/** What the picker knows about the document's target window (see `PickedPosition`). */
+export type PickedWindow = Pick<PickedPosition, "window_origin" | "window_missing">;
 
 // === Resolved actions ===
 //
@@ -129,10 +136,15 @@ export interface DslRunConfig {
   speed: number;
 }
 
+/** What a document's coordinates are measured from. */
+export type CoordinateSpace = "screen" | "window";
+
 export interface DslTargetWindow {
   title?: string | null;
   process?: string | null;
   pause_when_unfocused: boolean;
+  /** Absent means `"screen"`. */
+  coordinates?: CoordinateSpace;
 }
 
 export type VariableType = "string" | "number" | "boolean";

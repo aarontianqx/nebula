@@ -51,4 +51,8 @@ impl PlatformConditionProvider for TauriPlatformProvider {
     fn get_pixel_color(&self, x: i32, y: i32) -> Option<ConditionColor> {
         get_pixel_color(x, y).map(|c| ConditionColor::new(c.r, c.g, c.b))
     }
+
+    fn window_origin(&self, title: Option<&str>, process: Option<&str>) -> Option<(i32, i32)> {
+        tap_platform::window_origin(title, process)
+    }
 }

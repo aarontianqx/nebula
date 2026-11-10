@@ -39,7 +39,7 @@ const DOCUMENT_FIELDS: Fields<MacroDocument> = [
 ];
 const STEP_FIELDS: Fields<DslTimedAction> = ["action", "at_ms", "enabled", "note"];
 const RUN_FIELDS: Fields<DslRunConfig> = ["repeat", "speed", "start_delay_ms"];
-const TARGET_FIELDS: Fields<NonNullable<DslTargetWindow>> = ["pause_when_unfocused", "process", "title"];
+const TARGET_FIELDS: Fields<NonNullable<DslTargetWindow>> = ["coordinates", "pause_when_unfocused", "process", "title"];
 const VARIABLE_FIELDS: Fields<VariableDefinition> = ["default", "description", "type"];
 
 const ACTION_FIELDS: { [K in DslActionKind]: readonly (keyof PayloadOf<DslAction, K> & string)[] } = {

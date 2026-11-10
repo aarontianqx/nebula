@@ -110,6 +110,48 @@ describe("picking a position for a field", () => {
   });
 });
 
+describe("picking in a document measured from its target window", () => {
+  const orange = { r: 255, g: 136, b: 0, hex: "#FF8800" };
+
+  it("hands the field the position relative to the window, with the color untouched", async () => {
+    const { usePickStore, routePickedPosition } = stores;
+    const picked = vi.fn();
+
+    await usePickStore.getState().requestPosition("field-1", picked, { color: true });
+    routePickedPosition(110, 70, orange, { window_origin: { x: 100, y: 50 } });
+
+    expect(picked).toHaveBeenCalledWith(10, 20, orange);
+  });
+
+  it("can produce a negative position for a click left of or above the window", async () => {
+    const { usePickStore, routePickedPosition } = stores;
+    const picked = vi.fn();
+
+    await usePickStore.getState().requestPosition("field-1", picked);
+    routePickedPosition(90, 40, undefined, { window_origin: { x: 100, y: 50 } });
+
+    expect(picked).toHaveBeenCalledWith(-10, -10);
+  });
+
+  it("sets nothing and says so when the target window was not found", async () => {
+    const { usePickStore, useEngineStore, routePickedPosition } = stores;
+    const picked = vi.fn();
+
+    await usePickStore.getState().requestPosition("field-1", picked);
+    routePickedPosition(110, 70, undefined, { window_missing: true });
+
+    expect(picked).not.toHaveBeenCalled();
+    expect(usePickStore.getState().positionTarget).toBeNull();
+    expect(useEngineStore.getState().logs.at(-1)?.message).toContain("target window was not found");
+  });
+
+  it("leaves Simple mode on screen coordinates", () => {
+    const { useToolStore, routePickedPosition } = stores;
+    routePickedPosition(110, 70, undefined, { window_origin: { x: 100, y: 50 } });
+    expect([useToolStore.getState().clickX, useToolStore.getState().clickY]).toEqual([110, 70]);
+  });
+});
+
 describe("picking a position together with its color", () => {
   const orange = { r: 255, g: 136, b: 0, hex: "#FF8800" };
 

@@ -61,6 +61,7 @@ pub use pixel::{get_pixel_color, pixel_matches, Color};
 
 // Re-export window API
 pub use window::{
-    find_window_by_process, find_window_by_title, get_foreground_window, get_window_rect,
-    is_window_focused, list_windows, window_exists, WindowInfo, WindowRect,
+    find_target_window, find_window_by_process, find_window_by_title, get_foreground_window,
+    get_window_rect, is_window_focused, list_windows, window_exists, window_origin, WindowInfo,
+    WindowRect,
 };
