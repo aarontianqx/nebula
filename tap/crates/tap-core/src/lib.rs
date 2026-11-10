@@ -19,8 +19,8 @@ pub use dsl::{
     DslTimedAction, DslValue, MacroDocument, VariableDefinition, VariableType, DSL_VERSION,
 };
 pub use expression::{
-    create_expression_engine, resolve_expressions, ExpressionEngine, ExpressionEngineHandle,
-    ExpressionError, ExpressionResult,
+    create_expression_engine, resolve_expressions, resolve_typed_value, ExpressionEngine,
+    ExpressionEngineHandle, ExpressionError, ExpressionResult,
 };
 pub use keys::normalize_key;
 pub use schema::{validate_profile, ValidationError, ValidationResult};

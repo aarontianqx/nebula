@@ -427,6 +427,86 @@ fn call_macro_passes_args_into_child_scope() {
 }
 
 #[test]
+fn call_macro_args_are_evaluated_against_the_callers_scope() {
+    // The parent bumps a counter, then passes an *expression* over it; the child clicks there.
+    let child = document(
+        vec![timed(DslAction::Click {
+            x: DslValue::String("{{ x }}".to_string()),
+            y: DslValue::Int(3),
+            button: DslMouseButton::Left,
+        })],
+        1,
+    );
+    let loader = map_loader(vec![("child", child)]);
+
+    let mut args = HashMap::new();
+    args.insert(
+        "x".to_string(),
+        DslValue::String("{{ n * 10 + 5 }}".to_string()),
+    );
+    let parent = document(
+        vec![
+            timed(DslAction::IncrCounter { key: "n".into() }),
+            timed(DslAction::CallMacro {
+                name: "child".to_string(),
+                args,
+            }),
+        ],
+        1,
+    );
+
+    let (handle, injected) = spawn_recording(Some(loader));
+    handle.send(EngineCommand::SetDocument(Box::new(parent)));
+    handle.send(EngineCommand::Start);
+    let (completed, _) = pump_until_complete(&handle, Duration::from_secs(5));
+    let actions = injected.lock().unwrap().clone();
+    drop(handle);
+
+    assert!(completed);
+    assert_eq!(actions, vec![click(15, 3)]);
+}
+
+#[test]
+fn call_macro_with_an_unresolvable_arg_reports_it_and_skips_only_that_call() {
+    let child = document(vec![timed(dsl_click(7, 7))], 1);
+    let loader = map_loader(vec![("child", child)]);
+
+    let mut args = HashMap::new();
+    args.insert("x".to_string(), DslValue::String("{{ 1 +* }}".to_string()));
+    let parent = document(
+        vec![
+            timed(DslAction::CallMacro {
+                name: "child".to_string(),
+                args,
+            }),
+            timed(dsl_click(2, 2)),
+        ],
+        1,
+    );
+
+    let (handle, injected) = spawn_recording(Some(loader));
+    handle.send(EngineCommand::SetDocument(Box::new(parent)));
+    handle.send(EngineCommand::Start);
+    let (completed, events) = pump_until_complete(&handle, Duration::from_secs(5));
+    let actions = injected.lock().unwrap().clone();
+    drop(handle);
+
+    assert!(completed);
+    assert_eq!(
+        actions,
+        vec![click(2, 2)],
+        "only the broken call is skipped"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            EngineEvent::Error { message } if message.contains("argument `x`")
+        )),
+        "the error must name the argument: {events:?}"
+    );
+}
+
+#[test]
 fn call_macro_cycle_is_detected_and_does_not_hang() {
     // "loop" injects a click then calls itself. The cycle guard must stop the
     // recursion (emitting an Error) without hanging, and the click should fire

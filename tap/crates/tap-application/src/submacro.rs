@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::storage::load_profile;
-use tap_core::{DslValue, MacroDocument};
+use tap_core::{resolve_typed_value, DslValue, ExpressionEngine, MacroDocument};
 use tap_core::{Profile, VariableStore, VariableValue};
 
 /// Maximum call stack depth to prevent infinite recursion.
@@ -108,10 +108,15 @@ pub fn create_submacro_context() -> SubMacroContextHandle {
 }
 
 /// Prepare arguments for a sub-macro call.
-/// Converts DslValue arguments to VariableValue.
+///
+/// Converts DslValue arguments to VariableValue, evaluating `{{ ... }}` templates against the
+/// caller's scope. An argument that is exactly one template keeps its type (`{{ n * 2 }}` is a
+/// number); text mixing literals and templates becomes a string. A template that cannot be
+/// evaluated is an error naming the argument, not a silent `0`.
 pub fn prepare_submacro_args(
     args: &HashMap<String, DslValue>,
     parent_vars: &VariableStore,
+    engine: &ExpressionEngine,
 ) -> Result<HashMap<String, VariableValue>, SubMacroError> {
     let mut result = HashMap::new();
 
@@ -120,21 +125,8 @@ pub fn prepare_submacro_args(
             DslValue::Int(n) => VariableValue::Number(*n as f64),
             DslValue::Float(f) => VariableValue::Number(*f),
             DslValue::Bool(b) => VariableValue::Boolean(*b),
-            DslValue::String(s) => {
-                // Check if it's a variable reference
-                if s.starts_with("{{") && s.ends_with("}}") {
-                    let var_name = s[2..s.len() - 2].trim();
-                    if let Some(val) = parent_vars.get_variable(var_name) {
-                        val.clone()
-                    } else {
-                        // Check counters
-                        let counter = parent_vars.get_counter(var_name);
-                        VariableValue::Number(counter as f64)
-                    }
-                } else {
-                    VariableValue::String(s.clone())
-                }
-            }
+            DslValue::String(s) => resolve_typed_value(s, parent_vars, engine)
+                .map_err(|e| SubMacroError::VariableError(format!("argument `{key}`: {e}")))?,
         };
         result.insert(key.clone(), resolved);
     }
@@ -220,10 +212,60 @@ mod tests {
         args.insert("b".to_string(), DslValue::String("{{ x }}".to_string()));
         args.insert("c".to_string(), DslValue::String("{{ count }}".to_string()));
 
-        let result = prepare_submacro_args(&args, &parent).unwrap();
+        let result = prepare_submacro_args(&args, &parent, &ExpressionEngine::new()).unwrap();
 
         assert!(matches!(result.get("a"), Some(VariableValue::Number(n)) if *n == 42.0));
         assert!(matches!(result.get("b"), Some(VariableValue::Number(n)) if *n == 100.0));
         assert!(matches!(result.get("c"), Some(VariableValue::Number(n)) if *n == 5.0));
+    }
+
+    #[test]
+    fn args_may_be_expressions_over_the_callers_scope() {
+        let mut parent = VariableStore::new();
+        parent.set_variable("x", 100);
+        parent.set_variable("name", "Ada");
+        parent.set_counter("count", 5);
+
+        let mut args = HashMap::new();
+        args.insert("n".to_string(), DslValue::String("{{ x * 2 }}".to_string()));
+        args.insert(
+            "m".to_string(),
+            DslValue::String("{{ count + 1 }}".to_string()),
+        );
+        args.insert(
+            "big".to_string(),
+            DslValue::String("{{ x > 50 }}".to_string()),
+        );
+        args.insert(
+            "who".to_string(),
+            DslValue::String("hi {{ name }}!".to_string()),
+        );
+        args.insert("flag".to_string(), DslValue::Bool(true));
+
+        let result = prepare_submacro_args(&args, &parent, &ExpressionEngine::new()).unwrap();
+
+        assert!(matches!(result.get("n"), Some(VariableValue::Number(n)) if *n == 200.0));
+        assert!(matches!(result.get("m"), Some(VariableValue::Number(n)) if *n == 6.0));
+        assert!(matches!(
+            result.get("big"),
+            Some(VariableValue::Boolean(true))
+        ));
+        assert!(matches!(result.get("who"), Some(VariableValue::String(s)) if s == "hi Ada!"));
+        assert!(matches!(
+            result.get("flag"),
+            Some(VariableValue::Boolean(true))
+        ));
+    }
+
+    #[test]
+    fn an_argument_that_cannot_be_resolved_is_an_error_naming_it() {
+        let parent = VariableStore::new();
+        let mut args = HashMap::new();
+        args.insert("n".to_string(), DslValue::String("{{ 1 +* }}".to_string()));
+
+        let err = prepare_submacro_args(&args, &parent, &ExpressionEngine::new()).unwrap_err();
+
+        assert!(matches!(err, SubMacroError::VariableError(_)));
+        assert!(err.to_string().contains("argument `n`"), "{err}");
     }
 }

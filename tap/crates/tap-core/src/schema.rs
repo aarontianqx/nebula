@@ -182,9 +182,9 @@ fn validate_action(action: &DslAction, path: &str, errors: &mut Vec<ValidationEr
             else_action,
         } => {
             validate_condition(condition, &format!("{}.condition", path), errors);
-            validate_action(then_action, &format!("{}.then_action", path), errors);
+            validate_nested_action(then_action, &format!("{}.then_action", path), errors);
             if let Some(else_act) = else_action {
-                validate_action(else_act, &format!("{}.else_action", path), errors);
+                validate_nested_action(else_act, &format!("{}.else_action", path), errors);
             }
         }
         DslAction::SetCounter { key, value: _ } => {
@@ -220,6 +220,23 @@ fn validate_action(action: &DslAction, path: &str, errors: &mut Vec<ValidationEr
             }
         }
     }
+}
+
+/// Validate an action nested in a conditional.
+///
+/// The engine expands `call_macro` only for steps of a timeline; nested in an `if` it has no
+/// primitive form and would fail halfway through a run. Reject it up front instead.
+fn validate_nested_action(action: &DslAction, path: &str, errors: &mut Vec<ValidationError>) {
+    if matches!(action, DslAction::CallMacro { .. }) {
+        errors.push(ValidationError {
+            path: path.to_string(),
+            message: "call_macro must be a timeline step; it cannot be nested inside an if"
+                .to_string(),
+            line: None,
+        });
+        return;
+    }
+    validate_action(action, path, errors);
 }
 
 fn validate_condition(cond: &DslCondition, path: &str, errors: &mut Vec<ValidationError>) {
@@ -478,6 +495,58 @@ mod tests {
         profile.run.speed = 0.0;
         let result = validate_profile(&profile);
         assert!(result.is_err());
+    }
+
+    fn conditional(then_action: DslAction, else_action: Option<DslAction>) -> MacroDocument {
+        let mut profile = minimal_profile();
+        profile.timeline[0].action = DslAction::Conditional {
+            condition: DslCondition::Always,
+            then_action: Box::new(then_action),
+            else_action: else_action.map(Box::new),
+        };
+        profile
+    }
+
+    fn call(name: &str) -> DslAction {
+        DslAction::CallMacro {
+            name: name.to_string(),
+            args: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn call_macro_is_valid_as_a_timeline_step() {
+        let mut profile = minimal_profile();
+        profile.timeline[0].action = call("login");
+        assert!(validate_profile(&profile).is_ok());
+    }
+
+    #[test]
+    fn call_macro_nested_in_an_if_is_rejected_in_either_branch() {
+        let in_then = conditional(call("login"), None);
+        let errors = validate_profile(&in_then).unwrap_err();
+        assert!(errors.iter().any(
+            |e| e.path == "timeline[0].action.then_action" && e.message.contains("call_macro")
+        ));
+
+        let in_else = conditional(DslAction::Exit, Some(call("login")));
+        let errors = validate_profile(&in_else).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.path == "timeline[0].action.else_action"));
+    }
+
+    #[test]
+    fn call_macro_nested_deeper_in_ifs_is_still_rejected() {
+        let inner = DslAction::Conditional {
+            condition: DslCondition::Always,
+            then_action: Box::new(call("login")),
+            else_action: None,
+        };
+        let errors = validate_profile(&conditional(inner, None)).unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.path == "timeline[0].action.then_action.then_action"));
     }
 
     #[test]

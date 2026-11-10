@@ -478,7 +478,7 @@ impl<E: ActionExecutor + 'static, P: PlatformConditionProvider + 'static> Player
         // child defaults + resolved args), run the child, then restore the
         // parent so sibling/parent scopes stay clean.
         let parent_scope = self.variables.lock().unwrap().clone();
-        let resolved_args = match prepare_submacro_args(args, &parent_scope) {
+        let resolved_args = match prepare_submacro_args(args, &parent_scope, &self.expr_engine) {
             Ok(a) => a,
             Err(e) => {
                 self.emit(EngineEvent::Error {

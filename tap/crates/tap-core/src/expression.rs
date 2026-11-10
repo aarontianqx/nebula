@@ -8,7 +8,7 @@
 use rhai::{Dynamic, Engine, Scope};
 use std::sync::Arc;
 
-use crate::variables::VariableStore;
+use crate::variables::{VariableStore, VariableValue};
 
 /// Expression evaluator using Rhai.
 pub struct ExpressionEngine {
@@ -282,6 +282,54 @@ pub fn resolve_expressions(
     Ok(result)
 }
 
+/// Resolve a template to a *typed* value.
+///
+/// A string that is exactly one `{{ ... }}` keeps the type of what it refers to or evaluates to
+/// (a number stays a number, a boolean a boolean): `call_macro` arguments become the callee's
+/// variables, where the type matters. Anything else (plain text, or text mixed with several
+/// `{{ ... }}`) is resolved to a string with [`resolve_expressions`].
+///
+/// As in [`resolve_expressions`], a lone identifier refers to a variable first and a counter
+/// second; everything else is a Rhai expression.
+pub fn resolve_typed_value(
+    s: &str,
+    variables: &VariableStore,
+    engine: &ExpressionEngine,
+) -> Result<VariableValue, ExpressionError> {
+    let Some(expr) = single_template(s) else {
+        return resolve_expressions(s, variables, engine).map(VariableValue::String);
+    };
+
+    if is_simple_identifier(expr) {
+        return Ok(match variables.get_variable(expr) {
+            Some(value) => value.clone(),
+            None => VariableValue::Number(f64::from(variables.get_counter(expr))),
+        });
+    }
+
+    match engine.evaluate(expr, variables)? {
+        ExpressionResult::Integer(n) => Ok(VariableValue::Number(n as f64)),
+        ExpressionResult::Float(f) => Ok(VariableValue::Number(f)),
+        ExpressionResult::Boolean(b) => Ok(VariableValue::Boolean(b)),
+        ExpressionResult::String(text) => Ok(VariableValue::String(text)),
+        ExpressionResult::Unit => Err(ExpressionError::TypeMismatch {
+            expected: "a value".to_string(),
+            got: "unit".to_string(),
+        }),
+    }
+}
+
+/// The trimmed inner text when `s` is exactly one `{{ ... }}` template.
+fn single_template(s: &str) -> Option<&str> {
+    let rest = s.trim().strip_prefix("{{")?;
+    let inner = rest.strip_suffix("}}")?;
+    // `{{ a }} and {{ b }}` also starts with `{{` and ends with `}}`.
+    if inner.contains("{{") || inner.contains("}}") {
+        return None;
+    }
+    Some(inner.trim())
+}
+
 /// Check if a string is a simple identifier (alphanumeric + underscore).
 fn is_simple_identifier(s: &str) -> bool {
     if s.is_empty() {
@@ -376,6 +424,62 @@ mod tests {
             resolve_expressions("Click at {{ x }}, count: {{ count + 1 }}", &vars, &engine)
                 .unwrap();
         assert_eq!(result, "Click at 100, count: 6");
+    }
+
+    fn typed_scope() -> (ExpressionEngine, VariableStore) {
+        let mut vars = VariableStore::new();
+        vars.set_variable("x", 100);
+        vars.set_variable("name", "Ada");
+        vars.set_variable("flag", true);
+        vars.set_counter("count", 5);
+        (ExpressionEngine::new(), vars)
+    }
+
+    #[test]
+    fn typed_value_keeps_the_type_of_a_lone_template() {
+        let (engine, vars) = typed_scope();
+        let typed = |s: &str| resolve_typed_value(s, &vars, &engine).unwrap();
+
+        assert!(matches!(typed("{{ x }}"), VariableValue::Number(n) if n == 100.0));
+        assert!(matches!(typed("{{ flag }}"), VariableValue::Boolean(true)));
+        assert!(matches!(typed("{{ name }}"), VariableValue::String(s) if s == "Ada"));
+        // A lone identifier that is no variable is a counter.
+        assert!(matches!(typed("{{ count }}"), VariableValue::Number(n) if n == 5.0));
+        assert!(matches!(typed("  {{x}}  "), VariableValue::Number(n) if n == 100.0));
+    }
+
+    #[test]
+    fn typed_value_evaluates_expressions() {
+        let (engine, vars) = typed_scope();
+        let typed = |s: &str| resolve_typed_value(s, &vars, &engine).unwrap();
+
+        assert!(matches!(typed("{{ x * 2 }}"), VariableValue::Number(n) if n == 200.0));
+        assert!(matches!(typed("{{ count + 1.5 }}"), VariableValue::Number(n) if n == 6.5));
+        assert!(matches!(typed("{{ x > 5 }}"), VariableValue::Boolean(true)));
+        assert!(matches!(typed("{{ \"hi \" + name }}"), VariableValue::String(s) if s == "hi Ada"));
+    }
+
+    #[test]
+    fn typed_value_turns_everything_else_into_text() {
+        let (engine, vars) = typed_scope();
+        let typed = |s: &str| resolve_typed_value(s, &vars, &engine).unwrap();
+
+        assert!(matches!(typed("plain"), VariableValue::String(s) if s == "plain"));
+        assert!(matches!(typed("x = {{ x }}"), VariableValue::String(s) if s == "x = 100"));
+        // Two templates are text, not one expression spanning both.
+        assert!(
+            matches!(typed("{{ x }} and {{ count }}"), VariableValue::String(s) if s == "100 and 5")
+        );
+    }
+
+    #[test]
+    fn typed_value_reports_what_cannot_be_resolved() {
+        let (engine, vars) = typed_scope();
+
+        assert!(resolve_typed_value("{{ x +* }}", &vars, &engine).is_err());
+        assert!(resolve_typed_value("{{ x", &vars, &engine).is_err());
+        // An expression with no value is an error, not an empty string.
+        assert!(resolve_typed_value("{{ () }}", &vars, &engine).is_err());
     }
 
     #[test]

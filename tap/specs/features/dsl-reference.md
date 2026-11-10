@@ -273,7 +273,10 @@ action: !wait_until
 
 ### Conditional
 
-`then_action`/`else_action` are themselves actions (a tag, or bare `exit`):
+`then_action`/`else_action` are themselves actions (a tag, or bare `exit`), but
+never `call_macro`: the engine expands it only as a timeline step, so validation
+rejects a `call_macro` nested in a conditional instead of letting the run fail
+halfway.
 
 ```yaml
 action: !conditional
@@ -319,8 +322,12 @@ action: !call_macro
 ```
 
 `call_macro` loads another saved macro by `name` and expands its timeline in
-place at runtime. `args` override the child's same-named variables and may
-reference the parent scope via `{{ ... }}`. The child runs in an isolated scope
+place at runtime. `args` override the child's same-named variables. An argument
+is a literal or a `{{ ... }}` template over the parent scope: a value that is
+exactly one template keeps its type (`"{{ n * 2 }}"` is a number, `"{{ n > 1 }}"`
+a boolean), text mixing literals and templates is a string. An argument that
+cannot be evaluated is reported as an `EngineEvent::Error` naming it and that
+call is skipped (it never silently becomes `0`). The child runs in an isolated scope
 (its variable/counter writes do not leak back), a child `exit` only ends the
 child, and cycles or calls deeper than 10 levels are skipped with an
 `EngineEvent::Error` rather than hanging the run.
