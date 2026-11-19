@@ -5,6 +5,7 @@ mod capture;
 mod config;
 mod dashboard;
 mod error;
+mod identity;
 mod logging;
 mod observation;
 mod observer;
@@ -121,7 +122,7 @@ async fn run() -> Result<(), String> {
         let (reader, guard) = dashboard::initialize(&initial.audit)?;
         tracing::info!(event="dashboard_started",listen=%initial.dashboard.listen);
         eprintln!(
-            "transit dashboard listening on {} (read-only)",
+            "transit dashboard listening on {}",
             initial.dashboard.listen
         );
         (Some((listener, dashboard::router(reader))), Some(guard))

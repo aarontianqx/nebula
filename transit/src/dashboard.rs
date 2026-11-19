@@ -1,4 +1,4 @@
-//! Read-only management surface. SQLite work never runs on the proxy runtime.
+//! Management surface. SQLite work never runs on the proxy runtime.
 use crate::config::{Audit, default_state_dir};
 use axum::{
     Json, Router,
@@ -6,7 +6,7 @@ use axum::{
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, put},
 };
 use rusqlite::{
     Connection, OpenFlags, params_from_iter,
@@ -78,13 +78,27 @@ pub struct Guard {
     worker: thread::JoinHandle<()>,
 }
 struct Job {
-    query: Read,
+    operation: Operation,
     deadline: Instant,
     reply: oneshot::Sender<Result<Value, String>>,
+}
+enum Operation {
+    Read(Read),
+    Write(Write),
 }
 enum Read {
     Stats(Filters),
     Detail(String),
+    Credentials,
+}
+enum Write {
+    SetCredentialName { hash: String, name: String },
+    DeleteCredentialName(String),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialName {
+    key_name: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -181,7 +195,7 @@ pub fn initialize(settings: &Audit) -> Result<(Reader, Guard), String> {
         .clone()
         .unwrap_or(default_state_dir()?.join("transit.sqlite3"));
     let connection = Connection::open_with_flags(
-        path,
+        &path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|_| "cannot open dashboard read-only database")?;
@@ -191,6 +205,14 @@ pub fn initialize(settings: &Audit) -> Result<(Reader, Guard), String> {
     connection
         .execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-2048;")
         .map_err(|_| "cannot configure dashboard read-only database")?;
+    let writer = Connection::open_with_flags(
+        &path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| "cannot open dashboard name-mapping database")?;
+    writer
+        .busy_timeout(Duration::from_secs(2))
+        .map_err(|_| "cannot configure dashboard writer")?;
     let (sender, receiver) = mpsc::sync_channel::<Job>(8);
     let worker = thread::Builder::new()
         .name("transit-dashboard-db".into())
@@ -215,25 +237,45 @@ pub fn initialize(settings: &Audit) -> Result<(Reader, Guard), String> {
                     let _ = job.reply.send(Err("query deadline unavailable".into()));
                     continue;
                 }
-                let result = match job.query {
-                    Read::Stats(filters) => statistics(&connection, &filters),
-                    Read::Detail(id) => rows(
+                let writing = matches!(&job.operation, Operation::Write(_));
+                let result = match job.operation {
+                    Operation::Read(Read::Stats(filters)) => statistics(&connection, &filters),
+                    Operation::Read(Read::Detail(id)) => rows(
                         &connection,
-                        "SELECT * FROM requests WHERE request_id=?1",
+                        "SELECT r.*,n.key_name FROM requests AS r
+                         LEFT JOIN credential_names AS n ON n.credential_hash=r.credential_hash
+                         WHERE r.request_id=?1",
                         &[id.into()],
                     )
                     .map(|mut rows| rows.pop().unwrap_or(Value::Null)),
+                    Operation::Read(Read::Credentials) => rows(
+                        &connection,
+                        "WITH identities AS (
+                             SELECT credential_hash FROM credential_names
+                             UNION SELECT credential_hash FROM requests WHERE credential_hash IS NOT NULL
+                         )
+                         SELECT i.credential_hash,n.key_name,n.created_at_ms,n.updated_at_ms,
+                             (SELECT COUNT(*) FROM requests AS r WHERE r.credential_hash=i.credential_hash) AS request_count,
+                             (SELECT MAX(started_at_ms) FROM requests AS r WHERE r.credential_hash=i.credential_hash) AS last_used_at_ms
+                         FROM identities AS i
+                         LEFT JOIN credential_names AS n ON n.credential_hash=i.credential_hash
+                         ORDER BY (last_used_at_ms IS NULL),last_used_at_ms DESC,updated_at_ms DESC,i.credential_hash
+                         LIMIT 500",
+                        &[],
+                    )
+                    .map(|credentials| json!({"credentials":credentials})),
+                    Operation::Write(write) => mutate(&writer, write).map(|_| Value::Null),
                 };
                 let reset = connection.progress_handler(0, None::<fn() -> bool>);
                 if result.is_err() {
                     tracing::warn!(
-                        event = "dashboard_query_failed",
-                        reason = "SQLite query failed or exceeded deadline"
+                        event = if writing { "dashboard_write_failed" } else { "dashboard_query_failed" },
+                        reason = "SQLite operation failed or exceeded deadline"
                     );
                 }
                 let _ = job
                     .reply
-                    .send(result.map_err(|_| "statistics query unavailable".into()));
+                    .send(result.map_err(|_| "dashboard database operation unavailable".into()));
                 if reset.is_err() {
                     tracing::error!(
                         event = "dashboard_query_failed",
@@ -259,22 +301,48 @@ impl Guard {
 }
 impl Reader {
     async fn read(&self, query: Read) -> Result<Value, (StatusCode, Json<Value>)> {
+        self.execute(Operation::Read(query)).await
+    }
+    async fn write(&self, write: Write) -> Result<Value, (StatusCode, Json<Value>)> {
+        self.execute(Operation::Write(write)).await
+    }
+    async fn execute(&self, operation: Operation) -> Result<Value, (StatusCode, Json<Value>)> {
         let (reply, receiver) = oneshot::channel();
         self.sender
             .try_send(Job {
-                query,
+                operation,
                 deadline: Instant::now() + Duration::from_secs(3),
                 reply,
             })
-            .map_err(|_| api_error(StatusCode::SERVICE_UNAVAILABLE, "查询繁忙，请稍后重试"))?;
+            .map_err(|_| api_error(StatusCode::SERVICE_UNAVAILABLE, "操作繁忙，请稍后重试"))?;
         match tokio::time::timeout(Duration::from_secs(4), receiver).await {
             Ok(Ok(Ok(value))) => Ok(value),
             _ => Err(api_error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "查询暂不可用，请稍后重试",
+                "数据库操作暂不可用，请稍后重试",
             )),
         }
     }
+}
+fn mutate(connection: &Connection, write: Write) -> rusqlite::Result<()> {
+    match write {
+        Write::SetCredentialName { hash, name } => connection.execute(
+            "INSERT INTO credential_names(credential_hash,key_name,created_at_ms,updated_at_ms)
+             VALUES(?1,?2,?3,?3)
+             ON CONFLICT(credential_hash) DO UPDATE SET
+                 key_name=excluded.key_name,updated_at_ms=excluded.updated_at_ms",
+            params_from_iter([
+                SqlValue::from(hash),
+                SqlValue::from(name),
+                SqlValue::from(crate::audit::now_ms()),
+            ]),
+        ),
+        Write::DeleteCredentialName(hash) => connection.execute(
+            "DELETE FROM credential_names WHERE credential_hash=?1",
+            params_from_iter([SqlValue::from(hash)]),
+        ),
+    }
+    .map(|_| ())
 }
 fn api_error(code: StatusCode, message: &str) -> (StatusCode, Json<Value>) {
     (code, Json(json!({"error":message})))
@@ -358,8 +426,10 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
     list_parameters.push(((limit + 1) as i64).into());
     let mut requests = rows(&transaction,&format!("SELECT request_id,started_at_ms,provider,request_path,
         requested_model,resolved_model,response_model,outcome,http_status,duration_ms,first_body_byte_ms,
-        input_tokens,output_tokens,total_tokens,cache_read_tokens,usage_status,upstream_protocol,error_code
-        FROM requests WHERE {FILTER} AND (?7 IS NULL OR started_at_ms < ?7 OR (started_at_ms = ?7 AND request_id < ?8))
+        input_tokens,output_tokens,total_tokens,cache_read_tokens,usage_status,upstream_protocol,error_code,
+        r.credential_hash,n.key_name
+        FROM requests AS r LEFT JOIN credential_names AS n ON n.credential_hash=r.credential_hash
+        WHERE {FILTER} AND (?7 IS NULL OR started_at_ms < ?7 OR (started_at_ms = ?7 AND request_id < ?8))
         ORDER BY started_at_ms DESC,request_id DESC LIMIT ?9"),&list_parameters)?;
     let more = requests.len() > limit;
     requests.truncate(limit);
@@ -455,6 +525,11 @@ pub fn router(reader: Reader) -> Router {
         )
         .route("/api/stats", get(stats))
         .route("/api/requests/{id}", get(detail))
+        .route("/api/credentials", get(credentials))
+        .route(
+            "/api/credentials/{hash}",
+            put(set_credential_name).delete(remove_credential_name),
+        )
         .fallback(|| async { StatusCode::NOT_FOUND })
         .layer(DefaultBodyLimit::max(1024))
         .layer(middleware::from_fn(private_headers))
@@ -484,6 +559,53 @@ async fn detail(
         ));
     }
     Ok(Json(value))
+}
+async fn credentials(
+    State(reader): State<Reader>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    reader.read(Read::Credentials).await.map(Json)
+}
+async fn set_credential_name(
+    State(reader): State<Reader>,
+    Path(hash): Path<String>,
+    Json(input): Json<CredentialName>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    validate_credential_hash(&hash)?;
+    let key_name = input.key_name.trim();
+    let length = key_name.chars().count();
+    if !(1..=64).contains(&length) || key_name.chars().any(char::is_control) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "Key 名称须为 1 至 64 个字符，且不能包含控制字符",
+        ));
+    }
+    reader
+        .write(Write::SetCredentialName {
+            hash: hash.clone(),
+            name: key_name.to_string(),
+        })
+        .await?;
+    Ok(Json(json!({"credential_hash":hash,"key_name":key_name})))
+}
+async fn remove_credential_name(
+    State(reader): State<Reader>,
+    Path(hash): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    validate_credential_hash(&hash)?;
+    reader
+        .write(Write::DeleteCredentialName(hash.clone()))
+        .await?;
+    Ok(Json(json!({"credential_hash":hash,"key_name":null})))
+}
+fn validate_credential_hash(hash: &str) -> Result<(), (StatusCode, Json<Value>)> {
+    if hash.len() != 64
+        || !hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(api_error(StatusCode::BAD_REQUEST, "无效的凭据 hash"));
+    }
+    Ok(())
 }
 async fn private_headers(request: Request, next: Next) -> Response {
     // IP-literal hosts prevent an arbitrary website from rebinding its DNS to this private reader.

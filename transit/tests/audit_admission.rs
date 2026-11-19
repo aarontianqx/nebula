@@ -9,6 +9,7 @@ use http_body_util::{BodyExt, Full};
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use rusqlite::Connection;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     net::TcpListener,
@@ -155,8 +156,8 @@ async fn call(
 }
 fn rows(service: &Service) -> Vec<Value> {
     let connection = Connection::open(service.directory.join("audit.sqlite3")).unwrap();
-    let mut query=connection.prepare("SELECT request_id,outcome,client_protocol,upstream_protocol,http_status,upstream_status,input_tokens,output_tokens,total_tokens,usage_status,error_source,error_code,error_message,request_path,upstream_path,requested_model,resolved_model,usage_json FROM requests ORDER BY started_at_ms,rowid").unwrap();
-    query.query_map([],|row|Ok(json!({"request_id":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?,"client_protocol":row.get::<_,String>(2)?,"upstream_protocol":row.get::<_,String>(3)?,"http_status":row.get::<_,Option<i64>>(4)?,"upstream_status":row.get::<_,Option<i64>>(5)?,"input_tokens":row.get::<_,Option<i64>>(6)?,"output_tokens":row.get::<_,Option<i64>>(7)?,"total_tokens":row.get::<_,Option<i64>>(8)?,"usage_status":row.get::<_,Option<String>>(9)?,"error_source":row.get::<_,Option<String>>(10)?,"error_code":row.get::<_,Option<String>>(11)?,"error_message":row.get::<_,Option<String>>(12)?,"request_path":row.get::<_,String>(13)?,"upstream_path":row.get::<_,String>(14)?,"requested_model":row.get::<_,Option<String>>(15)?,"resolved_model":row.get::<_,Option<String>>(16)?,"usage_json":row.get::<_,Option<String>>(17)?}))).unwrap().map(Result::unwrap).collect()
+    let mut query=connection.prepare("SELECT request_id,outcome,client_protocol,upstream_protocol,http_status,upstream_status,input_tokens,output_tokens,total_tokens,usage_status,error_source,error_code,error_message,request_path,upstream_path,requested_model,resolved_model,usage_json,credential_hash FROM requests ORDER BY started_at_ms,rowid").unwrap();
+    query.query_map([],|row|Ok(json!({"request_id":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?,"client_protocol":row.get::<_,String>(2)?,"upstream_protocol":row.get::<_,String>(3)?,"http_status":row.get::<_,Option<i64>>(4)?,"upstream_status":row.get::<_,Option<i64>>(5)?,"input_tokens":row.get::<_,Option<i64>>(6)?,"output_tokens":row.get::<_,Option<i64>>(7)?,"total_tokens":row.get::<_,Option<i64>>(8)?,"usage_status":row.get::<_,Option<String>>(9)?,"error_source":row.get::<_,Option<String>>(10)?,"error_code":row.get::<_,Option<String>>(11)?,"error_message":row.get::<_,Option<String>>(12)?,"request_path":row.get::<_,String>(13)?,"upstream_path":row.get::<_,String>(14)?,"requested_model":row.get::<_,Option<String>>(15)?,"resolved_model":row.get::<_,Option<String>>(16)?,"usage_json":row.get::<_,Option<String>>(17)?,"credential_hash":row.get::<_,Option<String>>(18)?}))).unwrap().map(Result::unwrap).collect()
 }
 
 #[tokio::test]
@@ -720,6 +721,12 @@ async fn strict_admission_never_forwards_probes_and_audit_observes_without_rewri
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
     assert_eq!(calls.load(Ordering::Relaxed), 10);
+    let expected_hash = format!("{:x}", Sha256::digest(b"fixture-secret"));
+    assert!(
+        records
+            .iter()
+            .all(|record| record["credential_hash"] == expected_hash)
+    );
     assert_eq!(records[0]["input_tokens"], 100);
     assert_eq!(records[0]["total_tokens"], 120);
     assert_eq!(records[0]["usage_status"], "complete");

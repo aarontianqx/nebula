@@ -23,6 +23,7 @@ hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "
 rusqlite = { version = "0.38", features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
+sha2 = "0.10"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 tokio = { version = "1", features = ["full"] }

@@ -163,6 +163,7 @@ struct Record {
     provider: String,
     rule: String,
     generation: u64,
+    credential_hash: Option<String>,
     method: String,
     request_path: String,
     upstream_path: String,
@@ -265,7 +266,7 @@ impl Record {
         }
     }
     fn start_row(&self) -> Value {
-        json!({"request_id":self.id,"started_at_ms":self.started_at_ms,"config_generation":self.generation,"provider":self.provider,"rule_id":self.rule,"method":self.method,"request_path":self.request_path,"upstream_path":self.upstream_path,"client_protocol":self.protocol,"upstream_protocol":self.upstream_protocol,"outcome":"in_progress","usage_status":"missing","observer_status":"pending"})
+        json!({"request_id":self.id,"started_at_ms":self.started_at_ms,"config_generation":self.generation,"credential_hash":self.credential_hash,"provider":self.provider,"rule_id":self.rule,"method":self.method,"request_path":self.request_path,"upstream_path":self.upstream_path,"client_protocol":self.protocol,"upstream_protocol":self.upstream_protocol,"outcome":"in_progress","usage_status":"missing","observer_status":"pending"})
     }
     fn stage(&self, stage: &'static str) {
         let mut p = self.progress.lock().unwrap_or_else(|e| e.into_inner());
@@ -463,6 +464,8 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
         decoded = Some((raw, value));
     }
     let plan = snapshot.config.plan(request.method(), request.uri().path());
+    let credential_hash =
+        crate::identity::credential_hash(request.headers(), request.uri().query());
     let record = Arc::new(Record {
         id: id.clone(),
         provider: plan.provider_name.into(),
@@ -471,6 +474,7 @@ async fn proxy(State(app): State<Arc<App>>, mut request: Request<Body>) -> Respo
             .map(|r| r.id.clone())
             .unwrap_or_else(|| "default".into()),
         generation: snapshot.generation,
+        credential_hash,
         method: request.method().to_string(),
         request_path: path_for_log(request.uri().path()),
         upstream_path: path_for_log(&plan.upstream_path),

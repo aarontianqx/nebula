@@ -20,14 +20,21 @@ impl Drop for Service {
         let _ = fs::remove_dir_all(&self.directory);
     }
 }
-fn get(address: std::net::SocketAddr, path: &str, extra: &str) -> (u16, String, String) {
+fn send(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    extra: &str,
+    body: &str,
+) -> (u16, String, String) {
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(6)))
         .unwrap();
     write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n{extra}\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{extra}\r\n{body}",
+        body.len()
     )
     .unwrap();
     let mut response = String::new();
@@ -39,8 +46,19 @@ fn get(address: std::net::SocketAddr, path: &str, extra: &str) -> (u16, String, 
         body.to_string(),
     )
 }
+fn request(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    body: &str,
+) -> (u16, String, String) {
+    send(address, method, path, "", body)
+}
+fn get(address: std::net::SocketAddr, path: &str, extra: &str) -> (u16, String, String) {
+    send(address, "GET", path, extra, "")
+}
 #[test]
-fn dashboard_is_separate_read_only_filtered_and_preserves_usage_quality() {
+fn dashboard_supports_filtered_stats_and_credential_names() {
     let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
     let proxy_address = proxy.local_addr().unwrap();
     let dashboard = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -144,6 +162,18 @@ origin="http://127.0.0.1:1"
         };
         c.execute("INSERT INTO requests(request_id,started_at_ms,provider,request_path,requested_model,resolved_model,outcome,usage_status,input_tokens,output_tokens,total_tokens,duration_ms,error_message) VALUES(?1,?2,?3,'/v1/responses',?4,?4,?5,?6,?7,?8,?9,1000,?10)",params![id,timestamp,provider,model,outcome,usage,input,output,total,"<img src=x onerror=alert(1)>"]).unwrap();
     }
+    let credential_hash = "a".repeat(64);
+    let other_hash = "b".repeat(64);
+    c.execute(
+        "UPDATE requests SET credential_hash=?1 WHERE request_id=?2",
+        params![credential_hash, ids[0]],
+    )
+    .unwrap();
+    c.execute(
+        "UPDATE requests SET credential_hash=?1 WHERE request_id=?2",
+        params![other_hash, ids[1]],
+    )
+    .unwrap();
     let window = format!("from_ms={}&to_ms={}", timestamp - 1000, timestamp + 1000);
     c.execute(
         "UPDATE requests SET upstream_protocol='openai_responses'",
@@ -279,13 +309,96 @@ origin="http://127.0.0.1:1"
         [&ids[0]],
     )
     .unwrap();
+    let (code, _, body) = get(address, "/api/credentials", "");
+    assert_eq!(code, 200, "{body}");
+    let credentials: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(credentials["credentials"].as_array().unwrap().len(), 2);
+    assert!(
+        credentials["credentials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item["credential_hash"] == credential_hash && item["key_name"].is_null()
+            })
+    );
+    assert_eq!(
+        request(
+            address,
+            "PUT",
+            "/api/credentials/not-a-hash",
+            r#"{"key_name":"fixture"}"#,
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        request(
+            address,
+            "PUT",
+            &format!("/api/credentials/{credential_hash}"),
+            r#"{"key_name":"  "}"#,
+        )
+        .0,
+        400
+    );
+    let (code, _, body) = request(
+        address,
+        "PUT",
+        &format!("/api/credentials/{credential_hash}"),
+        r#"{"key_name":"  aaron-laptop  "}"#,
+    );
+    assert_eq!(code, 200, "{body}");
+    let created_at = c.query_row(
+        "SELECT created_at_ms FROM credential_names WHERE credential_hash=?1",
+        [&credential_hash],
+        |row| row.get::<_, i64>(0),
+    );
+    let (code, _, body) = request(
+        address,
+        "PUT",
+        &format!("/api/credentials/{credential_hash}"),
+        r#"{"key_name":"workstation"}"#,
+    );
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(
+        c.query_row(
+            "SELECT created_at_ms FROM credential_names WHERE credential_hash=?1",
+            [&credential_hash],
+            |row| row.get::<_, i64>(0),
+        ),
+        created_at
+    );
+    let (_, _, body) = get(address, &format!("/api/stats?{window}"), "");
+    let named: Value = serde_json::from_str(&body).unwrap();
+    let named_request = named["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|request| request["request_id"] == ids[0])
+        .unwrap();
+    assert_eq!(named_request["credential_hash"], credential_hash);
+    assert_eq!(named_request["key_name"], "workstation");
     let (_, _, body) = get(address, &format!("/api/requests/{}", ids[0]), "");
     let detail: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(detail["key_name"], "workstation");
+    assert_eq!(detail["credential_hash"], credential_hash);
     assert_eq!(detail["error_message"], "<img src=x onerror=alert(1)>");
     assert_eq!(detail["cache_read_tokens"], 80);
     assert_eq!(detail["cache_write_tokens"], 10);
     assert!(detail.get("cached_input_tokens").is_none());
     assert!(detail.get("cache_write_input_tokens").is_none());
+    let (code, _, _) = request(
+        address,
+        "DELETE",
+        &format!("/api/credentials/{credential_hash}"),
+        "",
+    );
+    assert_eq!(code, 200);
+    let (_, _, body) = get(address, &format!("/api/requests/{}", ids[0]), "");
+    let unnamed: Value = serde_json::from_str(&body).unwrap();
+    assert!(unnamed["key_name"].is_null());
+    assert_eq!(unnamed["credential_hash"], credential_hash);
     // An aligned chart must not widen the requested statistics window.
     let hour = 3_600_000i64;
     let offset = 330 * 60_000i64;

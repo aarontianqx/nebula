@@ -14,13 +14,14 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const FIELDS: &[(&str, &str)] = &[
     ("request_id", "TEXT PRIMARY KEY"),
     ("started_at_ms", "INTEGER NOT NULL"),
     ("finished_at_ms", "INTEGER"),
     ("config_generation", "INTEGER"),
+    ("credential_hash", "TEXT"),
     ("provider", "TEXT"),
     ("rule_id", "TEXT"),
     ("method", "TEXT"),
@@ -292,6 +293,11 @@ fn initialize_schema(connection: &mut Connection, version: i64) -> Result<(), St
             )
             .map_err(|_| "cannot migrate audit cache token columns")?;
     }
+    if version > 0 && version < 3 {
+        transaction
+            .execute_batch("ALTER TABLE requests ADD COLUMN credential_hash TEXT")
+            .map_err(|_| "cannot migrate audit credential identity column")?;
+    }
     let definitions = FIELDS
         .iter()
         .map(|(name, kind)| format!("{name} {kind}"))
@@ -303,6 +309,13 @@ fn initialize_schema(connection: &mut Connection, version: i64) -> Result<(), St
              CREATE INDEX IF NOT EXISTS requests_time ON requests(started_at_ms);
              CREATE INDEX IF NOT EXISTS requests_provider_time ON requests(provider,started_at_ms);
              CREATE INDEX IF NOT EXISTS requests_model_time ON requests(resolved_model,started_at_ms);
+             CREATE INDEX IF NOT EXISTS requests_credential_time ON requests(credential_hash,started_at_ms);
+             CREATE TABLE IF NOT EXISTS credential_names (
+                 credential_hash TEXT PRIMARY KEY,
+                 key_name TEXT NOT NULL,
+                 created_at_ms INTEGER NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
+             );
              PRAGMA user_version={SCHEMA_VERSION};"
         ))
         .map_err(|_| "cannot initialize audit schema")?;
@@ -336,6 +349,7 @@ mod tests {
         let reader = Connection::open(settings.database.as_ref().unwrap()).unwrap();
         let definitions = FIELDS
             .iter()
+            .filter(|(name, _)| *name != "credential_hash")
             .map(|(name, kind)| {
                 let name = match *name {
                     "cache_read_tokens" => "cached_input_tokens",
@@ -416,6 +430,60 @@ mod tests {
             name.as_str(),
             "cached_input_tokens" | "cache_write_input_tokens"
         )));
+        drop(reader);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn v2_requests_gain_nullable_identity_and_persistent_name_mappings() {
+        let dir = std::env::temp_dir().join(format!("transit-audit-v2-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let database = dir.join("requests.sqlite3");
+        let reader = Connection::open(&database).unwrap();
+        let definitions = FIELDS
+            .iter()
+            .filter(|(name, _)| *name != "credential_hash")
+            .map(|(name, kind)| format!("{name} {kind}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        reader
+            .execute_batch(&format!(
+                "CREATE TABLE requests ({definitions});
+                 INSERT INTO requests(request_id,started_at_ms,outcome) VALUES('legacy',1,'completed');
+                 PRAGMA user_version=2;"
+            ))
+            .unwrap();
+        let settings = Audit {
+            enabled: true,
+            database: Some(database),
+            ..Default::default()
+        };
+        let (log, guard) = open(&settings, 2).unwrap().unwrap();
+        assert_eq!(
+            reader
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        assert!(
+            reader
+                .query_row(
+                    "SELECT credential_hash IS NULL FROM requests WHERE request_id='legacy'",
+                    [],
+                    |row| row.get::<_, bool>(0)
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            reader
+                .query_row("SELECT COUNT(*) FROM credential_names", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        drop(log);
+        guard.shutdown().await;
         drop(reader);
         fs::remove_dir_all(dir).unwrap();
     }

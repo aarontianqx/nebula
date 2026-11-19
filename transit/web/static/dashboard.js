@@ -128,11 +128,12 @@ function errorText(error) {
   if (error instanceof TypeError) return t("error.network");
   return t("error.unexpected");
 }
-async function fetchJson(url) {
+async function fetchJson(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(new URL(url, dashboardRoot), {
+      ...options,
       signal: controller.signal,
       cache: "no-store",
     });
@@ -902,9 +903,15 @@ function renderDistribution() {
 function emptyRow(text) {
   const row = element("tr"),
     cell = element("td", "empty", text);
-  cell.colSpan = 7;
+  cell.colSpan = 8;
   row.append(cell);
   return row;
+}
+function shortHash(hash) {
+  return hash ? `${hash.slice(0, 12)}…` : "—";
+}
+function credentialText(record) {
+  return record.key_name || shortHash(record.credential_hash);
 }
 function renderRequests() {
   const target = $("requests");
@@ -937,6 +944,14 @@ function renderRequests() {
         open();
       }
     });
+    const credential = element(
+      "td",
+      `credential-cell ${request.key_name ? "named" : "unnamed"}`,
+      credentialText(request),
+    );
+    credential.title = request.key_name
+      ? `${request.key_name} · ${request.credential_hash}`
+      : request.credential_hash || "—";
     const model =
       request.response_model ||
       request.resolved_model ||
@@ -974,7 +989,7 @@ function renderRequests() {
       read: n(request.cache_read_tokens),
       input: n(request.input_tokens),
     });
-    row.append(identity, route, path, outcome, elapsed, tokens, cache);
+    row.append(identity, credential, route, path, outcome, elapsed, tokens, cache);
     target.append(row);
   }
 }
@@ -1216,6 +1231,27 @@ function detailSummary(request) {
     `${request.method || "—"} ${request.request_path || "—"}`,
   );
   result.append(detailSection(t("detail.routing"), flow, path));
+  if (request.credential_hash) {
+    const caller = element("div", "detail-credential");
+    const main = element("div", "detail-credential-main");
+    main.append(
+      element(
+        "strong",
+        request.key_name ? "named" : "unnamed",
+        request.key_name || t("keys.unnamed"),
+      ),
+      element("code", "", request.credential_hash),
+    );
+    const edit = element(
+      "button",
+      "",
+      t(request.key_name ? "keys.rename" : "keys.nameIt"),
+    );
+    edit.type = "button";
+    edit.addEventListener("click", () => openKeyManager(request.credential_hash));
+    caller.append(main, edit);
+    result.append(detailSection(t("detail.caller"), caller));
+  }
   const metrics = element("div", "detail-token-metrics");
   for (const [label, key] of [
     [t("token.input"), "input_tokens"],
@@ -1430,6 +1466,181 @@ async function showDetail(id) {
       );
   }
 }
+let keyCredentials = [],
+  keyManagerVersion = 0,
+  editingCredentialHash = null,
+  keyMutationBusy = false;
+function setKeyMutationBusy(value) {
+  keyMutationBusy = value;
+  for (const id of ["key-name", "save-key-name", "delete-key-name", "cancel-key-name"])
+    $(id).disabled = value;
+  for (const button of document.querySelectorAll(".key-edit"))
+    button.disabled = value;
+}
+function renderKeyList() {
+  const target = $("key-list");
+  target.replaceChildren();
+  if (!keyCredentials.length) {
+    target.append(element("p", "empty", t("keys.empty")));
+    return;
+  }
+  for (const credential of keyCredentials) {
+    const row = element(
+      "div",
+      `key-row ${credential.credential_hash === editingCredentialHash ? "active" : ""}`,
+    );
+    const identity = element("div", "key-identity");
+    identity.append(
+      element(
+        "strong",
+        credential.key_name ? "" : "unnamed",
+        credential.key_name || t("keys.unnamed"),
+      ),
+      element("code", "key-hash", credential.credential_hash),
+    );
+    identity.title = credential.credential_hash;
+    const usage = element("div", "key-usage");
+    usage.append(
+      element(
+        "div",
+        "",
+        t("keys.requestCount", { count: n(credential.request_count) }),
+      ),
+      element(
+        "div",
+        "",
+        credential.last_used_at_ms
+          ? date(credential.last_used_at_ms)
+          : t("keys.noRequests"),
+      ),
+    );
+    const edit = element("button", "key-edit", t("keys.edit"));
+    edit.type = "button";
+    edit.disabled = keyMutationBusy;
+    edit.addEventListener("click", () => selectCredential(credential));
+    row.append(identity, usage, edit);
+    target.append(row);
+  }
+}
+function selectCredential(credential) {
+  if (keyMutationBusy) return;
+  editingCredentialHash = credential.credential_hash;
+  $("key-editing-hash").textContent = credential.credential_hash;
+  $("key-editing-hash").title = credential.credential_hash;
+  $("key-name").value = credential.key_name || "";
+  $("delete-key-name").hidden = !credential.key_name;
+  $("key-name-form").hidden = false;
+  $("key-manager-feedback").textContent = "";
+  renderKeyList();
+  $("key-name").focus();
+  $("key-name").select();
+}
+async function loadKeyCredentials(selectHash = null) {
+  const version = ++keyManagerVersion;
+  try {
+    const result = await fetchJson("api/credentials");
+    if (version !== keyManagerVersion || !$("key-manager").open) return;
+    keyCredentials = result.credentials;
+    renderKeyList();
+    if (selectHash) {
+      const credential = keyCredentials.find(
+        (item) => item.credential_hash === selectHash,
+      );
+      if (credential) selectCredential(credential);
+    }
+  } catch (error) {
+    if (version !== keyManagerVersion || !$("key-manager").open) return;
+    keyCredentials = [];
+    $("key-list").replaceChildren(
+      element("p", "empty", errorText(error)),
+    );
+  }
+}
+function openKeyManager(hash = null) {
+  editingCredentialHash = null;
+  $("key-name-form").hidden = true;
+  $("key-manager-feedback").textContent = "";
+  $("key-list").replaceChildren(
+    element("p", "empty", t("common.waiting")),
+  );
+  if (!$("key-manager").open) $("key-manager").showModal();
+  loadKeyCredentials(hash);
+}
+function applyCredentialName(hash, name) {
+  if (data) {
+    for (const request of data.requests) {
+      if (request.credential_hash === hash) request.key_name = name;
+    }
+    renderRequests();
+  }
+  if (selectedDetail?.credential_hash === hash) {
+    selectedDetail.key_name = name;
+    if ($("detail").open) renderDetail(selectedDetail);
+  }
+  const credential = keyCredentials.find(
+    (item) => item.credential_hash === hash,
+  );
+  if (credential) credential.key_name = name;
+}
+$("key-name-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (keyMutationBusy) return;
+  const hash = editingCredentialHash;
+  const keyName = $("key-name").value.trim();
+  if (!hash) return;
+  if (!keyName || [...keyName].length > 64) {
+    $("key-manager-feedback").textContent = t("keys.invalidName");
+    return;
+  }
+  setKeyMutationBusy(true);
+  try {
+    await fetchJson(`api/credentials/${encodeURIComponent(hash)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key_name: keyName }),
+    });
+    applyCredentialName(hash, keyName);
+    $("delete-key-name").hidden = false;
+    await loadKeyCredentials();
+    $("key-manager-feedback").textContent = t("keys.saved");
+  } catch (error) {
+    $("key-manager-feedback").textContent = errorText(error);
+  } finally {
+    setKeyMutationBusy(false);
+  }
+});
+$("delete-key-name").addEventListener("click", async () => {
+  if (keyMutationBusy) return;
+  const hash = editingCredentialHash;
+  if (!hash || !window.confirm(t("keys.deleteConfirm"))) return;
+  setKeyMutationBusy(true);
+  try {
+    await fetchJson(`api/credentials/${encodeURIComponent(hash)}`, {
+      method: "DELETE",
+    });
+    applyCredentialName(hash, null);
+    editingCredentialHash = null;
+    $("key-name-form").hidden = true;
+    await loadKeyCredentials();
+    $("key-manager-feedback").textContent = t("keys.deleted");
+  } catch (error) {
+    $("key-manager-feedback").textContent = errorText(error);
+  } finally {
+    setKeyMutationBusy(false);
+  }
+});
+$("cancel-key-name").addEventListener("click", () => {
+  editingCredentialHash = null;
+  $("key-name-form").hidden = true;
+  renderKeyList();
+});
+$("open-key-manager").addEventListener("click", () => openKeyManager());
+$("close-key-manager").addEventListener("click", () => $("key-manager").close());
+$("key-manager").addEventListener("close", () => {
+  keyManagerVersion++;
+  editingCredentialHash = null;
+  $("key-name-form").hidden = true;
+});
 $("filters").addEventListener("submit", (event) => {
   event.preventDefault();
   load();
@@ -1507,18 +1718,23 @@ $("detail").addEventListener("close", () => {
   detailError = null;
   detailVersion++;
 });
-$("detail").addEventListener("click", (event) => {
-  if (event.target === $("detail")) {
-    const r = $("detail").getBoundingClientRect();
-    if (
-      event.clientX < r.left ||
-      event.clientX > r.right ||
-      event.clientY < r.top ||
-      event.clientY > r.bottom
-    )
-      $("detail").close();
-  }
-});
+function closeOnBackdropClick(dialog, event) {
+  if (event.target !== dialog) return;
+  const rect = dialog.getBoundingClientRect();
+  if (
+    event.clientX < rect.left ||
+    event.clientX > rect.right ||
+    event.clientY < rect.top ||
+    event.clientY > rect.bottom
+  )
+    dialog.close();
+}
+$("detail").addEventListener("click", (event) =>
+  closeOnBackdropClick($("detail"), event),
+);
+$("key-manager").addEventListener("click", (event) =>
+  closeOnBackdropClick($("key-manager"), event),
+);
 const localInput = (ms) => {
   const d = new Date(ms);
   return new Date(ms - d.getTimezoneOffset() * 60000)
@@ -1532,6 +1748,7 @@ setInterval(() => {
     $("auto").checked &&
     !document.hidden &&
     !$("detail").open &&
+    !$("key-manager").open &&
     !activeFilter &&
     !busy
   )
@@ -1550,6 +1767,7 @@ function renderLanguage() {
   for (const widget of filterWidgets.values()) widget.localize();
   // Rerender existing results, preserving filters, range, pagination and requests.
   if (data) render();
+  if ($("key-manager").open) renderKeyList();
   setText("connection", t(`connection.${connectionState}`));
   if (data)
     setText(

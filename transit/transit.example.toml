@@ -67,7 +67,7 @@ expose_health = false
 requests_per_second = 60
 
 [dashboard]
-# Embedded read-only statistics UI; requires audit.enabled=true. No Node.js needed.
+# Embedded statistics UI and credential-name mappings; requires audit.enabled=true. No Node.js needed.
 enabled = false
 # Separate management port. Use a private network or authenticated reverse proxy for remote access.
 listen = "127.0.0.1:8788"

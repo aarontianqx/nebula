@@ -31,6 +31,13 @@
           >
           <span id="updated">—</span>
         </div>
+        <button
+          type="button"
+          id="open-key-manager"
+          class="key-manager-button"
+        >
+          <span data-i18n="keys.manage">Key 管理</span>
+        </button>
         <div
           id="language-switch"
           class="language-switch"
@@ -255,6 +262,7 @@
             <thead>
               <tr>
                 <th><span data-i18n="column.time">时间</span></th>
+                <th><span data-i18n="column.credential">调用方</span></th>
                 <th><span data-i18n="column.model">服务商 / 模型</span></th>
                 <th><span data-i18n="column.path">路径</span></th>
                 <th><span data-i18n="column.outcome">结果</span></th>
@@ -269,7 +277,7 @@
             </thead>
             <tbody id="requests">
               <tr>
-                <td colspan="7" class="empty" data-i18n="detail.loading">
+                <td colspan="8" class="empty" data-i18n="detail.loading">
                   正在读取记录…
                 </td>
               </tr>
@@ -329,6 +337,59 @@
       <div class="detail-footer">
         <span id="detail-feedback" role="status" aria-live="polite"></span
         ><span data-i18n="detail.escape">Esc 关闭</span>
+      </div>
+    </dialog>
+    <dialog id="key-manager" aria-labelledby="key-manager-title">
+      <div class="dialog-header">
+        <div class="detail-headline">
+          <h2 id="key-manager-title" data-i18n="keys.title">Key 管理</h2>
+          <button
+            id="close-key-manager"
+            type="button"
+            aria-label="关闭 Key 管理"
+            data-i18n-aria-label="keys.close"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <div class="key-manager-body">
+        <form id="key-name-form" class="key-name-form" hidden>
+          <div class="key-name-context">
+            <span data-i18n="keys.editing">正在命名</span>
+            <code id="key-editing-hash"></code>
+          </div>
+          <label for="key-name" data-i18n="keys.name">显示名称</label>
+          <input
+            id="key-name"
+            name="key_name"
+            maxlength="64"
+            autocomplete="off"
+            required
+            data-i18n-placeholder="keys.namePlaceholder"
+            placeholder="例如：aaron-laptop"
+          />
+          <div class="key-name-actions">
+            <button type="submit" id="save-key-name" class="key-save">
+              <span data-i18n="keys.save">保存名称</span>
+            </button>
+            <button type="button" id="delete-key-name" class="key-delete">
+              <span data-i18n="keys.delete">删除映射</span>
+            </button>
+            <button type="button" id="cancel-key-name">
+              <span data-i18n="keys.cancel">取消</span>
+            </button>
+          </div>
+        </form>
+        <span
+          id="key-manager-feedback"
+          class="key-manager-feedback"
+          role="status"
+          aria-live="polite"
+        ></span>
+        <div id="key-list" class="key-list">
+          <p class="empty" data-i18n="common.waiting">等待数据</p>
+        </div>
       </div>
     </dialog>
   </body>
