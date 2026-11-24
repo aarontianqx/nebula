@@ -66,9 +66,12 @@ impl Timeline {
 const MODEL: &str = "COALESCE(response_model,resolved_model,requested_model)";
 const FILTER: &str = "started_at_ms >= ?1 AND started_at_ms < ?2
     AND (?3 IS NULL OR provider = ?3)
-    AND (?4 IS NULL OR requested_model = ?4 OR resolved_model = ?4 OR response_model = ?4)
+    AND (?4 IS NULL OR COALESCE(response_model,resolved_model,requested_model) = ?4)
     AND (?5 IS NULL OR request_path = ?5)
-    AND (?6 IS NULL OR outcome = ?6)";
+    AND (?6 IS NULL OR outcome = ?6)
+    AND (?7 IS NULL OR
+        (?7 = 'unidentified' AND requests.credential_hash IS NULL) OR
+        (?7 != 'unidentified' AND requests.credential_hash = ?7))";
 
 #[derive(Clone)]
 pub struct Reader {
@@ -111,6 +114,7 @@ pub struct Filters {
     model: Option<String>,
     path: Option<String>,
     outcome: Option<String>,
+    credential_hash: Option<String>,
     before_ms: Option<i64>,
     before_id: Option<String>,
     limit: Option<usize>,
@@ -165,6 +169,16 @@ impl Filters {
         }) {
             return Err("未知请求结果");
         }
+        if self.credential_hash.as_deref() == Some("") {
+            self.credential_hash = None;
+        }
+        if self
+            .credential_hash
+            .as_ref()
+            .is_some_and(|value| value != "unidentified" && !is_credential_hash(value))
+        {
+            return Err("无效的凭据筛选值");
+        }
         if self.limit.is_some_and(|v| v == 0 || v > 100)
             || self.before_ms.is_some() != self.before_id.is_some()
             || self.before_ms.is_some_and(|v| v < start || v >= end)
@@ -185,6 +199,7 @@ impl Filters {
             self.model.clone().into(),
             self.path.clone().into(),
             self.outcome.clone().into(),
+            self.credential_hash.clone().into(),
         ]
     }
 }
@@ -267,10 +282,11 @@ pub fn initialize(settings: &Audit) -> Result<(Reader, Guard), String> {
                     Operation::Write(write) => mutate(&writer, write).map(|_| Value::Null),
                 };
                 let reset = connection.progress_handler(0, None::<fn() -> bool>);
-                if result.is_err() {
+                if let Err(ref error) = result {
                     tracing::warn!(
                         event = if writing { "dashboard_write_failed" } else { "dashboard_query_failed" },
-                        reason = "SQLite operation failed or exceeded deadline"
+                        reason = "SQLite operation failed or exceeded deadline",
+                        error = %error
                     );
                 }
                 let _ = job
@@ -411,7 +427,7 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
     let mut series_parameters = parameters.clone();
     series_parameters.push(timeline.from_ms.into());
     series_parameters.push(timeline.bucket_ms.into());
-    let series = rows(&transaction,&format!("SELECT ((started_at_ms-?7)/?8)*?8+?7 AS time_ms,
+    let series = rows(&transaction,&format!("SELECT ((started_at_ms-?8)/?9)*?9+?8 AS time_ms,
         COUNT(*) AS requests,COALESCE(SUM(outcome IN ('failed','incomplete','cancelled','interrupted')),0) AS unsuccessful,
         COALESCE(SUM(CASE WHEN usage_status='complete' THEN total_tokens END),0) AS total_tokens
         FROM requests WHERE {FILTER} GROUP BY time_ms ORDER BY time_ms"),&series_parameters)?;
@@ -427,10 +443,10 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
     let mut requests = rows(&transaction,&format!("SELECT request_id,started_at_ms,provider,request_path,
         requested_model,resolved_model,response_model,outcome,http_status,duration_ms,first_body_byte_ms,
         input_tokens,output_tokens,total_tokens,cache_read_tokens,usage_status,upstream_protocol,error_code,
-        r.credential_hash,n.key_name
-        FROM requests AS r LEFT JOIN credential_names AS n ON n.credential_hash=r.credential_hash
-        WHERE {FILTER} AND (?7 IS NULL OR started_at_ms < ?7 OR (started_at_ms = ?7 AND request_id < ?8))
-        ORDER BY started_at_ms DESC,request_id DESC LIMIT ?9"),&list_parameters)?;
+        requests.credential_hash,n.key_name
+        FROM requests LEFT JOIN credential_names AS n ON n.credential_hash=requests.credential_hash
+        WHERE {FILTER} AND (?8 IS NULL OR started_at_ms < ?8 OR (started_at_ms = ?8 AND request_id < ?9))
+        ORDER BY started_at_ms DESC,request_id DESC LIMIT ?10"),&list_parameters)?;
     let more = requests.len() > limit;
     requests.truncate(limit);
     let cursor = if more {
@@ -447,7 +463,17 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
     )?;
     let model_rows = rows(
         &transaction,
-        "SELECT requested_model AS value FROM requests WHERE started_at_ms>=?1 AND started_at_ms<?2 AND requested_model IS NOT NULL UNION SELECT resolved_model FROM requests WHERE started_at_ms>=?1 AND started_at_ms<?2 AND resolved_model IS NOT NULL UNION SELECT response_model FROM requests WHERE started_at_ms>=?1 AND started_at_ms<?2 AND response_model IS NOT NULL ORDER BY value LIMIT 200",
+        &format!(
+            "SELECT DISTINCT {MODEL} AS value FROM requests WHERE started_at_ms>=?1 AND started_at_ms<?2 AND {MODEL} IS NOT NULL ORDER BY value LIMIT 200"
+        ),
+        &parameters[..2],
+    )?;
+    let credential_rows = rows(
+        &transaction,
+        "SELECT DISTINCT r.credential_hash AS value,n.key_name FROM requests AS r
+         LEFT JOIN credential_names AS n ON n.credential_hash=r.credential_hash
+         WHERE started_at_ms>=?1 AND started_at_ms<?2 AND r.credential_hash IS NOT NULL
+         ORDER BY COALESCE(n.key_name,r.credential_hash) LIMIT 200",
         &parameters[..2],
     )?;
     let path_rows = rows(
@@ -463,6 +489,7 @@ fn statistics(connection: &Connection, filters: &Filters) -> rusqlite::Result<Va
         "utc_offset_minutes":filters.utc_offset_minutes.unwrap_or(0),"generated_at_ms":crate::audit::now_ms(),
         "options":{"providers":option_rows.iter().map(|r| &r["value"]).collect::<Vec<_>>(),
         "models":model_rows.iter().map(|r| &r["value"]).collect::<Vec<_>>(),
+        "credentials":credential_rows,
         "paths":path_rows.iter().map(|r| &r["value"]).collect::<Vec<_>>()}}),
     )
 }
@@ -597,12 +624,14 @@ async fn remove_credential_name(
         .await?;
     Ok(Json(json!({"credential_hash":hash,"key_name":null})))
 }
-fn validate_credential_hash(hash: &str) -> Result<(), (StatusCode, Json<Value>)> {
-    if hash.len() != 64
-        || !hash
+fn is_credential_hash(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+}
+fn validate_credential_hash(hash: &str) -> Result<(), (StatusCode, Json<Value>)> {
+    if !is_credential_hash(hash) {
         return Err(api_error(StatusCode::BAD_REQUEST, "无效的凭据 hash"));
     }
     Ok(())

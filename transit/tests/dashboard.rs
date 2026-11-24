@@ -174,6 +174,11 @@ origin="http://127.0.0.1:1"
         params![other_hash, ids[1]],
     )
     .unwrap();
+    c.execute(
+        "UPDATE requests SET requested_model='alias-chat',resolved_model='upstream-chat',response_model=NULL WHERE request_id=?1",
+        [&ids[0]],
+    )
+    .unwrap();
     let window = format!("from_ms={}&to_ms={}", timestamp - 1000, timestamp + 1000);
     c.execute(
         "UPDATE requests SET upstream_protocol='openai_responses'",
@@ -295,6 +300,49 @@ origin="http://127.0.0.1:1"
     );
     let filtered: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(filtered["summary"]["requests"], 1);
+    for (query, expected) in [
+        ("model=upstream-chat", 1),
+        ("model=alias-chat", 0),
+        (&format!("credential_hash={credential_hash}"), 1),
+        (&format!("credential_hash={other_hash}"), 1),
+        ("credential_hash=unidentified", 2),
+    ] {
+        let (_, _, body) = get(address, &format!("/api/stats?{window}&{query}"), "");
+        let filtered: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(filtered["summary"]["requests"], expected, "{query}");
+        assert_eq!(
+            filtered["series"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|point| point["requests"].as_i64().unwrap())
+                .sum::<i64>(),
+            expected,
+            "series: {query}"
+        );
+    }
+    let (_, _, body) = get(address, &format!("/api/stats?{window}"), "");
+    let options: Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        options["options"]["models"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String("upstream-chat".into()))
+    );
+    assert!(
+        !options["options"]["models"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String("alias-chat".into()))
+    );
+    assert_eq!(
+        options["options"]["credentials"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        get(address, "/api/stats?credential_hash=invalid", "").0,
+        400
+    );
     let (_, _, body) = get(
         address,
         &format!("/api/stats?{window}&model=%27%20OR%201%3D1--"),

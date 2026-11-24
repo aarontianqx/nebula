@@ -165,7 +165,7 @@ function filters() {
     to_ms: Math.floor(to),
     utc_offset_minutes: -new Date(to).getTimezoneOffset(),
   };
-  for (const key of ["provider", "model", "path", "outcome"]) {
+  for (const key of ["provider", "credential_hash", "model", "path", "outcome"]) {
     const value = $(key).value.trim();
     if (value) result[key] = value;
   }
@@ -580,6 +580,13 @@ function render() {
       .get(id)
       .setOptions(values.map((value) => ({ value, label: value })));
   }
+  filterWidgets.get("credential_hash").setOptions([
+    { value: "unidentified", labelKey: "filter.unidentified" },
+    ...data.options.credentials.map((credential) => ({
+      value: credential.value,
+      label: credential.key_name || shortHash(credential.value),
+    })),
+  ]);
   renderChart();
   renderDistribution();
   renderRequests();
@@ -1681,6 +1688,7 @@ for (const button of document.querySelectorAll("[data-chart]")) {
   });
 }
 createFilter("provider", "filter.allProvider", false);
+createFilter("credential_hash", "filter.allCaller", false);
 createFilter("model", "filter.allModel", true);
 createFilter("path", "filter.allPath", true);
 createFilter(
@@ -1698,7 +1706,8 @@ createFilter(
 );
 $("reset").addEventListener("click", () => {
   if (busy) return;
-  for (const id of ["provider", "model", "path", "outcome"]) $(id).value = "";
+  for (const id of ["provider", "credential_hash", "model", "path", "outcome"])
+    $(id).value = "";
   load();
 });
 $("previous").addEventListener("click", () => {
